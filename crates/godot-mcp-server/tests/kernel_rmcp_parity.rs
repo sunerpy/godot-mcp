@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::StreamExt;
 use godot_mcp_domain::CapabilityProfile;
 use godot_mcp_domain::contracts::{
     ArtifactContract, ArtifactId, ArtifactKind, ArtifactMetadata, ArtifactOwner,
@@ -14,10 +13,9 @@ use godot_mcp_domain::manifests::canonical_manifest;
 use godot_mcp_domain::objid::{LeaseKey, StableObjectId};
 use godot_mcp_server::kernel::{AccessContext, KernelToolCall, KernelToolHandler, ServiceKernel};
 use godot_mcp_server::rmcp_adapter::{ARTIFACT_RANGE_META_KEY, RmcpAdapter};
-use rmcp::handler::client::progress::ProgressDispatcher;
 use rmcp::model::{
     CallToolRequestParams, ClientRequest, ErrorCode, GetPromptRequestParams, Meta,
-    ReadResourceRequestParams, Request, ResourceContents,
+    ProgressNotificationParam, ProgressToken, ReadResourceRequestParams, Request, ResourceContents,
 };
 use rmcp::service::PeerRequestOptions;
 use rmcp::{ClientHandler, ServiceError, ServiceExt};
@@ -26,18 +24,46 @@ use tokio::sync::mpsc;
 
 const LIVE_ARTIFACT_EXPIRY_UNIX_MS: u64 = u64::MAX;
 
-#[derive(Clone, Default)]
+/// Keeps every progress notification until the test reads it. The probe reports
+/// progress as soon as its call starts, which can be before
+/// `send_cancellable_request` has handed the call's token back, and rmcp's
+/// `ProgressDispatcher` drops a notification nobody has subscribed to yet.
+#[derive(Clone)]
 struct TestClient {
-    progress: ProgressDispatcher,
+    progress_tx: mpsc::UnboundedSender<ProgressNotificationParam>,
+    progress_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<ProgressNotificationParam>>>,
+}
+
+impl Default for TestClient {
+    fn default() -> Self {
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+        Self {
+            progress_tx,
+            progress_rx: Arc::new(tokio::sync::Mutex::new(progress_rx)),
+        }
+    }
+}
+
+impl TestClient {
+    /// The next progress notification for `token`, passing over any other call's.
+    async fn next_progress(&self, token: &ProgressToken) -> Option<ProgressNotificationParam> {
+        let mut received = self.progress_rx.lock().await;
+        while let Some(notification) = received.recv().await {
+            if &notification.progress_token == token {
+                return Some(notification);
+            }
+        }
+        None
+    }
 }
 
 impl ClientHandler for TestClient {
     async fn on_progress(
         &self,
-        notification: rmcp::model::ProgressNotificationParam,
+        notification: ProgressNotificationParam,
         _context: rmcp::service::NotificationContext<rmcp::RoleClient>,
     ) {
-        self.progress.handle_notification(notification).await;
+        let _ = self.progress_tx.send(notification);
     }
 }
 
@@ -248,14 +274,12 @@ async fn in_memory_client_initialize_list_call_read_cancel() -> anyhow::Result<(
     let handle = client
         .send_cancellable_request(request, PeerRequestOptions::no_options())
         .await?;
-    let mut progress = client
-        .service()
-        .progress
-        .subscribe(handle.progress_token.clone())
-        .await;
-    let update = tokio::time::timeout(Duration::from_secs(2), progress.next())
-        .await?
-        .expect("progress notification");
+    let update = tokio::time::timeout(
+        Duration::from_secs(2),
+        client.service().next_progress(&handle.progress_token),
+    )
+    .await?
+    .expect("progress notification");
     assert_eq!(update.message.as_deref(), Some("waiting for cancellation"));
     handle.cancel(Some("test cancellation".to_owned())).await?;
     tokio::time::timeout(Duration::from_secs(2), cancelled_rx.recv())
