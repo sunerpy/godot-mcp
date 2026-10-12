@@ -1623,7 +1623,17 @@ mod tests {
             .expect("the listener is found");
         assert!(holds_socket_inode(std::process::id(), inode).expect("descriptors readable"));
         drop(listener);
-        assert_eq!(loopback_listener_inode(port).expect("readable"), None);
+        // A child that another test starts at this moment holds a duplicate of
+        // every descriptor until it executes its program, the listener's
+        // included, so the socket can outlive the drop by that much.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while loopback_listener_inode(port).expect("readable").is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the listener outlived its last descriptor"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
