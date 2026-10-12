@@ -587,6 +587,23 @@ fn ci_matrix_lock_happy_path() {
         );
     }
     let ci_code = lock_matrix::code_regions_only(&ci);
+    // A release verifies itself against CI Success on the exact release commit
+    // (release.yml, verify-ci), so no later run may cancel a main commit's CI,
+    // running or pending. Only a pull request's runs share a group, so a new head
+    // cancels its stale run; every other run's group is its own event and commit.
+    let concurrency_group = ci_code
+        .lines()
+        .skip_while(|line| line.trim_end() != "concurrency:")
+        .nth(1)
+        .and_then(|line| line.trim().strip_prefix("group: "))
+        .expect("ci.yml declares a workflow-level concurrency group");
+    assert_eq!(
+        concurrency_group,
+        "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || \
+         github.sha }}",
+        "a main commit's CI must never share a concurrency group with a later push, or the \
+         release built from that commit loses its CI Success"
+    );
     // Every catalogue check that needs no external environment is one row of the
     // gates matrix, so none of them can be left out of a run.
     for spec in specs
