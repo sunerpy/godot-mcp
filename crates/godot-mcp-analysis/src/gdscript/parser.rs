@@ -125,7 +125,19 @@ impl GdScriptParser {
         })?;
 
         let mut walker = Walker::new(source);
-        walker.walk(tree.root_node(), &Scope::root(), 0);
+        let root = tree.root_node();
+        if root.is_error() {
+            // Recovery found no `source` node to hang the file on: the whole
+            // source is one unparsed region, recorded and not entered, exactly as
+            // `visit` treats an unparsed region below the root.
+            walker.push_diagnostic(
+                GdDiagnosticKind::SyntaxError,
+                root,
+                "source in this span does not parse as GDScript",
+            );
+        } else {
+            walker.walk(root, &Scope::root(), 0);
+        }
         walker.finish(source_path, project_generation)
     }
 }

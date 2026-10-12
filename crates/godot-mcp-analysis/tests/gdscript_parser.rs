@@ -276,6 +276,46 @@ fn gdscript_parser_failure_paths() {
     assert_eq!(garbage.provenance().source(), ProvenanceSource::Unresolved);
     assert_eq!(garbage.provenance().confidence(), Confidence::Unresolved);
 
+    // --- Case 3b: a source whose whole tree failed to parse is damage. -------
+    // This file cut off mid-edit parses to a root `ERROR` node, with no
+    // `source` node above it. Nothing inside an unparsed region may be
+    // extracted, the root included.
+    const CUT_OFF: &str = "\tmatch typeof(value):\n\t\tTYPE_NIL:\n\t\t\treturn \
+                           _good({\"type\": \"transform3_d\", \"value\": {\n\t\t\tvar";
+    let mut grammar = tree_sitter::Parser::new();
+    grammar
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .expect("GDScript grammar loads");
+    assert!(
+        grammar
+            .parse(CUT_OFF, None)
+            .expect("a syntax tree")
+            .root_node()
+            .is_error(),
+        "the case needs an input whose root is an ERROR node"
+    );
+    let cut_off = parser
+        .parse("res://cut_off.gd", CUT_OFF, 7)
+        .expect("a root ERROR still returns a report, not a hard error");
+    assert!(cut_off.is_partial());
+    assert!(
+        cut_off
+            .diagnostics()
+            .iter()
+            .any(|d| d.kind() == GdDiagnosticKind::SyntaxError && d.span().start_line() == 1),
+        "the unparsed source is reported: {:?}",
+        cut_off.diagnostics()
+    );
+    assert!(
+        cut_off.calls().is_empty(),
+        "no call is extracted from an unparsed region: {:?}",
+        cut_off.calls()
+    );
+    assert!(cut_off.functions().is_empty());
+    assert!(cut_off.variables().is_empty());
+    assert_eq!(cut_off.provenance().source(), ProvenanceSource::Unresolved);
+    assert_eq!(cut_off.provenance().confidence(), Confidence::Unresolved);
+
     // --- Case 4: an empty source path is rejected as invalid input. ----------
     let rejected = parser
         .parse("", "extends Node\n", 7)
