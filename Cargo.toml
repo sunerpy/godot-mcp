@@ -35,7 +35,7 @@ publish = false
 rmcp = { version = "=2.2.0", default-features = false }
 rmcp-macros = { version = "=2.2.0" }
 tokio = { version = "=1.53.2", default-features = false }
-tokio-util = { version = "=0.7.19", default-features = false }
+tokio-util = { version = "=0.7.20", default-features = false }
 futures = { version = "=0.3.34", default-features = false }
 async-trait = { version = "=0.1.92" }
 
