@@ -1,0 +1,23 @@
+{
+  "task": 15,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test validation_import_test -- --exact validation_import_test_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a headless fixture test reports exact counts"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test validation_import_test -- --exact validation_import_test_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "a script syntax error and a fake misleading 'started' output cannot be classified as success"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-15-godot-mcp-server-architecture.json"
+}

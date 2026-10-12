@@ -1,0 +1,41 @@
+; Engine configuration file.
+; Comments and unknown keys must survive parsing verbatim.
+; This fixture is committed: the analysis layer never needs a real Godot install.
+
+config_version=5
+
+[application]
+
+config/name="Fixture Quest"
+config/description="A committed fixture project used by the Todo 8 golden tests."
+config/version="2.1.0"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+config/icon="res://icon.svg"
+config/unknown_future_key="keep me"
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"
+Music="res://scripts/music.gd"
+ComboUi="*uid://bddoi8q2q2olp"
+
+[input]
+
+jump={
+"deadzone": 0.5,
+"events": []
+}
+crouch={
+"deadzone": 0.2,
+"events": []
+}
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/pixel_tools/plugin.cfg")
+
+[future_engine_section]
+
+; an unknown section from a newer engine build must stay queryable
+some/unknown_setting=42

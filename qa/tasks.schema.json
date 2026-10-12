@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/qa/tasks.schema.json",
+  "title": "QA task descriptor (qa/tasks/<N>.json)",
+  "description": "Canonical schema for every qa/tasks/<N>.json descriptor. Todo 1 commits all 37 descriptors as complete command/assertion contracts. A descriptor is never absent, never empty; qa-task fails closed on a missing descriptor, wrong task number, empty happy/failure command array, an assertion list that is empty or holds a blank entry, an evidence path that names a repo-relative file which does not exist, or an expected-exit mismatch. Commands must be literal and self-contained: no runtime prose substitution, inherited arguments, angle-bracket transaction-ID tokens, or command-reuse shorthand. What qa-task mechanically decides is exit codes: it compares each command's actual exit code against its recorded expected_exit and nothing else. Assertions are prose reviewed by a person, never evaluated by the runner, so a passing task means every command exited as recorded, not that its assertions were confirmed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task", "wrapper", "happy", "failure", "evidence"],
+  "properties": {
+    "task": { "type": "integer", "minimum": 1, "maximum": 37 },
+    "wrapper": { "type": "string", "enum": ["simple", "fixture-lifecycle"] },
+    "fixture_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setup", "cleanup"],
+      "properties": {
+        "setup": { "type": "string", "minLength": 1 },
+        "cleanup": { "type": "string", "minLength": 1 }
+      }
+    },
+    "happy": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/command" }
+    },
+    "failure": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/command" }
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where this task's recorded run output lives. Two shapes are accepted. A path prefixed with the literal `<attemptDir>/` placeholder names a file in the harness attempt directory, which lives outside the repository; the runner resolves it only when QA_ATTEMPT_DIR names an existing directory, and otherwise reports it as unchecked rather than passing it silently. Any other value is read as a repo-relative path and must exist, or the task fails. `<attemptDir>` is the only placeholder recognised; any other angle-bracket token is rejected. All 37 committed descriptors use the `<attemptDir>/` shape."
+    }
+  },
+  "$defs": {
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "expected_exit", "assertions"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact, literal, self-contained command to run. Must not contain an angle-bracket <...> placeholder or command-reuse shorthand; enforced additionally by the descriptor validator."
+        },
+        "expected_exit": {
+          "type": "integer",
+          "description": "The exact process exit code the command must produce. This is the only outcome qa-task evaluates mechanically."
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Human-readable statements of intent, written for a person reviewing the run, describing what the command's success is supposed to mean. The runner does NOT evaluate them: it validates only that the list is non-empty and that no entry is blank, then compares exit codes. They are not machine assertions, and an assertion that is false while the command exits as recorded will not be caught here."
+        }
+      }
+    }
+  }
+}

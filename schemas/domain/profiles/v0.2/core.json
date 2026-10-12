@@ -1,0 +1,36 @@
+{
+  "schema_version": "0.2.0",
+  "profile": "core",
+  "capabilities": [
+    "read"
+  ],
+  "tools": [
+    "capabilities.get",
+    "gdscript.diagnostics.get",
+    "gdscript.impact.get",
+    "gdscript.references.get",
+    "gdscript.symbols.get",
+    "health.get",
+    "project.dependencies.get",
+    "project.discover",
+    "project.info.get",
+    "project.validate",
+    "resource.dependencies.get",
+    "resource.tree.get",
+    "scene.dependencies.get",
+    "scene.tree.get",
+    "script.validate"
+  ],
+  "bootstrap_tools": [
+    "capabilities.get",
+    "health.get",
+    "project.bind",
+    "workspace.projects.list"
+  ],
+  "resources": [
+    "godot-mcp://resources/capabilities",
+    "godot-mcp://resources/health",
+    "godot-mcp://resources/project",
+    "godot-mcp://resources/scheduler"
+  ]
+}

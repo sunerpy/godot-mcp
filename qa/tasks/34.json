@@ -1,0 +1,111 @@
+{
+  "task": 34,
+  "wrapper": "fixture-lifecycle",
+  "fixture_lifecycle": {
+    "setup": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-fixture-34 -- setup --scenario task34",
+    "cleanup": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-fixture-34 -- cleanup --scenario task34"
+  },
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-cli --test package_and_repair -- --exact package_and_repair_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "project-asset installation under godot_mcp/ plus stdio smoke from the extracted archive and a clean release-graph audit"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000000101 --operation compensate --proof-file tests/fixtures/repair/file-pre-state-match.json",
+      "expected_exit": 0,
+      "assertions": [
+        "observes compensated"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000000102 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/file-post-state-match.json",
+      "expected_exit": 0,
+      "assertions": [
+        "observes committed"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000000201 --operation terminate --proof-file tests/fixtures/repair/process-pre-state-match.json",
+      "expected_exit": 0,
+      "assertions": [
+        "kills the proven still-contained survivor and observes compensated"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000000202 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/process-post-state-match.json",
+      "expected_exit": 0,
+      "assertions": [
+        "observes committed"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000000301 --operation compensate --proof-file tests/fixtures/repair/editor-pre-state-match.json",
+      "expected_exit": 0,
+      "assertions": [
+        "observes compensated"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000000302 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/editor-post-state-match.json",
+      "expected_exit": 0,
+      "assertions": [
+        "observes committed"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-cli --test package_and_repair -- --exact package_and_repair_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "production rejection for preexisting conflicting addon/public HTTP config with no partial change, forbidden godot/.gdextension release-graph content, altered file proof, dead process with unprovable release history, and unreachable editor bridge"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000001001 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/composite-linked-proof-missing.json",
+      "expected_exit": 1,
+      "assertions": [
+        "leaves transaction 34000000-0000-4000-8000-000000001001 quarantined because the linked process proof is missing"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000001002 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/composite-linked-proof-wrong-transaction.json",
+      "expected_exit": 1,
+      "assertions": [
+        "leaves transaction 34000000-0000-4000-8000-000000001002 quarantined because the linked process proof names another transaction"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000001003 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/composite-linked-process-live.json",
+      "expected_exit": 1,
+      "assertions": [
+        "leaves transaction 34000000-0000-4000-8000-000000001003 quarantined because the linked process is still live"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000001004 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/composite-linked-process-signaled.json",
+      "expected_exit": 1,
+      "assertions": [
+        "leaves transaction 34000000-0000-4000-8000-000000001004 quarantined because the linked process is signaled"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000001005 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/composite-linked-process-nonzero-exit.json",
+      "expected_exit": 1,
+      "assertions": [
+        "leaves transaction 34000000-0000-4000-8000-000000001005 quarantined because the linked process exits nonzero"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-host-invoke -- --manifest target/qa-task-34/host-package/manifest.json -- transaction repair --project tests/fixtures/quarantined --transaction-id 34000000-0000-4000-8000-000000001006 --operation acknowledge-safe-state --proof-file tests/fixtures/repair/composite-linked-boundary-nonempty.json",
+      "expected_exit": 1,
+      "assertions": [
+        "leaves transaction 34000000-0000-4000-8000-000000001006 quarantined because the linked process reports a non-empty descendant/boundary set"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-34-godot-mcp-server-architecture.txt"
+}

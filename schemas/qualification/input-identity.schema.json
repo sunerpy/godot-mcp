@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/qualification/input-identity.schema.json",
+  "title": "Qualification input identity (Stage 1)",
+  "description": "The frozen content-addressed identity of everything qualification binds: toolchain, tooling.lock, runner identity, release-gate evidence, and the architecture-review record. Stage 1 excludes the report/receipts/final-manifest which do not yet exist. Owned/implemented by Todo 37. Todo 1 shipped this as a restrictive stub; Todo 37 froze it by adding the two normative facts the Stage-1 identity must carry and the stub had nowhere to put: `producer` (the plan requires the identity to record `producer: produce-qualification` and the producer binary hash, so F1 can reject missing/mismatched producer provenance instead of assuming artifacts appeared implicitly) and `bound_inputs` (the plan requires the identity to bind the plan SHA, Cargo.lock, canonical manifests, addon/archive/fixture/Red-patch hashes, harness/evidence-schema inputs and the review-bindings content hash, none of which the eight stub fields can express). Nothing was removed or relaxed: every stub field stays required and `additionalProperties` stays false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_commit",
+    "candidate_tree",
+    "rust_toolchain",
+    "tooling_lock_sha256",
+    "runner_identity",
+    "release_gates_sha256",
+    "architecture_review",
+    "producer",
+    "bound_inputs"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "binary_sha256"],
+      "description": "Which binary emitted this document. Exactly the Todo-37-owned producer; never Todo 35's harness, which emits no final artifact.",
+      "properties": {
+        "name": { "type": "string", "const": "produce-qualification" },
+        "binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "bound_inputs": {
+      "type": "object",
+      "description": "Every content-addressed input this frozen identity binds, keyed by a stable logical name. The producer enforces the exact required key set and non-emptiness; the schema enforces each entry's shape.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "candidate_commit": { "type": "string", "minLength": 1 },
+    "candidate_tree": { "type": "string", "minLength": 1 },
+    "rust_toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "content_hash"],
+      "properties": {
+        "channel": { "type": "string", "const": "1.96.0" },
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "tooling_lock_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runner_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "os_version", "arch"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "os_version": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "image_digest": { "type": "string" },
+        "workflow_hash": { "type": "string" }
+      }
+    },
+    "release_gates_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "architecture_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_sha256", "round_id", "momus_receipt_hash", "codex_receipt_hash"],
+      "properties": {
+        "plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "round_id": { "type": "string", "minLength": 1 },
+        "momus_receipt_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "codex_receipt_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

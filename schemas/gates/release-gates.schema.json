@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/gates/release-gates.schema.json",
+  "title": "Release-gate evidence",
+  "description": "Records every required external release-gate check bound to its exact command, runner identity, exit code, and tested source commit/tree/archive identity. Output contract owned by Todo 35's harness; final qualifying emission owned by Todo 37. Todo 1 shipped this as a restrictive stub; Todo 35 froze it by adding the two normative facts a per-check binding needs and the stub had nowhere to put: each check's own `runner_identity` (the plan binds environment/runner identity per required check, not once per document) and its `observation` label, so a missing/skipped/unavailable check is an explicitly labelled failed entry instead of an unlabelled nonzero exit code. Nothing was removed or relaxed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "qualifying", "runner_identity", "checks"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "qualifying": {
+      "type": "boolean",
+      "description": "True only for Todo 37's frozen-candidate emission; Todo 35's in-progress runs are non-qualifying observations."
+    },
+    "runner_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "os_version", "arch"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "os_version": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "image_digest": { "type": "string" },
+        "workflow_hash": { "type": "string" }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "required",
+          "command",
+          "observation",
+          "exit_code",
+          "runner_identity",
+          "source_commit",
+          "source_tree"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "command": { "type": "string", "minLength": 1 },
+          "observation": {
+            "type": "string",
+            "enum": ["executed", "missing", "skipped", "unavailable"],
+            "description": "How the check was observed on its runner. Only `executed` with `exit_code` 0 is a pass; `missing`, `skipped` and `unavailable` are explicit failed entries and can never be a silent non-failure."
+          },
+          "exit_code": { "type": "integer" },
+          "runner_identity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["os", "os_version", "arch"],
+            "description": "The environment/runner identity this individual check was observed on. A GPU/display, Docker isolation or per-platform packaged smoke is only meaningful bound to the runner that actually executed it.",
+            "properties": {
+              "os": { "type": "string", "minLength": 1 },
+              "os_version": { "type": "string", "minLength": 1 },
+              "arch": { "type": "string", "minLength": 1 },
+              "image_digest": { "type": "string" },
+              "workflow_hash": { "type": "string" }
+            }
+          },
+          "source_commit": { "type": "string", "minLength": 1 },
+          "source_tree": { "type": "string", "minLength": 1 },
+          "archive_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

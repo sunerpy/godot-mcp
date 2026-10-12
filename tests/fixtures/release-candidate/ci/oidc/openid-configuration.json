@@ -1,0 +1,12 @@
+{
+  "comment": "Deterministic local OIDC/JWKS fixture. It satisfies the network-dependent auth smoke without a real identity provider and without a credential: no key is created here, the four JWKs Todo 29 already committed are named by path so there is exactly one copy of that key material in the repository. `jwks_source` is resolved against the workspace root, and the harness proves every declared JWK is present, parses, carries a distinct `kid` and publishes no private member. The P-384 key is the algorithm/key-confusion probe that must always be rejected by the resource server.",
+  "issuer": "https://local-oidc.invalid/godot-mcp-release-gates",
+  "jwks_source": "crates/godot-mcp-server/tests/fixtures/auth",
+  "jwks_uri": "file://crates/godot-mcp-server/tests/fixtures/auth",
+  "keys": [
+    "rsa-old.jwk.json",
+    "rsa-new.jwk.json",
+    "ec-p256.jwk.json",
+    "ec-p384.jwk.json"
+  ]
+}

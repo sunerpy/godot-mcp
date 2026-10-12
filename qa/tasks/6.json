@@ -1,0 +1,23 @@
+{
+  "task": 6,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test journal_foundation -- --exact journal_foundation_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "assert_cmd drives a core request and a test permit commits/reopens each mock effect through the durable store"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test journal_foundation -- --exact journal_foundation_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "the production code path rejects fault injection before/after every phase fsync, partial staged bytes, direct effect invocation, illegal transition, quarantine bypass and release use of test hooks, without an unjournaled effect or guessed outcome"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-6-godot-mcp-server-architecture.txt"
+}

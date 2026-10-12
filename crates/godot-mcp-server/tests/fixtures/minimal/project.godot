@@ -1,0 +1,12 @@
+; Minimal Godot project marker used by Todo 6's stdio acceptance fixture.
+; Only the presence and shape of this file matter: project discovery in
+; godot-mcp-domain looks for a regular `project.godot` at or above the candidate
+; path. No Godot binary is required and none is launched.
+
+config_version=5
+
+[application]
+
+config/name="godot-mcp minimal fixture"
+config/features=PackedStringArray("4.4")
+run/main_scene=""

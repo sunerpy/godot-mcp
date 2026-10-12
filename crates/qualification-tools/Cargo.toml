@@ -1,0 +1,68 @@
+[package]
+name = "qualification-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "NON-SHIPPING build/test-only workspace member: deterministic review-bundle, batch-review finalizer, qualification producer, F1-F4 checkers and the final approval finalizer. Never linked into any shipping crate/binary/archive/addon/SBOM runtime component."
+
+# All eight binaries are review/qualification tooling. Todo 1 scaffolded them as
+# compiling stubs; each has exactly one implementation owner. Todo 6 implements
+# `batch-review-bundle` and `finalize-batch-review` (the B3/B4 dual-review gates
+# must be executable immediately after Todo 6); Todo 37 owns the other six, which
+# remain stubs.
+[[bin]]
+name = "batch-review-bundle"
+path = "src/bin/batch-review-bundle.rs"
+
+[[bin]]
+name = "finalize-batch-review"
+path = "src/bin/finalize-batch-review.rs"
+
+[[bin]]
+name = "produce-qualification"
+path = "src/bin/produce-qualification.rs"
+
+[[bin]]
+name = "f1-plan-compliance"
+path = "src/bin/f1-plan-compliance.rs"
+
+[[bin]]
+name = "f2-code-quality"
+path = "src/bin/f2-code-quality.rs"
+
+[[bin]]
+name = "f3-real-qa"
+path = "src/bin/f3-real-qa.rs"
+
+[[bin]]
+name = "f4-scope-fidelity"
+path = "src/bin/f4-scope-fidelity.rs"
+
+[[bin]]
+name = "finalize-approval"
+path = "src/bin/finalize-approval.rs"
+
+[features]
+default = []
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+# The in-repo restrictive JSON Schema validator, so gate artifacts are validated
+# against their canonical schemas without adding an unpinned schema dependency.
+godot-mcp-domain = { path = "../godot-mcp-domain" }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

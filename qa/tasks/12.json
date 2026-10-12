@@ -1,0 +1,23 @@
+{
+  "task": 12,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test core_outcomes -- --exact core_outcomes_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "asking impact of a script retrieves a bounded provenance-rich graph"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test core_outcomes -- --exact core_outcomes_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "requesting an unsupported binary resource returns unsupported with remediation, not empty success"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-12-godot-mcp-server-architecture.json"
+}

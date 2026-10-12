@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://cscenefixture001"]
+
+[ext_resource type="Script" uid="uid://cplayerscript01" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://chudscene00001" path="res://scenes/hud.tscn" id="2_hud"]
+[ext_resource type="Texture2D" path="res://art/icon.png" id="3_icon"]
+[ext_resource type="Resource" path="res://../outside/escape.tres" id="4_escape"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_body"]
+radius = 12.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_skin"]
+albedo_texture = ExtResource("3_icon")
+
+[node name="Main" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+script = ExtResource("1_player")
+groups = ["actors", "damageable"]
+
+[node name="Body" type="CollisionShape2D" parent="Player"]
+shape = SubResource("CircleShape2D_body")
+
+[node name="Skin" type="MeshInstance3D" parent="Player/Body"]
+surface_material_override/0 = SubResource("StandardMaterial3D_skin")
+follow_node = NodePath("../..")
+
+[node name="Hud" parent="." instance=ExtResource("2_hud")]
+offset_top = 4.0
+
+[node name="Ghost" parent="." instance_placeholder="res://scenes/hud.tscn"]
+
+[node name="Overlay" type="Control" parent="Hud" owner="." index="1"]
+
+[connection signal="health_changed" from="Player" to="Hud" method="_on_player_health_changed"]
+[connection signal="pressed" from="Hud/Overlay" to="." method="_on_overlay_pressed" binds= [3]]

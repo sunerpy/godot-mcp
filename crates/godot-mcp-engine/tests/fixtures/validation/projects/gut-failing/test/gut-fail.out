@@ -1,0 +1,19 @@
+Godot Engine v4.7.1.stable.official - https://godotengine.org
+
+*****************
+Running Scripts
+*****************
+
+==============================================
+= Run Summary
+==============================================
+Totals
+------
+Scripts               2
+Tests                 7
+Passing Tests         5
+Failing Tests         2
+Asserts           17/19
+Time              0.502s
+
+---- 2 failing tests ----

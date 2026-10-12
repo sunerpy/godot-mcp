@@ -1,0 +1,23 @@
+{
+  "task": 36,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-cli --test docs_link_check -- --exact docs_link_check_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a scripted clean temp environment follows docs to install/configure/stdio smoke without interpretation"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-cli --test docs_link_check -- --exact docs_link_check_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "the docs checker detects a stale tool/config/protocol name and the security lint rejects 'sandboxed'/unauthenticated-public examples"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-36-godot-mcp-server-architecture.txt"
+}

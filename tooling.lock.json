@@ -1,0 +1,24 @@
+{
+  "schema_version": "2.0.0",
+  "tools": {
+    "rust-toolchain": {
+      "version": "1.96.0",
+      "source_kind": "prebuilt-artifact",
+      "source_url": "https://static.rust-lang.org/dist/2026-05-28/rust-1.96.0-x86_64-unknown-linux-gnu.tar.xz",
+      "package_checksum": "c295047583a56238ea06b43f849f4b877fa12bfd4c7103f8d9a74c94c9c4e108",
+      "executable_sha256": "ba4b837efb6612dfa8d941c5a72b8a50d1d03a0f36216743b173949aa8d9eb75"
+    },
+    "cargo-deny": {
+      "version": "0.19.9",
+      "source_kind": "cargo-install",
+      "source_url": "https://crates.io/api/v1/crates/cargo-deny/0.19.9/download",
+      "package_checksum": "24bb0f6e6660ac1585169cb9a24ebd6ad77944561604e27f7e87ce2a6c70b6b7"
+    },
+    "cargo-cyclonedx": {
+      "version": "0.5.7",
+      "source_kind": "cargo-install",
+      "source_url": "https://crates.io/api/v1/crates/cargo-cyclonedx/0.5.7/download",
+      "package_checksum": "ed20afa5ee0c8e397f97e1ee0f71fd6c16d055abdaeddda483e4c3f73f35502b"
+    }
+  }
+}

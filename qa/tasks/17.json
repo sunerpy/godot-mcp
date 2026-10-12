@@ -1,0 +1,23 @@
+{
+  "task": 17,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test canonical_writes -- --exact canonical_writes_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "creates scene/resource via a journaled engine transaction (with its linked process_launch transaction independently showing clean exit 0/no signal/empty boundary) and reopens it"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test canonical_writes -- --exact canonical_writes_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        ".scn mutation, duplicate/conflicting UID, interrupted non-atomic replacement, and matching file post-hash with linked proof missing/mismatched/live/signaled/nonzero/non-empty-boundary yield no unproven success and block the next mutation pending repair"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-17-godot-mcp-server-architecture.json"
+}

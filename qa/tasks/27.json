@@ -1,0 +1,23 @@
+{
+  "task": 27,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test scheduler_idempotency -- --exact scheduler_idempotency_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "concurrent reads overlap, one journaled write executes exclusively through the existing Todo 6 store, and its exact same-context retry receives the recorded result without replay"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test scheduler_idempotency -- --exact scheduler_idempotency_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "queue starvation, cancellation race, PID survivor and idempotency reuse across every tuple dimension yield no duplicate effect, guessed outcome or cross-context disclosure, while only a proof-producing operator repair unblocks writes"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-27-godot-mcp-server-architecture.json"
+}

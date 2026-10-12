@@ -1,0 +1,8 @@
+{
+  "alg": "PS256",
+  "e": "AQAB",
+  "kid": "key-pss",
+  "kty": "RSA",
+  "n": "yC7ugf0iFzVWIiR-dPJtVveYZwvpuWafeMOVwQ7S0kuCqRUUjWcgn5-rf5jcSc44UL7ViYy3YCxotwF-OkW30SBq-z_-qGsZW3mchPXH0sm7IIZBnpEmppoZMVsxn7ddPQaVQnAT3CAhZ7S_1CWJAKUa1TFsLCTUNzKtbFnrWhdwTwk71aUS1PiOGfG7oVGvkXN3d-tMP4CMlTVw6-haCQBYiPoHmnHfKBe2hkAAmA0oAU75c2n72qlPULqn62Ptl22lnag6KaMNcTfqxWrNKQcOczf5-MFW6eaWP5vwvudU3eXEw-4SOmDCxOlsgSKCgtVOEAp8wWn1Dn_PyvONNQ",
+  "use": "sig"
+}

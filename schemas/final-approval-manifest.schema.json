@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/final-approval-manifest.schema.json",
+  "title": "Final approval manifest (Stage 4)",
+  "description": "The single final manifest emitted by finalize-approval after F1-F4 each APPROVE. Binds each F1-F4 receipt hash plus the current architecture-review record and B3/B4 batch records. Owned/implemented by Todo 37. Todo 1 ships this as a restrictive, syntactically valid stub schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "input_identity_sha256",
+    "qualification_report_sha256",
+    "reviewer_receipts",
+    "architecture_review",
+    "batch_records",
+    "approved"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "input_identity_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "qualification_report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reviewer_receipts": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["checker", "receipt_sha256"],
+        "properties": {
+          "checker": {
+            "type": "string",
+            "enum": ["f1-plan-compliance", "f2-code-quality", "f3-real-qa", "f4-scope-fidelity"]
+          },
+          "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "architecture_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_sha256", "round_id", "momus_receipt_hash", "codex_receipt_hash"],
+      "properties": {
+        "plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "round_id": { "type": "string", "minLength": 1 },
+        "momus_receipt_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "codex_receipt_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "batch_records": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["batch", "batch_sha256", "round_id"],
+        "properties": {
+          "batch": { "type": "string", "enum": ["b3", "b4"] },
+          "batch_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "round_id": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "approved": { "type": "boolean", "const": true }
+  }
+}

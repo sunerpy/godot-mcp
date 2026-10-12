@@ -1,0 +1,18 @@
+; Committed Todo 15 fixture project: a project with GUT already installed.
+;
+; The GUT addon here is a committed *marker set*, not a vendored copy of GUT:
+; exactly the files a real installation has that detection keys on, so the
+; engine plane can prove it detected a pre-existing setup without ever adding a
+; framework to anyone's project.
+
+config_version=5
+
+[application]
+
+config/name="Todo 15 GUT Timeout Fixture"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4")
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg")

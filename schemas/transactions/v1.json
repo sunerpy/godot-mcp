@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/transactions/v1.json",
+  "title": "Durable transaction journal record (v1)",
+  "description": "Canonical durable transaction record written by the godot-mcp effect journal. Every record binds the full transaction identity (project root + project.godot OS-object identity, public project object identity and generation, transport/auth mode, mode-specific principal/session, operation/tool family, idempotency ID and the complete canonical request hash), the touched path/object identities with their pre-state proof, the staged write set, the intended post-state, the fsynced phase history and, once observed, the effect-kind-specific typed proof. Owned and implemented by Todo 6; reused (never re-created) by every later effect Todo.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "effect_kind",
+    "effect_boundary",
+    "project_object_identity",
+    "project_root_object",
+    "project_file_object",
+    "project_generation",
+    "transport_mode",
+    "principal",
+    "session",
+    "operation_family",
+    "tool_name",
+    "idempotency_id",
+    "canonical_request_hash",
+    "canonical_request_bytes",
+    "touched_paths",
+    "touched_object_identities",
+    "pre_hashes",
+    "staged_write_set",
+    "intended_post_hashes",
+    "phase",
+    "phase_history",
+    "proof",
+    "required_subproofs",
+    "terminal_reason",
+    "opened_at_unix_ms"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "transaction_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "effect_kind": {
+      "type": "string",
+      "enum": ["file", "process_launch", "editor_runtime"]
+    },
+    "effect_boundary": {
+      "type": "string",
+      "enum": ["file", "process", "lsp_dap", "editor", "runtime"]
+    },
+    "project_object_identity": { "type": "string", "pattern": "^project_[0-9a-f]{64}$" },
+    "project_root_object": {
+      "type": "string",
+      "pattern": "^(unix:dev=[0-9]{1,20},ino=[0-9]{1,20}|windows:volume=[0-9]{1,20},file_id=[0-9a-f]{32})$"
+    },
+    "project_file_object": {
+      "type": "string",
+      "pattern": "^(unix:dev=[0-9]{1,20},ino=[0-9]{1,20}|windows:volume=[0-9]{1,20},file_id=[0-9a-f]{32})$"
+    },
+    "project_generation": { "type": "integer", "minimum": 0 },
+    "transport_mode": {
+      "type": "string",
+      "enum": ["stdio", "trusted_local", "proxied_oidc"]
+    },
+    "principal": { "type": ["string", "null"], "minLength": 1 },
+    "session": { "type": ["string", "null"], "minLength": 1 },
+    "operation_family": {
+      "type": "string",
+      "enum": [
+        "project_mutation",
+        "editor_mutation",
+        "runtime_execution",
+        "destructive_export",
+        "diagnostic_probe"
+      ]
+    },
+    "tool_name": { "type": "string", "minLength": 1 },
+    "idempotency_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "canonical_request_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "canonical_request_bytes": { "type": "integer", "minimum": 0 },
+    "touched_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "touched_object_identities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "object_identity"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "object_identity": {
+            "type": ["string", "null"],
+            "pattern": "^(unix:dev=[0-9]{1,20},ino=[0-9]{1,20}|windows:volume=[0-9]{1,20},file_id=[0-9a-f]{32})$"
+          }
+        }
+      }
+    },
+    "pre_hashes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "operation", "existence", "sha256"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "operation": { "type": "string", "enum": ["create", "update", "delete"] },
+          "existence": { "type": "string", "enum": ["present", "absent"] },
+          "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "staged_write_set": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "staging_id", "sha256", "byte_length"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "staging_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "byte_length": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "intended_post_hashes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "operation", "existence", "sha256"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "operation": { "type": "string", "enum": ["create", "update", "delete"] },
+          "existence": { "type": "string", "enum": ["present", "absent"] },
+          "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "intent_fsynced",
+        "staged_fsynced",
+        "effect_started_fsynced",
+        "committed_fsynced",
+        "compensated",
+        "quarantined"
+      ]
+    },
+    "phase_history": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase", "sequence"],
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "intent_fsynced",
+              "staged_fsynced",
+              "effect_started_fsynced",
+              "committed_fsynced",
+              "compensated",
+              "quarantined"
+            ]
+          },
+          "sequence": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "proof": {
+      "oneOf": [
+        {
+          "title": "absent proof",
+          "type": "null"
+        },
+        {
+          "title": "file proof",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "entries"],
+          "properties": {
+            "kind": { "type": "string", "const": "file" },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "operation", "existence", "sha256"],
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "operation": { "type": "string", "enum": ["create", "update", "delete"] },
+                  "existence": { "type": "string", "enum": ["present", "absent"] },
+                  "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "title": "process_launch proof",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "boundary_identity",
+            "pid",
+            "start_time",
+            "boundary_membership",
+            "release_status",
+            "exit_code",
+            "signal",
+            "boundary_empty_after_exit"
+          ],
+          "properties": {
+            "kind": { "type": "string", "const": "process_launch" },
+            "boundary_identity": { "type": "string", "minLength": 1 },
+            "pid": { "type": ["integer", "null"], "minimum": 0 },
+            "start_time": { "type": ["string", "null"], "minLength": 1 },
+            "boundary_membership": {
+              "type": "string",
+              "enum": ["confirmed", "unconfirmed"]
+            },
+            "release_status": {
+              "type": "string",
+              "enum": [
+                "suspended",
+                "resumed-contained",
+                "exited-clean",
+                "signaled",
+                "nonzero-exit",
+                "unknown"
+              ]
+            },
+            "exit_code": { "type": ["integer", "null"] },
+            "signal": { "type": ["string", "null"], "minLength": 1 },
+            "boundary_empty_after_exit": { "type": ["boolean", "null"] }
+          }
+        },
+        {
+          "title": "editor_runtime proof",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "bridge_reachable",
+            "receipt_transaction_id",
+            "receipt_action_id",
+            "live_state_probe"
+          ],
+          "properties": {
+            "kind": { "type": "string", "const": "editor_runtime" },
+            "bridge_reachable": { "type": "boolean" },
+            "receipt_transaction_id": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "receipt_action_id": { "type": ["string", "null"], "minLength": 1 },
+            "live_state_probe": { "type": ["string", "null"], "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "required_subproofs": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "process_launch_transaction_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "terminal_reason": { "type": ["string", "null"], "minLength": 1 },
+    "terminal_outcome": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict"],
+          "properties": {
+            "verdict": { "type": "string", "const": "succeeded" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "code"],
+          "properties": {
+            "verdict": { "type": "string", "const": "failed" },
+            "code": {
+              "type": "string",
+              "enum": [
+                "cancelled",
+                "conflict",
+                "internal",
+                "invalid_input",
+                "not_found",
+                "permission_denied",
+                "timeout",
+                "unavailable",
+                "uncertain",
+                "unsupported"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "opened_at_unix_ms": { "type": "integer", "minimum": 0 }
+  }
+}

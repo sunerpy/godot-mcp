@@ -1,0 +1,23 @@
+{
+  "task": 11,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test index_persistence -- --exact index_persistence_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "editing one script changes only the affected graph slice/hash"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test index_persistence -- --exact index_persistence_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "watcher overflow/schema mismatch forces a safe rescan rather than stale success"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-11-godot-mcp-server-architecture.json"
+}

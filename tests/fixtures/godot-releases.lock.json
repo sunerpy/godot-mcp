@@ -1,0 +1,337 @@
+{
+  "schema_version": "1",
+  "description": "Sole compatibility source for godot-mcp: exact official Godot releases, their per-platform artifact URLs and official SHA-256 digests. Major.minor aliases are never lock entries; every entry is an exact patch version.",
+  "minimum_supported_version": "4.4.0",
+  "required_platforms": [
+    "linux-x86_64",
+    "macos-universal",
+    "windows-x86_64",
+    "all-platforms"
+  ],
+  "sha256_provenance_kinds": {
+    "github_release_asset_digest": "SHA-256 published by the official godotengine/godot GitHub release as the asset digest.",
+    "sha512_sums_txt_chain": "The official release's SHA512-SUMS.txt entry was verified against the downloaded bytes, and the SHA-256 recorded here was computed from those same verified bytes (the 4.4.1 release predates per-asset digests)."
+  },
+  "releases": [
+    {
+      "version": "4.4.1",
+      "channel": "stable",
+      "git_tag": "4.4.1-stable",
+      "published_at": "2025-03-26T09:19:36Z",
+      "release_page_url": "https://github.com/godotengine/godot/releases/tag/4.4.1-stable",
+      "required_editor_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--editor",
+        "--import",
+        "--export-release",
+        "--export-debug",
+        "--export-pack",
+        "--doctool",
+        "--debug-server"
+      ],
+      "required_template_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--main-pack",
+        "--remote-debug"
+      ],
+      "artifacts": [
+        {
+          "platform": "linux-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.4.1-stable_linux.x86_64.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip",
+          "size_bytes": 62203199,
+          "sha256": "d6e382fb531019f85630c1f485a561a0d20c4a2344b6c3847735cfee7da812aa",
+          "sha512": "ef4e76880a514257175544952c61191106fdef3095b909bafed9fcbeb230c3e5533920a0f3012882dd4bbde83028a67549825794e2d2c3cf76eba7918b71370e",
+          "sha256_provenance": "sha512_sums_txt_chain"
+        },
+        {
+          "platform": "macos-universal",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.4.1-stable_macos.universal.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_macos.universal.zip",
+          "size_bytes": 132839010,
+          "sha256": "6c670596d21afb7917c739d0b85b10b4ac6a44051ffa2a672f90bc7da5062864",
+          "sha512": "e72933ed15db495a29c918b27adc83596b6a4dc59ec72c927e1591333df14f0eb57c515a94f9f5a0ed8a13053d55f6aedf56f2a2d828add2ef3f79c698db714b",
+          "sha256_provenance": "sha512_sums_txt_chain"
+        },
+        {
+          "platform": "windows-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.4.1-stable_win64.exe.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_win64.exe.zip",
+          "size_bytes": 69065928,
+          "sha256": "1c729738f42e43036a7147838aa9fa56d62101cf90884f315e1ab525e8e69d61",
+          "sha512": "266978b803f7532edc69bdd5d8c4fdced0ea97aef1224a8879616398a2559e135520e186add06b532aa92bdfeecf6ac024634024de4b3abd69f6c34e6d6d0563",
+          "sha256_provenance": "sha512_sums_txt_chain"
+        },
+        {
+          "platform": "all-platforms",
+          "artifact_kind": "export_templates",
+          "artifact_name": "Godot_v4.4.1-stable_export_templates.tpz",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz",
+          "size_bytes": 1206040900,
+          "sha256": "7a8d14ade489fd4d22f178193021fe8a876a9e51068ed4dde26dac3ae4c59a88",
+          "sha512": "8f461c7d6e91a0fbabfc95b1e4ca70ff1732c6f2920956a16b086ec2a85b5f7e238baf4dbce60dcc5630fae3bcb9a1fa2ae2027b92cb495c02d082705715e441",
+          "sha256_provenance": "sha512_sums_txt_chain"
+        }
+      ]
+    },
+    {
+      "version": "4.5.1",
+      "channel": "stable",
+      "git_tag": "4.5.1-stable",
+      "published_at": "2025-10-15T15:26:55Z",
+      "release_page_url": "https://github.com/godotengine/godot/releases/tag/4.5.1-stable",
+      "required_editor_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--editor",
+        "--import",
+        "--export-release",
+        "--export-debug",
+        "--export-pack",
+        "--doctool",
+        "--debug-server"
+      ],
+      "required_template_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--main-pack",
+        "--remote-debug"
+      ],
+      "artifacts": [
+        {
+          "platform": "linux-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.5.1-stable_linux.x86_64.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.5.1-stable/Godot_v4.5.1-stable_linux.x86_64.zip",
+          "size_bytes": 69572744,
+          "sha256": "02ec53d1cc7dbb9cc6355393c61b9ab43d1244751a124f10248a4802830788cd",
+          "sha512": "5bccbed65a94b82c7c319fdb15719ee8113a6e503976cc54e16f1c61fe95f3d74e5e40b8449b5bb89ff7f424574c20af01a4f5ef08b389e4dc338b245185b0b9",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "macos-universal",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.5.1-stable_macos.universal.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.5.1-stable/Godot_v4.5.1-stable_macos.universal.zip",
+          "size_bytes": 160646527,
+          "sha256": "65c27959d02aaacfc131ec7ecb90179ba8045200cb02982bf2be96d117010b8a",
+          "sha512": "a91a7c3bb2faefafef41624fbd75705b91aec509823d41db595a38b79819e0f2e9c85eecdc7429c3159d8070604a3f4b4425aaa6094d7bcac147f52c89181ce9",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "windows-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.5.1-stable_win64.exe.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.5.1-stable/Godot_v4.5.1-stable_win64.exe.zip",
+          "size_bytes": 76685794,
+          "sha256": "defccc78669e644861b4247626b01ae362cd9f23975edf19c8bfd2eb1f6a1783",
+          "sha512": "ab84df90ead5a888530faaabe744a27678ef7635068883900174fae37f7fc6178d033b551d88963c7dc2466580915a582bbc79aca97c19085900655761f56a27",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "all-platforms",
+          "artifact_kind": "export_templates",
+          "artifact_name": "Godot_v4.5.1-stable_export_templates.tpz",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.5.1-stable/Godot_v4.5.1-stable_export_templates.tpz",
+          "size_bytes": 1355592535,
+          "sha256": "1998af37f1387684e2c211cdb483daf492fc64dc6b12096bddcdca25b6910c86",
+          "sha512": "8a65c73541184fbcf1a7afedb37c9c15ed0f3babdaafe36ff47ccc515548ac84bc7563ba5b94c253e6085b121ac608b7e03d35dfc0b2c8c690a646a8755b57e5",
+          "sha256_provenance": "github_release_asset_digest"
+        }
+      ]
+    },
+    {
+      "version": "4.6.1",
+      "channel": "stable",
+      "git_tag": "4.6.1-stable",
+      "published_at": "2026-02-16T20:26:38Z",
+      "release_page_url": "https://github.com/godotengine/godot/releases/tag/4.6.1-stable",
+      "required_editor_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--editor",
+        "--import",
+        "--export-release",
+        "--export-debug",
+        "--export-pack",
+        "--doctool",
+        "--debug-server"
+      ],
+      "required_template_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--main-pack",
+        "--remote-debug"
+      ],
+      "artifacts": [
+        {
+          "platform": "linux-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.6.1-stable_linux.x86_64.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.6.1-stable/Godot_v4.6.1-stable_linux.x86_64.zip",
+          "size_bytes": 71799550,
+          "sha256": "cecd0cb6b55e931318a9d7237dc4197d69ea914966787a454808523626e2789f",
+          "sha512": "a76fd0fe1d44a2dd6c065b6f7b434ad75f5593c07bda3d3017f8304f2d069acbcf0f39cb5d0976f0434b56e9ea852032ddbcbdb7e0ce1c75a47e1dacb6794bd7",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "macos-universal",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.6.1-stable_macos.universal.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.6.1-stable/Godot_v4.6.1-stable_macos.universal.zip",
+          "size_bytes": 161125030,
+          "sha256": "f43613ad72ab1cc9ef14383545f4de344844451a5c9c5f4ea4a923f1f34f91e4",
+          "sha512": "59c7fc792c9a7a9b3c877b43fc6bdedfa3618e90f0d7d5fa77edb8d3bd64568af19bdfa6ecc8ec3eeaa17ad9cb65f7c93760de83b485ae4a33a679e730f7ffd9",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "windows-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.6.1-stable_win64.exe.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.6.1-stable/Godot_v4.6.1-stable_win64.exe.zip",
+          "size_bytes": 79805408,
+          "sha256": "088da0457e2d1f7f8a45e6d4605a42b756ea33b9ccd75059bdbc01bb31c2b40d",
+          "sha512": "67c63291115c66ebe7145415b5aac235e1667e417d6cd3d1975848670a1d31cbfad111c8231cb53195bb62e6e4fde951d97aaca227736a94f93dcbf8f23b1fbb",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "all-platforms",
+          "artifact_kind": "export_templates",
+          "artifact_name": "Godot_v4.6.1-stable_export_templates.tpz",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.6.1-stable/Godot_v4.6.1-stable_export_templates.tpz",
+          "size_bytes": 1249771228,
+          "sha256": "e6d372afd4fdfaae9571eb5e3568afcd96ce6db9a569244034154faf0ac69875",
+          "sha512": "d80001711c07973b1fd3e88077ba99644e19db7c9e52627e16f38a2937879f809f94dbd8493936fb8204908bbc57a521d41173dce5208061fe4c99772490c541",
+          "sha256_provenance": "github_release_asset_digest"
+        }
+      ]
+    },
+    {
+      "version": "4.7.1",
+      "channel": "stable",
+      "git_tag": "4.7.1-stable",
+      "published_at": "2026-07-14T18:03:10Z",
+      "release_page_url": "https://github.com/godotengine/godot/releases/tag/4.7.1-stable",
+      "required_editor_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--editor",
+        "--import",
+        "--export-release",
+        "--export-debug",
+        "--export-pack",
+        "--doctool",
+        "--debug-server"
+      ],
+      "required_template_capabilities": [
+        "--help",
+        "--version",
+        "--verbose",
+        "--headless",
+        "--path",
+        "--quit",
+        "--quit-after",
+        "--script",
+        "--check-only",
+        "--main-pack",
+        "--remote-debug"
+      ],
+      "artifacts": [
+        {
+          "platform": "linux-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.7.1-stable_linux.x86_64.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip",
+          "size_bytes": 76056717,
+          "sha256": "c7ff14fd28472c8d4f193043de30278dcf7e5241a1dcf7566b02e27addaa33ba",
+          "sha512": "4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "macos-universal",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.7.1-stable_macos.universal.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_macos.universal.zip",
+          "size_bytes": 166939858,
+          "sha256": "897cb7f9799796c717ae75f31446aed883dc92b1d6c3b33d893cc7843fff2fa9",
+          "sha512": "a5c6443e193829de9a3237b57ef5e01c23839888900e241543da0dd4bac1050125e19469f0cca9a9958ac346070d98cab8e5d6aee16b181c6d06cda86bd07224",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "windows-x86_64",
+          "artifact_kind": "editor",
+          "artifact_name": "Godot_v4.7.1-stable_win64.exe.zip",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_win64.exe.zip",
+          "size_bytes": 84198557,
+          "sha256": "c7a289051eaefb460b0106b60e9cd5bee0ef55fd102dcb2bed1eb356cf3d90a1",
+          "sha512": "a6b02c527c18ba9936e63562032701432b2dc57d98d6483ceaccb00fe14af16af5773ae8a55e7b4d614edf121c4d9e420d870f804edb1dac16362298a01ce6c4",
+          "sha256_provenance": "github_release_asset_digest"
+        },
+        {
+          "platform": "all-platforms",
+          "artifact_kind": "export_templates",
+          "artifact_name": "Godot_v4.7.1-stable_export_templates.tpz",
+          "download_url": "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz",
+          "size_bytes": 1280486955,
+          "sha256": "86409db6200b6f8fd3230989c2d2002851f3dd18acf11d7bdbafddf5a0dd0f72",
+          "sha512": "afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47",
+          "sha256_provenance": "github_release_asset_digest"
+        }
+      ]
+    }
+  ]
+}

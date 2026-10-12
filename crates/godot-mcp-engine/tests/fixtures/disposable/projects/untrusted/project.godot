@@ -1,0 +1,18 @@
+; Committed Todo 16 fixture: an untrusted project that executes code on load.
+;
+; `GameState` is a @tool autoload. Godot instantiates an autoload as soon as the
+; project is loaded, and a @tool script "makes it execute in the editor", so this
+; project runs its own code during a mere `--import` (which implies `--editor`).
+; That is why the default posture for a project is untrusted.
+
+config_version=5
+
+[application]
+
+config/name="godot-mcp disposable fixture (untrusted)"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4")
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"

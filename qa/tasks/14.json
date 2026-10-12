@@ -1,0 +1,23 @@
+{
+  "task": 14,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test process_launch_protocol -- --exact process_launch_protocol_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a strong-contained helper remains non-executing until its complete identity receipt is durable, then exits with matching hashes"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test process_launch_protocol -- --exact process_launch_protocol_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "error or SIGKILL at every launch phase leaves no unreceipted executing child, failed release terminates/closes the boundary, and restart cleans or blocks on every survivor before mutation resumes"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-14-godot-mcp-server-architecture.txt"
+}

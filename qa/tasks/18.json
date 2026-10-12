@@ -1,0 +1,23 @@
+{
+  "task": 18,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test lsp_dap_adapters -- --exact lsp_dap_adapters_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "diagnostics and DAP stack come from the exact owned fixture-editor receipt"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test lsp_dap_adapters -- --exact lsp_dap_adapters_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "a spoofed/stale loopback endpoint, >4 MiB/bad header/9th connection is rejected without effect dispatch or server failure"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-18-godot-mcp-server-architecture.json"
+}

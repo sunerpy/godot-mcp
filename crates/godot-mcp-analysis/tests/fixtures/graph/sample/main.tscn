@@ -1,0 +1,29 @@
+[gd_scene load_steps=7 format=3 uid="uid://cgraphmainscene1"]
+
+[ext_resource type="Script" uid="uid://cgraphplayerscr1" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://cgraphhudscene1" path="res://scenes/hud.tscn" id="2_hud"]
+[ext_resource type="Resource" path="res://../outside/escape.tres" id="3_escape"]
+[ext_resource type="Texture2D" path="res://art/missing.png" id="4_missing"]
+[ext_resource type="PackedScene" path="uid://cgraphenemyscn1" id="5_enemy"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="6_hud"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_body"]
+radius = 12.0
+
+[node name="Main" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+script = ExtResource("1_player")
+groups = ["actors"]
+spawn_scene = ExtResource("5_enemy")
+portrait = ExtResource("4_missing")
+
+[node name="Body" type="CollisionShape2D" parent="Player"]
+shape = SubResource("CircleShape2D_body")
+
+[node name="Hud" parent="." instance=ExtResource("2_hud")]
+script = ExtResource("6_hud")
+offset_top = 4.0
+
+[connection signal="health_changed" from="Player" to="Hud" method="_on_player_health_changed"]
+[connection signal="pressed" from="Hud" to="Hud" method="_on_missing_pressed"]

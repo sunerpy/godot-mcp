@@ -1,0 +1,23 @@
+{
+  "task": 7,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test gdscript_parser -- --exact gdscript_parser_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "parses classes/functions/signals/preload/calls"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test gdscript_parser -- --exact gdscript_parser_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "a syntactically damaged fixture preserves recoverable symbols and emits parser diagnostics"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-7-godot-mcp-server-architecture.json"
+}

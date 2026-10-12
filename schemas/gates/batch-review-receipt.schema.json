@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/gates/batch-review-receipt.schema.json",
+  "title": "B3/B4 batch review receipt",
+  "description": "One independent reviewer's receipt for a B3/B4 gate. Owned and implemented by Todo 6's finalize-batch-review binary. Todo 1 ships this as a restrictive, syntactically valid stub schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "batch",
+    "round_id",
+    "reviewer_identity",
+    "bundle_sha256",
+    "verdict",
+    "findings",
+    "before_bundle_sha256",
+    "after_bundle_sha256"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "batch": { "type": "string", "enum": ["b3", "b4"] },
+    "round_id": { "type": "string", "minLength": 1 },
+    "reviewer_identity": { "type": "string", "minLength": 1 },
+    "bundle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "verdict": { "type": "string", "enum": ["APPROVE", "REJECT"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "status", "summary"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["Blocker", "Major", "Follow-up"] },
+          "status": { "type": "string", "enum": ["open", "closed"] },
+          "summary": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "before_bundle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "after_bundle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

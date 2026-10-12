@@ -1,0 +1,29 @@
+[package]
+name = "godot-mcp-analysis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Self-contained Godot/GDScript static-analysis layer (Tree-sitter GDScript, project/scene/resource semantics). Derived from MIT codegraph-rust behavior; no runtime dependency on that checkout. Never imports transport or UI."
+
+[features]
+default = []
+test-hooks = []
+
+[dependencies]
+godot-mcp-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-gdscript = { workspace = true }
+streaming-iterator = { workspace = true }
+rusqlite = { workspace = true }
+notify = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+tempfile = { workspace = true }

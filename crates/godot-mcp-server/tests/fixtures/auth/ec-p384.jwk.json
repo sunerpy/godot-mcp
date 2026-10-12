@@ -1,0 +1,9 @@
+{
+  "alg": "ES384",
+  "crv": "P-384",
+  "kid": "key-ec384",
+  "kty": "EC",
+  "use": "sig",
+  "x": "GXJSUj5meITgZC2u32K1KKM3c34Qvi7DIHcLtZoPxustwuyzfHsMdOtXMh4X359j",
+  "y": "GgAZA6nY5S6dI_pov6M3ElQdIT7-mtCRHjjCiUvELUjrw4YTbXYSoxFuMH9JgZK1"
+}

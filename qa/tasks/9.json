@@ -1,0 +1,23 @@
+{
+  "task": 9,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test scene_resource_model -- --exact scene_resource_model_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a nested scene with ext/sub resources and signal connections yields the expected graph"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test scene_resource_model -- --exact scene_resource_model_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "a malformed/unknown resource remains queryable with uncertainty and exact location"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-9-godot-mcp-server-architecture.json"
+}

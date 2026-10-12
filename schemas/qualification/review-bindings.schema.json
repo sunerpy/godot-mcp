@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/qualification/review-bindings.schema.json",
+  "title": "Architecture and batch review bindings",
+  "description": "Binds the current architecture-review round plus the B3/B4 batch dual-review round IDs/batch SHAs/receipt hashes that Todo 37/F5 read. Owned/implemented by Todo 37. Todo 1 shipped this as a restrictive stub; Todo 37 froze it by adding the one normative fact the stub had nowhere to put: `producer`, because the plan requires each of the five qualification paths to declare `produce-qualification` and its bound binary hash as producer. Nothing was removed or relaxed: every stub field stays required and `additionalProperties` stays false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "architecture_review", "batch_reviews", "producer"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "binary_sha256"],
+      "description": "Which binary emitted this document. Exactly the Todo-37-owned producer; never Todo 35's harness, which emits no final artifact.",
+      "properties": {
+        "name": { "type": "string", "const": "produce-qualification" },
+        "binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "architecture_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_sha256", "round_id", "momus_receipt_hash", "codex_receipt_hash"],
+      "properties": {
+        "plan_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "round_id": { "type": "string", "minLength": 1 },
+        "momus_receipt_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "codex_receipt_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "batch_reviews": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["batch", "batch_sha256", "round_id", "receipt_hashes"],
+        "properties": {
+          "batch": { "type": "string", "enum": ["b3", "b4"] },
+          "batch_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "round_id": { "type": "string", "minLength": 1 },
+          "receipt_hashes": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    }
+  }
+}

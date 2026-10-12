@@ -1,0 +1,96 @@
+[package]
+name = "godot-mcp-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "The `godot-mcp` command-line entry point: `version`, `check-config`, `serve` (MCP over default stdio or opt-in authenticated loopback HTTP selected with --config), `transaction repair` (the local operator-repair command), `self-check` (verify an extracted release package against its own MANIFEST.json), and `assets install`/`assets update`/`assets remove`/`assets status` for the project assets this package carries, which land under godot_mcp/ rather than an addons/ tree because no editor plug-in ships."
+
+# The shipping CLI binary is `godot-mcp`.
+[[bin]]
+name = "godot-mcp"
+path = "src/bin/godot-mcp.rs"
+
+# `qa-fixture-34` is a NON-SHIPPING, test-only fixture-control binary. It is
+# gated behind `test-hooks` via a `required-features` guard so it is never built
+# into a release archive and the release-graph audit excludes it by construction.
+[[bin]]
+name = "qa-fixture-34"
+path = "src/bin/qa-fixture-34.rs"
+required-features = ["test-hooks"]
+
+# `qa-audit` is a NON-SHIPPING, test-only Red-fixture driver used by
+# qa/tasks/1.json's failure commands. Gated behind `test-hooks` so it never
+# enters a release archive; the release-graph audit excludes test-hooks-only
+# binaries by construction.
+[[bin]]
+name = "qa-audit"
+path = "src/bin/qa-audit.rs"
+required-features = ["test-hooks"]
+
+# `qa-host-invoke` is a NON-SHIPPING, test-only deterministic packaged-binary
+# resolver used by qa/tasks/34.json's repair commands. It resolves the Task-34
+# host-package manifest, verifies the recorded executable SHA-256, then invokes
+# the exact packaged binary. Gated behind `test-hooks` so it never enters a
+# release archive; the release-graph audit excludes test-hooks-only binaries by
+# construction.
+[[bin]]
+name = "qa-host-invoke"
+path = "src/bin/qa-host-invoke.rs"
+required-features = ["test-hooks"]
+
+# `docs-check` is the NON-SHIPPING documentation checker: it runs every docs rule
+# and, with `--write`, regenerates the pages that are rendered from a canonical
+# source. Gated behind `test-hooks` so a documentation tool can never end up
+# inside the artifact it documents; the release-graph audit excludes
+# test-hooks-only binaries by construction.
+[[bin]]
+name = "docs-check"
+path = "src/bin/docs-check.rs"
+required-features = ["test-hooks"]
+
+# `release-package` is the NON-SHIPPING release packager and release-graph gate.
+# It is gated behind `test-hooks` for exactly one reason: a packaging tool must
+# never be able to end up inside the artifact it packages. The release-graph
+# audit excludes test-hooks-only binaries by construction.
+[[bin]]
+name = "release-package"
+path = "src/bin/release-package.rs"
+required-features = ["test-hooks"]
+
+[features]
+default = ["stdio"]
+stdio = ["godot-mcp-server/stdio"]
+http = ["godot-mcp-server/http"]
+auth = ["godot-mcp-server/auth"]
+# Enables the non-shipping fixture-control binary and downstream test hooks.
+test-hooks = ["godot-mcp-server/test-hooks"]
+
+[dependencies]
+godot-mcp-domain = { workspace = true }
+godot-mcp-engine = { workspace = true }
+godot-mcp-bridge = { workspace = true }
+godot-mcp-server = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+
+[dev-dependencies]
+rstest = { workspace = true }
+assert_cmd = { workspace = true }
+assert_fs = { workspace = true }
+predicates = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }

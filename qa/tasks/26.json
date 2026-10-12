@@ -1,0 +1,23 @@
+{
+  "task": 26,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test capability_policy -- --exact capability_policy_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "an expected profile operation receives a private production permit and executes against an existing SafeRoot handle"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test capability_policy -- --exact capability_policy_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "forged/missing/stale permit, core-profile mutation, changed project generation, quarantine and unresolved survivor return permission_denied/conflict/unavailable before any side effect"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-26-godot-mcp-server-architecture.json"
+}

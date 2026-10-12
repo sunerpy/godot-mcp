@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/qualification/qualification-report.schema.json",
+  "title": "Qualification report (Stage 2)",
+  "description": "The qualification report produced after Stage 1. Binds only input-identity.sha256 (never itself or later stages). Owned/implemented by Todo 37. Todo 1 shipped this as a restrictive stub; Todo 37 froze it by adding the one normative fact the report must carry and the stub had nowhere to put: `producer`, because the plan requires the five qualification paths to declare `produce-qualification` and its bound binary hash as producer and makes missing/mismatched producer provenance an F1 REJECT rather than an assumption. Nothing was removed or relaxed: every stub field stays required and `additionalProperties` stays false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "input_identity_sha256", "gates", "result", "producer"],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "binary_sha256"],
+      "description": "Which binary emitted this document. Exactly the Todo-37-owned producer; never Todo 35's harness, which emits no final artifact.",
+      "properties": {
+        "name": { "type": "string", "const": "produce-qualification" },
+        "binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "input_identity_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "command", "exit_code"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "minLength": 1 },
+          "exit_code": { "type": "integer" }
+        }
+      }
+    },
+    "result": { "type": "string", "enum": ["PASS", "FAIL"] }
+  }
+}

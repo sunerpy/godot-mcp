@@ -1,0 +1,23 @@
+[gd_scene format=3 uid="uid://cbrokenfixture01"
+
+[ext_resource type="Script" path="res://scripts/player.gd"]
+
+[node type="Node2D" parent="."]
+
+[node name="Orphan" type="Node2D" parent="Missing/Ancestor"]
+script = ExtResource("9_absent")
+shape = SubResource("Absent_sub")
+groups = ["ok",
+
+[sub_resource id="NoType_sub"]
+
+[future_section thing="value"]
+mystery = 1
+
+[node name="Dup" type="Node2D" parent="."]
+=novalue
+stray line without an equals sign
+
+[node name="Dup" type="Node2D" parent="."]
+
+[connection signal="pressed" from="Dup" to="."]

@@ -1,0 +1,9 @@
+; A committed .tres fixture: closes the resource -> script leg so a script edit
+; has a non-scene referrer to invalidate too.
+[gd_resource type="Buff" format=3 uid="uid://cindexbuffres01"]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_buff"]
+
+[resource]
+script = ExtResource("1_buff")
+duration = 2.5

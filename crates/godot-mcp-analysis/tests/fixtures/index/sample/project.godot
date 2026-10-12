@@ -1,0 +1,22 @@
+; Committed fixture manifest for the Todo 11 index-persistence tests.
+; Deliberately smaller than the Todo 10 graph fixture: every file here exists to
+; exercise one incremental-invalidation shape, and no file is shared with another
+; todo's fixture so edits cannot cross-contaminate a golden.
+
+config_version=5
+
+[application]
+
+config/name="Index Fixture"
+run/main_scene="res://main.tscn"
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"
+
+[input]
+
+jump={
+"deadzone": 0.5,
+"events": []
+}

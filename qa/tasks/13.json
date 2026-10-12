@@ -1,0 +1,23 @@
+{
+  "task": 13,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test godot_discovery -- --exact godot_discovery_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a fake 4.7.1 editor advertises the expected commands"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test godot_discovery -- --exact godot_discovery_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "with a template that silently ignores the editor flag, the probe detects the missing capability and returns unsupported"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-13-godot-mcp-server-architecture.json"
+}

@@ -1,0 +1,57 @@
+# cargo-deny policy for the godot-mcp workspace.
+#
+# Enforced by the `deny` aggregate gate (`cargo deny check`) using the exact
+# locked cargo-deny 0.19.9 recorded in tooling.lock.json. This configuration
+# fails closed: OpenSSL / native-tls and gdext / crate `godot` are banned from
+# the dependency graph, and only OSI-permissive licenses are allowed.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses only. gdext (crate `godot`, MPL-2.0 file-level copyleft)
+# is intentionally NOT on this list, so it cannot enter the shipping graph.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    # Public-domain-equivalent / permissive data licenses pulled transitively
+    # (e.g. CC0-1.0 by a hashing crate, CDLA-Permissive-2.0 by a data table).
+    # All are OSI/FSF-recognized permissive terms compatible with redistribution.
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Internal workspace crates are referenced by path with no published version;
+# that is a wildcard only in the intra-workspace sense and must not fail the gate.
+allow-wildcard-paths = true
+# Fail closed on any attempt to pull the native Godot bridge into the shipping
+# graph, and on OpenSSL / native-tls (all TLS must go through rustls).
+deny = [
+    { name = "godot" },
+    { name = "gdext" },
+    { name = "gdext-bridge" },
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

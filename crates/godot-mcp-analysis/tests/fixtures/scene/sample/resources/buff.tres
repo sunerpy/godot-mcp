@@ -1,0 +1,15 @@
+; A committed .tres fixture: one resource with ext + sub resource relationships.
+[gd_resource type="Buff" format=3 uid="uid://cbufffixture001"]
+
+[ext_resource type="Script" path="res://scripts/buff.gd" id="1_buff"]
+[ext_resource type="Resource" uid="uid://ceffectfixture1" path="res://resources/effect.tres" id="2_effect"]
+
+[sub_resource type="Curve" id="Curve_ramp"]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0]
+
+[resource]
+script = ExtResource("1_buff")
+effect = ExtResource("2_effect")
+ramp = SubResource("Curve_ramp")
+duration = 2.5
+label = "Regeneration"

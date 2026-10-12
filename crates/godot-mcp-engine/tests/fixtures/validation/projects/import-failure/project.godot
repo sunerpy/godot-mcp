@@ -1,0 +1,11 @@
+; Committed Todo 15 fixture project: importing this project fails.
+;
+; `art/sprite.png` is deliberately not a PNG, so the committed fake engine
+; reports the resource-level import failure the acceptance suite asserts on.
+
+config_version=5
+
+[application]
+
+config/name="Todo 15 Import Failure Fixture"
+config/features=PackedStringArray("4.4")

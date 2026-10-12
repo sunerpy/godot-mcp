@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a tool, a workflow, a client integration or a change in behaviour
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can an agent or a person not do reliably with a Godot project today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: Inputs, outputs, failure cases, and whether it needs the engine, a running game or only the files.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - Static analysis
+        - File, scene or resource changes
+        - Engine execution (validate, import, test, export)
+        - Managed sessions (run, input, capture, debug)
+        - Editor bridge
+        - HTTP transport or authentication
+        - CLI, packaging or installation
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: compatibility
+    attributes:
+      label: Compatibility considerations
+      options:
+        - label: This may change a tool's arguments or answer, or a schema under schemas/.
+        - label: This may change the bridge protocol or the packaged archive.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true

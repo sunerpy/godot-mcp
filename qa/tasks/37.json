@@ -1,0 +1,23 @@
+{
+  "task": 37,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test e2e_qualification -- --exact --include-ignored e2e_qualification_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "invokes the exact producer command against a frozen fixture candidate, asserting final-gate-first staging, the five qualification outputs in order, complete evidence/parity, producer provenance, and all six binaries' documented success"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test e2e_qualification -- --exact --include-ignored e2e_qualification_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "injecting failure before/within each producer stage and each publication rename, precreating each F1-F5 output, mutating each identity/review/tool/runner input, and supplying non-approving/reused receipts each exits nonzero with all seven final producer output paths absent and never synthesizes or modifies a review receipt"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-37-godot-mcp-server-architecture.json"
+}

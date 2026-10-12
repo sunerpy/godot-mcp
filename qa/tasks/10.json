@@ -1,0 +1,23 @@
+{
+  "task": 10,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test semantic_graph -- --exact semantic_graph_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "traces scene->script->autoload/signal/resource path"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test semantic_graph -- --exact semantic_graph_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "an ambiguous dynamic target returns all candidates plus uncertainty and never invents a single call path"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-10-godot-mcp-server-architecture.json"
+}

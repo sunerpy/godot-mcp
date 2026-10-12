@@ -1,0 +1,23 @@
+{
+  "task": 33,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test health_diagnostics -- --exact health_diagnostics_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a core server reports ready with the editor absent and a remediation hint"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test health_diagnostics -- --exact health_diagnostics_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "an unresolved survivor, quarantined transaction, pending autoload restoration, wrong Godot/plugin protocol and JWKS outage report the precise blocked/degraded capability with no sensitive data or raw artifact path"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-33-godot-mcp-server-architecture.json"
+}

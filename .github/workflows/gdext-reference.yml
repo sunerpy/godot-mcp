@@ -1,0 +1,65 @@
+# Isolated, NON-SHIPPING gdext reference lane.
+#
+# This lane exists only so a gdext-based reference implementation can be compiled
+# for comparison. It is structurally separated from the release:
+#
+#   * it builds nothing this repository ships;
+#   * it uploads no artifact any release job consumes;
+#   * it writes NO release-gate observation, so it can never appear as a check in
+#     the release-gates document;
+#   * `release-graph-audit` in ci.yml neither `needs:` this workflow nor reads
+#     its status, and this workflow neither `needs:` nor reports into that job.
+#
+# A green run here therefore says nothing whatsoever about the release graph. The
+# release-graph audit is its own required job and is the only thing that clears
+# the no-gdext requirement. Do not add a `needs:` edge in either direction.
+#
+# The lane is manual-only, so it cannot become an implicit part of a change's
+# required checks.
+
+name: gdext-reference-lane
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  TOOLCHAIN: "1.96.0"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  reference:
+    name: non-shipping gdext reference build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Refuse to run if the reference lane was ever wired into the release
+        run: |
+          # The reference lane lives under gdext-reference/ and nowhere else. If
+          # it is absent there is nothing to build, which is the normal state of
+          # this repository.
+          if [ ! -d gdext-reference ]; then
+            echo "gdext-reference/ is absent; nothing to build. This is expected."
+            exit 0
+          fi
+          if grep -rn "gdext-reference" --include='*.toml' crates/ Cargo.toml; then
+            echo "the reference lane leaked into a shipping manifest" >&2
+            exit 1
+          fi
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09-12
+        with:
+          toolchain: 1.96.0
+      - name: Build the reference lane in place
+        run: |
+          if [ -d gdext-reference ]; then
+            cargo +"${TOOLCHAIN}" build --manifest-path gdext-reference/Cargo.toml
+          fi
+      # Deliberately no upload-artifact step: nothing produced here may reach a
+      # release job, and no release-gate observation is written.

@@ -1,0 +1,35 @@
+# oxfmt formats this repository's own Markdown, YAML and JSON: the files at the top level and
+# under .github/. Everything else is owned by another tool or read byte for byte by a test, a
+# digest or a published contract, and reformatting it would break the check that reads it.
+
+# Tool-owned changelogs and release state — DO NOT reformat
+changelog/
+CHANGELOG.md
+.release-please-manifest.json
+release-please-config.json
+
+# Lockfiles and tool pins
+Cargo.lock
+tooling.lock.json
+
+# TOML belongs to its owners: cargo, cargo-deny and rustfmt
+*.toml
+
+# Byte-pinned trees: bridge goldens, fixtures, digest-pinned schemas, QA task records, the
+# gdext reference, and the documentation that docs-check and the website sync read
+crates/
+docs/
+schemas/
+qa/
+tests/
+ci/
+scripts/
+gdext-reference/
+THIRD-PARTY-NOTICES.md
+
+# Build output and local state
+dist/
+build/
+bin/
+target/
+.omo/

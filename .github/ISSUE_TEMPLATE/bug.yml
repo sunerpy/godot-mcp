@@ -1,0 +1,66 @@
+name: Bug report
+description: Report wrong tool results, a refused request that should succeed, a crash, or a packaging problem
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use the private channel in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: godot-mcp version
+      description: Output of `godot-mcp --version`, and how you installed it.
+    validations:
+      required: true
+  - type: input
+    id: godot
+    attributes:
+      label: Godot version
+      placeholder: "4.7.1.stable, editor or export templates"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and client
+      placeholder: OS, architecture, MCP client and transport (stdio or HTTP)
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest project and the exact tool calls or commands. Remove secrets and personal paths.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+      description: The complete answer or error, including its `code` and `kind`.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Output of `godot-mcp version`, and the `health.get` answer for the project.
+      render: json
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report contains no secrets or confidential vulnerability details.
+          required: true

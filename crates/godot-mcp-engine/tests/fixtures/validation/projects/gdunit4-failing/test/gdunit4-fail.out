@@ -1,0 +1,15 @@
+Godot Engine v4.7.1.stable.official - https://godotengine.org
+Running tests res://test
+	res://test/example_test.gd
+		test_adds_two_numbers                                          PASSED
+		test_handles_zero                                              PASSED
+		test_rejects_negative                                          FAILED
+		test_pending_behaviour                                        SKIPPED
+Statistics:
+ 4 test cases | 0 errors | 1 failures | 0 flaky | 1 skipped | 0 orphans |
+Overall Summary:
+ 4 test cases | 0 errors | 1 failures | 0 flaky | 1 skipped | 0 orphans |
+Executed test suites: (1/1)
+Executed test cases : (3/4), 1 skipped
+Total execution time: 0h:0m:0s:812ms
+Exit code: 100

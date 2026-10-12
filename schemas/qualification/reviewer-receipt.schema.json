@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/qualification/reviewer-receipt.schema.json",
+  "title": "F1-F4 qualification reviewer receipt (hash-only)",
+  "description": "Canonical hash-only receipt for each F1-F4 checker. Binds only content hashes (input-identity.sha256, qualification-report.sha256), never the full identity/report document. Owned/implemented by Todo 37's F1-F4 binaries. Todo 1 ships this as a restrictive, syntactically valid stub schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "verifier_identity",
+    "round_id",
+    "launch_id",
+    "input_identity_sha256",
+    "qualification_report_sha256",
+    "verdict",
+    "findings",
+    "before_bound_hash",
+    "after_bound_hash",
+    "candidate_input"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "minLength": 1 },
+    "verifier_identity": { "type": "string", "minLength": 1 },
+    "round_id": { "type": "string", "minLength": 1 },
+    "launch_id": { "type": "string", "minLength": 1 },
+    "input_identity_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "qualification_report_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "verdict": { "type": "string", "enum": ["APPROVE", "REJECT"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "status", "summary"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["Blocker", "Major", "Follow-up"] },
+          "status": { "type": "string", "enum": ["open", "closed"] },
+          "summary": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "before_bound_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "after_bound_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "candidate_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["worktree", "archive"] },
+        "path": { "type": "string", "minLength": 1 },
+        "resolved_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "resolved_tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tracked_clean": { "type": "boolean" },
+        "archive_name": { "type": "string", "minLength": 1 },
+        "archive_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

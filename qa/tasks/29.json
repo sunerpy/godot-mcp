@@ -1,0 +1,23 @@
+{
+  "task": 29,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test oidc_resource_server -- --exact oidc_resource_server_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "an authenticated same-host proxy hop carries the configured principal's token with exact resource/scopes and calls allowed tools before/after overlapping-key rotation using an allowlisted algorithm and unambiguous kid"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test oidc_resource_server -- --exact oidc_resource_server_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "loopback peer without hop credential, second subject, another audience, HTTP issuer, mixed/private answer, redirect to metadata IP, environment proxy, public-to-private lookup/connect rebinding, alg:none, HMAC substitution, non-allowlisted algorithm, key/algorithm confusion, duplicate/missing kid, token-controlled jku/x5u/x5c/jwk, and an unsupported crit header entry are rejected with no SSRF or kernel dispatch"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-29-godot-mcp-server-architecture.json"
+}

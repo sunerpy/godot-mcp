@@ -1,0 +1,23 @@
+{
+  "task": 3,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-domain --test contract_snapshots -- --exact profile_algebra_and_dto_roundtrip",
+      "expected_exit": 0,
+      "assertions": [
+        "serializes/deserializes every DTO and validates full = core union editor union runtime minus unsafe_script"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-domain --test contract_snapshots -- --exact provenance_invariant_rejects_false_exact",
+      "expected_exit": 0,
+      "assertions": [
+        "the production invariant check rejects a fixture marking an inferred dynamic reference as exact"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-3-godot-mcp-server-architecture.json"
+}

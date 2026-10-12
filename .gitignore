@@ -1,0 +1,23 @@
+.codegraph
+.omo
+
+# Cargo build artifacts. Reproducible from the committed sources and the exact
+# `Cargo.lock`, so they are never part of the frozen candidate tree that Todo 35
+# and Todo 37 bind their release evidence to.
+/target
+/gdext-reference/target
+
+# Release output of `make dist` outside `target/`, and CI observations written by
+# `scripts/ci-observe.sh`. Both are produced per run; CI uploads them as
+# artifacts, and committing one would bind a stale run to the tree.
+/dist/
+/ci/observations/
+
+# Local cloud tooling and run logs. They belong to a maintainer's machine, not to
+# the project: CI is the GitHub Actions workflows under `.github/workflows/`.
+/.aws/
+/ci/codebuild-runs/
+
+# Maintainer working files kept beside the tree.
+/godot.jpg
+/docs/reports/

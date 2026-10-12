@@ -1,0 +1,25 @@
+{
+  "profile": "rust",
+  "addons": ["pr-title", "codecov"],
+  "placeholders": {
+    "BINARY": "godot-mcp",
+    "CRATE": "godot-mcp-cli",
+    "CURRENT_VERSION": "0.0.0",
+    "DEFAULT_BRANCH": "main",
+    "OWNER": "sunerpy",
+    "PACKAGE_NAME": "godot-mcp",
+    "REPO": "godot-mcp",
+    "RUST_TOOLCHAIN": "1.96.0"
+  },
+  "drift_allow": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/dependabot.yml",
+    "release-please-config.json",
+    "Makefile",
+    "scripts/install.sh",
+    "scripts/install.ps1",
+    "codecov.yml",
+    ".oxfmtignore"
+  ]
+}

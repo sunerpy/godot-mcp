@@ -1,0 +1,574 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/bridge/protocol-v1.json",
+  "title": "Editor bridge message envelope (v1)",
+  "description": "The frozen versioned JSON envelope every message on the Rust-to-GDScript editor bridge is wrapped in, in both directions, carried as one RFC 6455 text frame per message. Exactly ten message kinds exist and no eleventh is representable. Every field is REQUIRED and present on every message; fields that do not apply to a kind are explicitly null rather than omitted, so the canonical rendering of any message has the same key set and therefore the same byte layout rules on both sides of the bridge. Owned and frozen by Todo 19. The originally planned editor plane in Todos 20-25 is not shipped in this release.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "auth",
+    "correlation_id",
+    "deadline_unix_ms",
+    "error",
+    "event_name",
+    "identity",
+    "idempotency_id",
+    "kind",
+    "message_id",
+    "method",
+    "mutation_status",
+    "operation_class",
+    "origin",
+    "payload",
+    "progress",
+    "project",
+    "protocol_version",
+    "reason",
+    "schema_version",
+    "sent_unix_ms"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Envelope schema version. Distinct from protocol_version: this names the shape of the envelope itself."
+    },
+    "protocol_version": {
+      "type": "string",
+      "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$",
+      "description": "The sender's bridge protocol version. The MAJOR component decides compatibility; see the compatibility matrix."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "hello",
+        "capabilities",
+        "request",
+        "result",
+        "error",
+        "progress",
+        "cancel",
+        "heartbeat",
+        "event",
+        "shutdown"
+      ],
+      "description": "The ten frozen message kinds. hello/capabilities open a session, request/result/error carry work, progress reports partial completion, cancel withdraws work not yet started, heartbeat proves liveness, event is unsolicited, shutdown ends the session."
+    },
+    "origin": {
+      "type": "string",
+      "enum": ["server", "plugin"],
+      "description": "Which side sent this message. Never inferred from the socket direction."
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "This message's own identity, unique within a session."
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "The message_id this message answers or withdraws. Null on messages that answer nothing."
+    },
+    "idempotency_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "The caller's idempotency key for a request. Reused verbatim in the Todo 6 journal record so a mutation has one identity across both planes."
+    },
+    "operation_class": {
+      "type": ["string", "null"],
+      "enum": ["read", "mutation", "control", null],
+      "description": "What class of work a request performs. read never changes editor state; mutation does and therefore requires a mutation_status on its result or error; control is protocol bookkeeping. On error this is mutation exactly when the failed operation was a mutation, otherwise null. Null on other messages that carry no work."
+    },
+    "deadline_unix_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Absolute wall-clock deadline in Unix milliseconds. A request whose deadline has passed is refused rather than started. Null on messages with no deadline."
+    },
+    "method": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "The bridge method a request invokes. Bridge methods are never MCP tool names: the plugin never sees an MCP wire message."
+    },
+    "event_name": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "The unsolicited event's name. Non-null only on kind=event."
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "Human-readable reason for a shutdown. Non-null only on kind=shutdown."
+    },
+    "sent_unix_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "When a heartbeat was sent, in Unix milliseconds. Non-null only on kind=heartbeat."
+    },
+    "mutation_status": {
+      "type": ["string", "null"],
+      "enum": ["not_started", "committed", "unresolved", null],
+      "description": "The three-state mutation outcome, and no fourth. not_started means no editor state changed; committed means the change is durable and proven; unresolved means the outcome is not decidable from here and the transaction must enter Todo 6 reconciliation/quarantine. Non-null on every result and on an error whose operation_class is mutation; null on a non-mutation error and every other kind."
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "godot_version",
+        "plugin_version",
+        "server_version",
+        "session_id"
+      ],
+      "description": "The sender's identity. A server fills server_version and session_id; a plugin fills plugin_version and godot_version. The unfilled members are null, never omitted.",
+      "properties": {
+        "server_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "plugin_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "godot_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "session_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "project": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["file_object", "generation", "object_identity", "root_object"],
+      "description": "The project both sides must agree on: the public opaque identity, the OS object identity of the root directory and of project.godot, and the current generation. A mismatch in any member is a refusal, never a renegotiation.",
+      "properties": {
+        "object_identity": { "type": "string", "pattern": "^project_[0-9a-f]{64}$" },
+        "root_object": {
+          "type": "string",
+          "pattern": "^(unix:dev=[0-9]{1,20},ino=[0-9]{1,20}|windows:volume=[0-9]{1,20},file_id=[0-9a-f]{32})$"
+        },
+        "file_object": {
+          "type": "string",
+          "pattern": "^(unix:dev=[0-9]{1,20},ino=[0-9]{1,20}|windows:volume=[0-9]{1,20},file_id=[0-9a-f]{32})$"
+        },
+        "generation": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "auth": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["nonce", "secret_hex"],
+      "description": "The first-handshake authenticator. secret_hex is the hex spelling of the 256-bit per-launch secret the server wrote to its mode-0600 rendezvous file; nonce is single-use within a launch. Non-null only on kind=hello.",
+      "properties": {
+        "secret_hex": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "nonce": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "message"],
+      "description": "The failure, classified into Todo 3's ten fixed error kinds. Non-null only on kind=error.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "not_found",
+            "conflict",
+            "unsupported",
+            "permission_denied",
+            "timeout",
+            "cancelled",
+            "unavailable",
+            "uncertain",
+            "internal"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 2048 }
+      }
+    },
+    "progress": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["completed", "note", "total"],
+      "description": "Partial completion of an in-flight request. Non-null only on kind=progress.",
+      "properties": {
+        "completed": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "note": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "payload": {
+      "type": ["object", "null"],
+      "description": "The kind-specific body. Its inner shape belongs to the individual method or event, not to this envelope."
+    }
+  },
+  "oneOf": [
+    {
+      "title": "hello envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "hello" },
+        "origin": { "const": "plugin" },
+        "correlation_id": { "type": "null" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "const": "control" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "null" },
+            "plugin_version": { "type": "string" },
+            "godot_version": { "type": "string" },
+            "session_id": { "type": "null" }
+          }
+        },
+        "project": { "type": "object" },
+        "auth": { "type": "object" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "null" }
+      }
+    },
+    {
+      "title": "capabilities envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "capabilities" },
+        "origin": { "const": "server" },
+        "correlation_id": { "type": "null" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "const": "control" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "string" },
+            "plugin_version": { "type": "null" },
+            "godot_version": { "type": "null" },
+            "session_id": { "type": "string" }
+          }
+        },
+        "project": { "type": "object" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "object" }
+      }
+    },
+    {
+      "title": "request envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "request" },
+        "origin": { "const": "server" },
+        "correlation_id": { "type": "null" },
+        "idempotency_id": { "type": "string" },
+        "operation_class": { "type": "string", "enum": ["read", "mutation", "control"] },
+        "deadline_unix_ms": { "type": "integer" },
+        "method": { "type": "string" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "string" },
+            "plugin_version": { "type": "null" },
+            "godot_version": { "type": "null" },
+            "session_id": { "type": "string" }
+          }
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "object" }
+      }
+    },
+    {
+      "title": "result envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "result" },
+        "origin": { "const": "plugin" },
+        "correlation_id": { "type": "string" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "type": ["string", "null"], "enum": ["mutation", null] },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": {
+          "type": "string",
+          "enum": ["not_started", "committed", "unresolved"]
+        },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "null" },
+            "plugin_version": { "type": "string" },
+            "godot_version": { "type": "string" },
+            "session_id": { "type": "null" }
+          }
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "object" }
+      }
+    },
+    {
+      "title": "error envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "error" },
+        "origin": { "type": "string", "enum": ["server", "plugin"] },
+        "correlation_id": { "type": "string" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "type": ["string", "null"], "enum": ["mutation", null] },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": {
+          "type": ["string", "null"],
+          "enum": ["not_started", "committed", "unresolved", null]
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "object" },
+        "progress": { "type": "null" },
+        "payload": { "type": "null" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "origin": { "const": "server" },
+            "operation_class": { "type": "null" },
+            "mutation_status": { "type": "null" },
+            "identity": {
+              "properties": {
+                "server_version": { "type": "string" },
+                "plugin_version": { "type": "null" },
+                "godot_version": { "type": "null" },
+                "session_id": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "origin": { "const": "plugin" },
+            "operation_class": { "type": "null" },
+            "mutation_status": { "type": "null" },
+            "identity": {
+              "properties": {
+                "server_version": { "type": "null" },
+                "plugin_version": { "type": "string" },
+                "godot_version": { "type": "string" },
+                "session_id": { "type": "null" }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "origin": { "const": "plugin" },
+            "operation_class": { "const": "mutation" },
+            "mutation_status": {
+              "type": "string",
+              "enum": ["not_started", "committed", "unresolved"]
+            },
+            "identity": {
+              "properties": {
+                "server_version": { "type": "null" },
+                "plugin_version": { "type": "string" },
+                "godot_version": { "type": "string" },
+                "session_id": { "type": "null" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "progress envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "progress" },
+        "origin": { "const": "plugin" },
+        "correlation_id": { "type": "string" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "type": "null" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "null" },
+            "plugin_version": { "type": "string" },
+            "godot_version": { "type": "string" },
+            "session_id": { "type": "null" }
+          }
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "object" },
+        "payload": { "type": "null" }
+      }
+    },
+    {
+      "title": "cancel envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "cancel" },
+        "origin": { "const": "server" },
+        "correlation_id": { "type": "string" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "const": "control" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "string" },
+            "plugin_version": { "type": "null" },
+            "godot_version": { "type": "null" },
+            "session_id": { "type": "string" }
+          }
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "null" }
+      }
+    },
+    {
+      "title": "heartbeat envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "heartbeat" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "const": "control" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "null" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "origin": { "const": "server" },
+            "correlation_id": { "type": "null" },
+            "sent_unix_ms": { "type": "integer" },
+            "identity": {
+              "properties": {
+                "server_version": { "type": "string" },
+                "plugin_version": { "type": "null" },
+                "godot_version": { "type": "null" },
+                "session_id": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "origin": { "const": "plugin" },
+            "correlation_id": { "type": "string" },
+            "sent_unix_ms": { "type": "null" },
+            "identity": {
+              "properties": {
+                "server_version": { "type": "null" },
+                "plugin_version": { "type": "string" },
+                "godot_version": { "type": "string" },
+                "session_id": { "type": "null" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "title": "event envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "event" },
+        "origin": { "const": "plugin" },
+        "correlation_id": { "type": "null" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "type": "null" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "string" },
+        "reason": { "type": "null" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "null" },
+            "plugin_version": { "type": "string" },
+            "godot_version": { "type": "string" },
+            "session_id": { "type": "null" }
+          }
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "object" }
+      }
+    },
+    {
+      "title": "shutdown envelope",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "shutdown" },
+        "origin": { "const": "server" },
+        "correlation_id": { "type": "null" },
+        "idempotency_id": { "type": "null" },
+        "operation_class": { "const": "control" },
+        "deadline_unix_ms": { "type": "null" },
+        "method": { "type": "null" },
+        "event_name": { "type": "null" },
+        "reason": { "type": "string" },
+        "sent_unix_ms": { "type": "null" },
+        "mutation_status": { "type": "null" },
+        "identity": {
+          "properties": {
+            "server_version": { "type": "string" },
+            "plugin_version": { "type": "null" },
+            "godot_version": { "type": "null" },
+            "session_id": { "type": "string" }
+          }
+        },
+        "project": { "type": "null" },
+        "auth": { "type": "null" },
+        "error": { "type": "null" },
+        "progress": { "type": "null" },
+        "payload": { "type": "null" }
+      }
+    }
+  ]
+}

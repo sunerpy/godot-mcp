@@ -1,0 +1,23 @@
+{
+  "task": 2,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-domain --test lease_ownership -- --exact same_object_alias_converges_to_one_lease",
+      "expected_exit": 0,
+      "assertions": [
+        "one process holds the object-identity lease and performs a descriptor-relative in-root read/CAS write through a lexical/case or junction/bind-mount alias"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-domain --test lease_ownership -- --exact second_owner_symlink_and_retarget_reject",
+      "expected_exit": 0,
+      "assertions": [
+        "the production code path returns conflict/permission_denied for second alias owner, symlink swap, same-object symlink component, root/project replacement, junction/bind retarget, outside path, stale preimage and direct non-loopback config, each failing before cache/socket/file effects"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-2-godot-mcp-server-architecture.txt"
+}

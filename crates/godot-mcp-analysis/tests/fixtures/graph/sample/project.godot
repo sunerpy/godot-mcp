@@ -1,0 +1,21 @@
+; Committed fixture manifest for the Todo 10 semantic-graph tests.
+; The analysis layer never needs a real Godot install to read it.
+
+config_version=5
+
+[application]
+
+config/name="Graph Fixture"
+run/main_scene="res://main.tscn"
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"
+ComboUi="*uid://cneverdeclared1"
+
+[input]
+
+jump={
+"deadzone": 0.5,
+"events": []
+}

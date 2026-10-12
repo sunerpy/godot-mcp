@@ -1,0 +1,5 @@
+# Every file is checked out with the bytes that were committed. Fixtures,
+# scripts and embedded assets are pinned by digest, and a line-ending
+# conversion on checkout (Git for Windows converts by default) would make
+# each of those pins fail on Windows without anything having changed.
+* -text

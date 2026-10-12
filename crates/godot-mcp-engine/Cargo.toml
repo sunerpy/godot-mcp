@@ -1,0 +1,50 @@
+[package]
+name = "godot-mcp-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Bounded Godot runner: executable probing, process supervision/containment, validation/import, canonical .tscn/.tres/ResourceUID writes and LSP/DAP adapters. Never imports transport or UI."
+
+[features]
+default = []
+test-hooks = []
+
+[[bin]]
+name = "godot-mcp-supervisor"
+path = "src/bin/godot-mcp-supervisor.rs"
+
+[dependencies]
+godot-mcp-domain = { workspace = true }
+godot-mcp-analysis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["process", "io-util", "time", "rt", "sync", "macros"] }
+
+# Todo 14 process supervision. Unix uses the already-pinned safe POSIX bindings
+# for setsid/kill/fstat/dup on the weak-boundary anchor path.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["net", "pipe", "stdio"] }
+
+# Windows Job Object containment (no-breakaway + kill-on-close + limits) and the
+# Windows process observations (creation time, image, command line, parent,
+# loopback listener owner, window-station visibility). Only the exact feature modules those call are enabled.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Wdk_System_Threading",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_StationsAndDesktops",
+] }
+
+[dev-dependencies]
+rstest = { workspace = true }
+assert_fs = { workspace = true }
+tempfile = { workspace = true }

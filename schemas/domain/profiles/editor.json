@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.1.0",
+  "profile": "editor",
+  "capabilities": [
+    "read",
+    "project_write",
+    "editor_mutate"
+  ],
+  "tools": [
+    "capabilities.get",
+    "editor.selection.get",
+    "editor.state.get",
+    "gdscript.diagnostics.get",
+    "gdscript.impact.get",
+    "gdscript.references.get",
+    "gdscript.symbols.get",
+    "health.get",
+    "node.create",
+    "node.delete",
+    "node.property.set",
+    "node.reparent",
+    "project.dependencies.get",
+    "project.discover",
+    "project.import.run",
+    "project.info.get",
+    "project.uid.update",
+    "project.validate",
+    "resource.dependencies.get",
+    "resource.tree.get",
+    "resource.update",
+    "scene.dependencies.get",
+    "scene.save",
+    "scene.tree.get",
+    "script.validate"
+  ],
+  "resources": [
+    "godot-mcp://resources/capabilities",
+    "godot-mcp://resources/health",
+    "godot-mcp://resources/project",
+    "godot-mcp://resources/scheduler"
+  ]
+}

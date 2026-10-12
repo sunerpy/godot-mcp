@@ -1,0 +1,592 @@
+{
+ "description": "Shared golden vectors for the contract's tagged Godot values. The domain's GodotValue round-trips every `vectors` entry, and the godot_mcp add-on's variant_codec.gd decodes each one to the named Variant type and encodes it back to an equal tagged value on every supported Godot build; every `refusals` entry is refused by the add-on with a reason containing `reason`.",
+ "vectors": [
+  {
+   "name": "null",
+   "variant_type": "Nil",
+   "tagged": {
+    "type": "null"
+   }
+  },
+  {
+   "name": "bool",
+   "variant_type": "bool",
+   "tagged": {
+    "type": "bool",
+    "value": true
+   }
+  },
+  {
+   "name": "integer",
+   "variant_type": "int",
+   "tagged": {
+    "type": "integer",
+    "value": -42
+   }
+  },
+  {
+   "name": "integer_2_53",
+   "variant_type": "int",
+   "tagged": {
+    "type": "integer",
+    "value": 9007199254740992
+   }
+  },
+  {
+   "name": "float",
+   "variant_type": "float",
+   "tagged": {
+    "type": "float",
+    "value": 1.25
+   }
+  },
+  {
+   "name": "string",
+   "variant_type": "String",
+   "tagged": {
+    "type": "string",
+    "value": "Hello, Godot é"
+   }
+  },
+  {
+   "name": "string_name",
+   "variant_type": "StringName",
+   "tagged": {
+    "type": "string_name",
+    "value": "body_entered"
+   }
+  },
+  {
+   "name": "node_path",
+   "variant_type": "NodePath",
+   "tagged": {
+    "type": "node_path",
+    "value": "Player/Body:shape"
+   }
+  },
+  {
+   "name": "vector2",
+   "variant_type": "Vector2",
+   "tagged": {
+    "type": "vector2",
+    "value": {
+     "x": 1.5,
+     "y": -2.0
+    }
+   }
+  },
+  {
+   "name": "vector2i",
+   "variant_type": "Vector2i",
+   "tagged": {
+    "type": "vector2i",
+    "value": {
+     "x": 3,
+     "y": -4
+    }
+   }
+  },
+  {
+   "name": "rect2",
+   "variant_type": "Rect2",
+   "tagged": {
+    "type": "rect2",
+    "value": {
+     "position": {
+      "x": 1.0,
+      "y": 2.0
+     },
+     "size": {
+      "x": 3.0,
+      "y": 4.0
+     }
+    }
+   }
+  },
+  {
+   "name": "rect2i",
+   "variant_type": "Rect2i",
+   "tagged": {
+    "type": "rect2i",
+    "value": {
+     "position": {
+      "x": 1,
+      "y": 2
+     },
+     "size": {
+      "x": 3,
+      "y": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "vector3",
+   "variant_type": "Vector3",
+   "tagged": {
+    "type": "vector3",
+    "value": {
+     "x": 0.5,
+     "y": 1.0,
+     "z": -1.5
+    }
+   }
+  },
+  {
+   "name": "vector3i",
+   "variant_type": "Vector3i",
+   "tagged": {
+    "type": "vector3i",
+    "value": {
+     "x": 1,
+     "y": 2,
+     "z": 3
+    }
+   }
+  },
+  {
+   "name": "transform2_d",
+   "variant_type": "Transform2D",
+   "tagged": {
+    "type": "transform2_d",
+    "value": {
+     "x": {
+      "x": 1.0,
+      "y": 0.0
+     },
+     "y": {
+      "x": 0.0,
+      "y": 1.0
+     },
+     "origin": {
+      "x": 10.0,
+      "y": 20.0
+     }
+    }
+   }
+  },
+  {
+   "name": "vector4",
+   "variant_type": "Vector4",
+   "tagged": {
+    "type": "vector4",
+    "value": {
+     "x": 1.0,
+     "y": 2.0,
+     "z": 3.0,
+     "w": 4.0
+    }
+   }
+  },
+  {
+   "name": "vector4i",
+   "variant_type": "Vector4i",
+   "tagged": {
+    "type": "vector4i",
+    "value": {
+     "x": 1,
+     "y": 2,
+     "z": 3,
+     "w": 4
+    }
+   }
+  },
+  {
+   "name": "plane",
+   "variant_type": "Plane",
+   "tagged": {
+    "type": "plane",
+    "value": {
+     "normal": {
+      "x": 0.0,
+      "y": 1.0,
+      "z": 0.0
+     },
+     "distance": 2.5
+    }
+   }
+  },
+  {
+   "name": "quaternion",
+   "variant_type": "Quaternion",
+   "tagged": {
+    "type": "quaternion",
+    "value": {
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0,
+     "w": 1.0
+    }
+   }
+  },
+  {
+   "name": "aabb",
+   "variant_type": "AABB",
+   "tagged": {
+    "type": "aabb",
+    "value": {
+     "position": {
+      "x": -1.0,
+      "y": -1.0,
+      "z": -1.0
+     },
+     "size": {
+      "x": 2.0,
+      "y": 2.0,
+      "z": 2.0
+     }
+    }
+   }
+  },
+  {
+   "name": "basis",
+   "variant_type": "Basis",
+   "tagged": {
+    "type": "basis",
+    "value": {
+     "x": {
+      "x": 1.0,
+      "y": 0.0,
+      "z": 0.0
+     },
+     "y": {
+      "x": 0.0,
+      "y": 1.0,
+      "z": 0.0
+     },
+     "z": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.0
+     }
+    }
+   }
+  },
+  {
+   "name": "transform3_d",
+   "variant_type": "Transform3D",
+   "tagged": {
+    "type": "transform3_d",
+    "value": {
+     "basis": {
+      "x": {
+       "x": 1.0,
+       "y": 0.0,
+       "z": 0.0
+      },
+      "y": {
+       "x": 0.0,
+       "y": 1.0,
+       "z": 0.0
+      },
+      "z": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 1.0
+      }
+     },
+     "origin": {
+      "x": 0.0,
+      "y": 2.0,
+      "z": 6.0
+     }
+    }
+   }
+  },
+  {
+   "name": "projection",
+   "variant_type": "Projection",
+   "tagged": {
+    "type": "projection",
+    "value": {
+     "matrix": {
+      "rows": [
+       [
+        1.0,
+        0.0,
+        0.0,
+        0.5
+       ],
+       [
+        0.0,
+        1.0,
+        0.0,
+        0.25
+       ],
+       [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "color",
+   "variant_type": "Color",
+   "tagged": {
+    "type": "color",
+    "value": {
+     "red": 0.5,
+     "green": 0.25,
+     "blue": 0.125,
+     "alpha": 1.0
+    }
+   }
+  },
+  {
+   "name": "array",
+   "variant_type": "Array",
+   "tagged": {
+    "type": "array",
+    "value": [
+     {
+      "type": "integer",
+      "value": 1
+     },
+     {
+      "type": "string",
+      "value": "two"
+     },
+     {
+      "type": "vector2",
+      "value": {
+       "x": 3.0,
+       "y": 4.0
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "dictionary",
+   "variant_type": "Dictionary",
+   "tagged": {
+    "type": "dictionary",
+    "value": {
+     "enabled": {
+      "type": "bool",
+      "value": true
+     },
+     "speed": {
+      "type": "float",
+      "value": 2.5
+     }
+    }
+   }
+  },
+  {
+   "name": "packed_byte_array",
+   "variant_type": "PackedByteArray",
+   "tagged": {
+    "type": "packed_byte_array",
+    "value": [
+     0,
+     127,
+     255
+    ]
+   }
+  },
+  {
+   "name": "packed_int32_array",
+   "variant_type": "PackedInt32Array",
+   "tagged": {
+    "type": "packed_int32_array",
+    "value": [
+     -2147483648,
+     0,
+     2147483647
+    ]
+   }
+  },
+  {
+   "name": "packed_int64_array",
+   "variant_type": "PackedInt64Array",
+   "tagged": {
+    "type": "packed_int64_array",
+    "value": [
+     -9007199254740992,
+     0,
+     9007199254740992
+    ]
+   }
+  },
+  {
+   "name": "packed_float32_array",
+   "variant_type": "PackedFloat32Array",
+   "tagged": {
+    "type": "packed_float32_array",
+    "value": [
+     0.5,
+     -2.25,
+     1024.0
+    ]
+   }
+  },
+  {
+   "name": "packed_float64_array",
+   "variant_type": "PackedFloat64Array",
+   "tagged": {
+    "type": "packed_float64_array",
+    "value": [
+     0.1,
+     -1e-09,
+     123456789.125
+    ]
+   }
+  },
+  {
+   "name": "packed_string_array",
+   "variant_type": "PackedStringArray",
+   "tagged": {
+    "type": "packed_string_array",
+    "value": [
+     "a",
+     "b c"
+    ]
+   }
+  },
+  {
+   "name": "packed_vector2_array",
+   "variant_type": "PackedVector2Array",
+   "tagged": {
+    "type": "packed_vector2_array",
+    "value": [
+     {
+      "x": 0.0,
+      "y": 0.0
+     },
+     {
+      "x": 1.5,
+      "y": 2.5
+     }
+    ]
+   }
+  },
+  {
+   "name": "packed_vector3_array",
+   "variant_type": "PackedVector3Array",
+   "tagged": {
+    "type": "packed_vector3_array",
+    "value": [
+     {
+      "x": 1.0,
+      "y": 2.0,
+      "z": 3.0
+     }
+    ]
+   }
+  },
+  {
+   "name": "packed_color_array",
+   "variant_type": "PackedColorArray",
+   "tagged": {
+    "type": "packed_color_array",
+    "value": [
+     {
+      "red": 1.0,
+      "green": 0.0,
+      "blue": 0.0,
+      "alpha": 1.0
+     },
+     {
+      "red": 0.0,
+      "green": 0.5,
+      "blue": 1.0,
+      "alpha": 0.25
+     }
+    ]
+   }
+  },
+  {
+   "name": "resource",
+   "variant_type": "Object",
+   "tagged": {
+    "type": "resource",
+    "value": {
+     "resource": "res://codec/sample.tres",
+     "resource_type": "Resource",
+     "uid": null
+    }
+   }
+  }
+ ],
+ "refusals": [
+  {
+   "name": "object_reference",
+   "tagged": {
+    "type": "object",
+    "value": {
+     "id": "object_0123456789abcdef",
+     "class_name": "Node"
+    }
+   },
+   "reason": "live object reference"
+  },
+  {
+   "name": "integer_beyond_2_53",
+   "tagged": {
+    "type": "integer",
+    "value": 9007199254740994
+   },
+   "reason": "2^53"
+  },
+  {
+   "name": "fractional_integer",
+   "tagged": {
+    "type": "integer",
+    "value": 1.5
+   },
+   "reason": "whole number"
+  },
+  {
+   "name": "unknown_tag",
+   "tagged": {
+    "type": "callable",
+    "value": null
+   },
+   "reason": "not part of the contract"
+  },
+  {
+   "name": "vector_missing_field",
+   "tagged": {
+    "type": "vector2",
+    "value": {
+     "x": 1.0
+    }
+   },
+   "reason": "missing numeric field"
+  },
+  {
+   "name": "byte_out_of_range",
+   "tagged": {
+    "type": "packed_byte_array",
+    "value": [
+     256
+    ]
+   },
+   "reason": "whole numbers"
+  },
+  {
+   "name": "missing_resource",
+   "tagged": {
+    "type": "resource",
+    "value": {
+     "resource": "res://codec/absent.tres",
+     "resource_type": "Resource",
+     "uid": null
+    }
+   },
+   "reason": "does not exist"
+  }
+ ]
+}

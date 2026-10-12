@@ -1,0 +1,28 @@
+[package]
+name = "godot-mcp-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "The frozen Todo 19 loopback bridge protocol: versioned envelope, self-implemented RFC 6455 text-frame codec, rendezvous authentication, three-state mutation contract and the golden vectors the pinned GDScript codec must reproduce. No editor plane ships. Never imports transport or UI."
+
+[features]
+default = []
+test-hooks = []
+
+[dependencies]
+godot-mcp-domain = { workspace = true }
+godot-mcp-analysis = { workspace = true }
+godot-mcp-engine = { workspace = true }
+getrandom = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "time", "rt", "sync", "macros"] }
+
+[dev-dependencies]
+rstest = { workspace = true }

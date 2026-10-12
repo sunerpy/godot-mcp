@@ -1,0 +1,23 @@
+{
+  "task": 4,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test evidence_redaction -- --exact stdio_stderr_separation_smoke",
+      "expected_exit": 0,
+      "assertions": [
+        "captured stdout contains only protocol frames while stderr carries structured logs"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test evidence_redaction -- --exact secret_and_source_logging_is_redacted",
+      "expected_exit": 0,
+      "assertions": [
+        "a deliberate token/source logging fixture is replaced by [REDACTED], failing if raw bytes occur"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-4-godot-mcp-server-architecture.txt"
+}

@@ -1,0 +1,12 @@
+; A committed .tres fixture: the resource -> script leg of the traced chain.
+[gd_resource type="Buff" format=3 uid="uid://cgraphbuffres01"]
+
+[ext_resource type="Script" path="res://scripts/base_actor.gd" id="1_buff"]
+
+[sub_resource type="Curve" id="Curve_ramp"]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0]
+
+[resource]
+script = ExtResource("1_buff")
+ramp = SubResource("Curve_ramp")
+duration = 2.5

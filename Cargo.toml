@@ -1,0 +1,131 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/godot-mcp-domain",
+    "crates/godot-mcp-analysis",
+    "crates/godot-mcp-engine",
+    "crates/godot-mcp-bridge",
+    "crates/godot-mcp-server",
+    "crates/godot-mcp-cli",
+    "crates/qualification-tools",
+]
+
+# ---------------------------------------------------------------------------
+# Shared package metadata. MSRV is 1.96 (see rust-toolchain.toml, pinned to the
+# exact channel 1.96.0 — never the floating `stable` alias).
+# ---------------------------------------------------------------------------
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+authors = ["godot-mcp contributors"]
+repository = "https://github.com/sunerpy/godot-mcp"
+homepage = "https://firlab.app/godot-mcp/"
+publish = false
+
+# ---------------------------------------------------------------------------
+# Exact direct dependency baseline frozen by the approved plan (Scope, line 24).
+# Every direct crate is pinned with `=` exact-version semantics. Only the
+# approved features are enabled; OpenSSL and native-tls are prohibited — all TLS
+# goes through rustls. gdext / crate `godot` / `.gdextension` never appear.
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+# --- MCP + async runtime -------------------------------------------------
+rmcp = { version = "=2.2.0", default-features = false }
+rmcp-macros = { version = "=2.2.0" }
+tokio = { version = "=1.53.1", default-features = false }
+tokio-util = { version = "=0.7.19", default-features = false }
+futures = { version = "=0.3.33", default-features = false }
+async-trait = { version = "=0.1.91" }
+
+# --- Optional HTTP transport (feature `http`) ----------------------------
+axum = { version = "=0.8.9", default-features = false }
+tower = { version = "=0.5.3", default-features = false }
+tower-http = { version = "=0.7.0", default-features = false }
+
+# --- Optional HTTP auth (feature `auth`) ---------------------------------
+# jsonwebtoken is pinned exactly with `aws_lc_rs` to remove `rsa 0.9.10`:
+# RUSTSEC-2023-0071 has `patched = []`, so `rust_crypto` has no safe upgrade.
+# On musl targets with pre-generated bindings, aws-lc-sys selects `CcBuilder` and
+# statically links its object code (`readelf -d`: `NEEDED` = 0). The plan's line-24
+# OpenSSL/native-tls prohibition above remains unchanged.
+jsonwebtoken = { version = "=10.4.0", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+# reqwest pinned exactly; rustls only (never default-tls/native-tls/OpenSSL),
+# with json. In reqwest 0.13.x the rustls TLS feature is spelled `rustls`.
+reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "http2", "json"] }
+
+# --- OS object identity / handle-relative filesystem (Todo 2) ------------
+# Safe POSIX syscall bindings. Used by the domain layer for descriptor-relative
+# filesystem operations and by server observability to compare an opened log
+# file's identity with stdout. The only in-tree `unsafe` on Unix is the macOS
+# process observation (`sysctl`/`libproc`), which rustix does not cover.
+rustix = { version = "=1.1.4", default-features = false, features = ["std", "fs", "process"] }
+# Windows syscall bindings for the same handle-relative primitives: NT
+# handle-relative opens with reparse-point nofollow, volume-serial + 128-bit
+# file-ID object identity, `LockFileEx` advisory locking, handle-relative
+# non-replacing renames, and token/ACL private-object validation. Only the exact
+# feature modules the domain layer calls are enabled.
+windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Kernel",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
+# --- Per-launch secret entropy (Todo 19) ---------------------------------
+# The OS CSPRNG, and nothing else: the bridge's 256-bit per-launch rendezvous
+# secret must not come from a hand-rolled PRNG. Already present in the locked
+# graph transitively (rand/ring/tempfile), so pinning it here adds no new crate;
+# the exact pin makes the dependency an explicit, reviewable choice.
+getrandom = "=0.4.3"
+
+# --- Static analysis -----------------------------------------------------
+tree-sitter = "=0.26.11"
+tree-sitter-gdscript = "=6.1.0"
+streaming-iterator = "=0.1.9"
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
+notify = "=8.2.0"
+
+# --- Serialization / schema ---------------------------------------------
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+toml = "=0.9.8"
+schemars = "=1.2.1"
+thiserror = "=2.0.19"
+anyhow = "=1.0.104"
+sha2 = "=0.11.0"
+
+# --- Logging -------------------------------------------------------------
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["env-filter", "fmt", "json", "std"] }
+
+# --- CLI -----------------------------------------------------------------
+clap = { version = "=4.6.4", features = ["derive", "env"] }
+
+# --- Test / dev ----------------------------------------------------------
+rstest = "=0.26.1"
+assert_cmd = "=2.2.2"
+assert_fs = "=1.1.4"
+predicates = "=3.1.4"
+tempfile = "=3.27.0"
+
+# --- Internal crates -----------------------------------------------------
+godot-mcp-domain = { path = "crates/godot-mcp-domain" }
+godot-mcp-analysis = { path = "crates/godot-mcp-analysis" }
+godot-mcp-engine = { path = "crates/godot-mcp-engine" }
+godot-mcp-bridge = { path = "crates/godot-mcp-bridge" }
+godot-mcp-server = { path = "crates/godot-mcp-server" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

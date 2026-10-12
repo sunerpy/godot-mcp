@@ -1,0 +1,1880 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContractSchemaCatalog",
+  "description": "Aggregate type used solely to generate the committed public contract schema.",
+  "type": "object",
+  "properties": {
+    "artifact": {
+      "$ref": "#/$defs/ArtifactContract"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/CapabilitiesReport"
+    },
+    "error": {
+      "$ref": "#/$defs/OutcomeError"
+    },
+    "health": {
+      "$ref": "#/$defs/HealthReport"
+    },
+    "operation_effect": {
+      "$ref": "#/$defs/OperationEffect"
+    },
+    "policy": {
+      "$ref": "#/$defs/PolicyDecision"
+    },
+    "project_identity": {
+      "$ref": "#/$defs/ProjectIdentity"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "scheduler": {
+      "$ref": "#/$defs/SchedulerState"
+    },
+    "static_result": {
+      "$ref": "#/$defs/StaticResult"
+    },
+    "typed_value": {
+      "$ref": "#/$defs/GodotValue"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "project_identity",
+    "provenance",
+    "typed_value",
+    "static_result",
+    "operation_effect",
+    "health",
+    "capabilities",
+    "scheduler",
+    "policy",
+    "artifact",
+    "error"
+  ],
+  "$defs": {
+    "Aabb": {
+      "description": "Typed Godot axis-aligned bounding box.",
+      "type": "object",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/Vector3"
+        },
+        "size": {
+          "$ref": "#/$defs/Vector3"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "size"
+      ]
+    },
+    "ArtifactContract": {
+      "description": "Complete public artifact contract, intentionally incapable of carrying a path.",
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/ArtifactId"
+        },
+        "expires_at_unix_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "metadata": {
+          "$ref": "#/$defs/ArtifactMetadata"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactOwner"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "ranges": {
+          "$ref": "#/$defs/RangeSemantics"
+        },
+        "resource_uri": {
+          "$ref": "#/$defs/ArtifactResourceUri"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_id",
+        "resource_uri",
+        "project",
+        "metadata",
+        "expires_at_unix_ms",
+        "ranges"
+      ]
+    },
+    "ArtifactId": {
+      "description": "Validated opaque `artifact_` identifier.",
+      "type": "string"
+    },
+    "ArtifactKind": {
+      "description": "Public artifact media family.",
+      "type": "string",
+      "enum": [
+        "screenshot",
+        "recording",
+        "diagnostic_bundle",
+        "report",
+        "export"
+      ]
+    },
+    "ArtifactMetadata": {
+      "description": "Public artifact metadata. No storage locator is representable.",
+      "type": "object",
+      "properties": {
+        "byte_length": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created_at_unix_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "media_type",
+        "byte_length",
+        "sha256",
+        "created_at_unix_ms"
+      ]
+    },
+    "ArtifactOwner": {
+      "description": "Principal/session restrictions attached to an artifact.",
+      "type": "object",
+      "properties": {
+        "principal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrincipalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ArtifactResourceUri": {
+      "description": "Opaque public URI for a generated artifact.",
+      "type": "string"
+    },
+    "Basis": {
+      "description": "Typed Godot basis.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/Vector3"
+        },
+        "y": {
+          "$ref": "#/$defs/Vector3"
+        },
+        "z": {
+          "$ref": "#/$defs/Vector3"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "CapabilitiesReport": {
+      "description": "Public capability result with source and confidence evidence.",
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "uniqueItems": true
+        },
+        "manifest": {
+          "$ref": "#/$defs/ProfileManifest"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project",
+        "manifest",
+        "available",
+        "provenance"
+      ]
+    },
+    "Capability": {
+      "description": "Stable public capability identifiers.",
+      "type": "string",
+      "enum": [
+        "read",
+        "project_write",
+        "editor_mutate",
+        "runtime_execute",
+        "export_destructive"
+      ]
+    },
+    "CapabilityProfile": {
+      "description": "Capability profiles exposed by the public contract. Selection is explicit\nand independent of how an outcome is requested.\n\n`Full` is the union of `Core`, `Editor` and `Runtime`, excluding the\nseparately gated (and first-release-absent) unsafe execution capability.",
+      "oneOf": [
+        {
+          "description": "Read-only discovery and analysis.",
+          "type": "string",
+          "const": "core"
+        },
+        {
+          "description": "Adds the project-write and editor-mutation methods this build implements.",
+          "type": "string",
+          "const": "editor"
+        },
+        {
+          "description": "Adds the runtime-execution and export methods this build implements.",
+          "type": "string",
+          "const": "runtime"
+        },
+        {
+          "description": "Union of the above, excluding unsafe execution.",
+          "type": "string",
+          "const": "full"
+        }
+      ]
+    },
+    "Color": {
+      "description": "Typed Godot color with linear component values.",
+      "type": "object",
+      "properties": {
+        "alpha": {
+          "type": "number",
+          "format": "double"
+        },
+        "blue": {
+          "type": "number",
+          "format": "double"
+        },
+        "green": {
+          "type": "number",
+          "format": "double"
+        },
+        "red": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "red",
+        "green",
+        "blue",
+        "alpha"
+      ]
+    },
+    "ComponentHealth": {
+      "description": "One bounded health component result.",
+      "type": "object",
+      "properties": {
+        "component": {
+          "$ref": "#/$defs/ComponentName"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "component",
+        "status"
+      ]
+    },
+    "ComponentName": {
+      "description": "Named public health component.",
+      "type": "string",
+      "enum": [
+        "project",
+        "index",
+        "godot",
+        "editor",
+        "runtime",
+        "scheduler",
+        "authorization"
+      ]
+    },
+    "Confidence": {
+      "description": "Confidence of a static answer. Partial scanners and dynamic GDScript are\nnever represented as certain: every static answer carries provenance and one\nof these confidence levels.",
+      "oneOf": [
+        {
+          "description": "Statically proven.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Inferred from heuristics; the single best candidate is not guaranteed.",
+          "type": "string",
+          "const": "inferred"
+        },
+        {
+          "description": "Could not be resolved.",
+          "type": "string",
+          "const": "unresolved"
+        }
+      ]
+    },
+    "ContractVersion": {
+      "description": "Exact version marker carried by every top-level public contract.",
+      "oneOf": [
+        {
+          "description": "Initial frozen contract.",
+          "type": "string",
+          "const": "0.1.0"
+        },
+        {
+          "description": "Implementation-backed discovery: a profile lists only implemented methods.",
+          "type": "string",
+          "const": "0.2.0"
+        }
+      ]
+    },
+    "EffectDisposition": {
+      "description": "Stable disposition of an attempted effect.",
+      "type": "string",
+      "enum": [
+        "no_change",
+        "committed",
+        "compensated",
+        "quarantined",
+        "cancelled"
+      ]
+    },
+    "ErrorKind": {
+      "description": "Stable outcome-error taxonomy shared by every public operation.",
+      "type": "string",
+      "enum": [
+        "invalid_input",
+        "not_found",
+        "conflict",
+        "unsupported",
+        "permission_denied",
+        "timeout",
+        "cancelled",
+        "unavailable",
+        "uncertain",
+        "internal"
+      ]
+    },
+    "GodotValue": {
+      "description": "Complete first-release typed Godot value algebra.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "null"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "integer"
+            },
+            "value": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "float"
+            },
+            "value": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "string_name"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "node_path"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "vector2"
+            },
+            "value": {
+              "$ref": "#/$defs/Vector2"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "vector2i"
+            },
+            "value": {
+              "$ref": "#/$defs/Vector2i"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "rect2"
+            },
+            "value": {
+              "$ref": "#/$defs/Rect2"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "rect2i"
+            },
+            "value": {
+              "$ref": "#/$defs/Rect2i"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "vector3"
+            },
+            "value": {
+              "$ref": "#/$defs/Vector3"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "vector3i"
+            },
+            "value": {
+              "$ref": "#/$defs/Vector3i"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "transform2_d"
+            },
+            "value": {
+              "$ref": "#/$defs/Transform2D"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "vector4"
+            },
+            "value": {
+              "$ref": "#/$defs/Vector4"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "vector4i"
+            },
+            "value": {
+              "$ref": "#/$defs/Vector4i"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "plane"
+            },
+            "value": {
+              "$ref": "#/$defs/Plane"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "quaternion"
+            },
+            "value": {
+              "$ref": "#/$defs/Quaternion"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "aabb"
+            },
+            "value": {
+              "$ref": "#/$defs/Aabb"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "basis"
+            },
+            "value": {
+              "$ref": "#/$defs/Basis"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "transform3_d"
+            },
+            "value": {
+              "$ref": "#/$defs/Transform3D"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "projection"
+            },
+            "value": {
+              "$ref": "#/$defs/Projection"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "color"
+            },
+            "value": {
+              "$ref": "#/$defs/Color"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/GodotValue"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "dictionary"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/GodotValue"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_byte_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_int32_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_int64_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_float32_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_float64_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_string_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_vector2_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Vector2"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_vector3_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Vector3"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "packed_color_array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Color"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "resource"
+            },
+            "value": {
+              "$ref": "#/$defs/ResourceReference"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "object"
+            },
+            "value": {
+              "$ref": "#/$defs/ObjectReference"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ]
+        }
+      ]
+    },
+    "HealthReport": {
+      "description": "Public health result.",
+      "type": "object",
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentHealth"
+          }
+        },
+        "observed_at_unix_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project",
+        "status",
+        "components",
+        "observed_at_unix_ms"
+      ]
+    },
+    "HealthStatus": {
+      "description": "Overall or component health state.",
+      "type": "string",
+      "enum": [
+        "ready",
+        "degraded",
+        "unavailable"
+      ]
+    },
+    "Matrix4": {
+      "description": "Four-by-four matrix used by a Godot projection.",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "maxItems": 4,
+            "minItems": 4
+          },
+          "maxItems": 4,
+          "minItems": 4
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rows"
+      ]
+    },
+    "ObjectReference": {
+      "description": "An opaque live-object reference.",
+      "type": "object",
+      "properties": {
+        "class_name": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/OpaqueObjectId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "class_name"
+      ]
+    },
+    "OpaqueObjectId": {
+      "description": "Validated opaque `object_` identifier.",
+      "type": "string"
+    },
+    "OperationClass": {
+      "description": "Public operation class used for effects and policy.",
+      "type": "string",
+      "enum": [
+        "read",
+        "project_mutation",
+        "editor_mutation",
+        "runtime_execution",
+        "destructive_export"
+      ]
+    },
+    "OperationEffect": {
+      "description": "Public summary of an operation's effects.",
+      "type": "object",
+      "properties": {
+        "affected_resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceUri"
+          },
+          "uniqueItems": true
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactId"
+          },
+          "uniqueItems": true
+        },
+        "class": {
+          "$ref": "#/$defs/OperationClass"
+        },
+        "disposition": {
+          "$ref": "#/$defs/EffectDisposition"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "plane": {
+          "$ref": "#/$defs/OperationPlane"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "operation",
+        "plane",
+        "class",
+        "disposition",
+        "affected_resources",
+        "artifacts"
+      ]
+    },
+    "OperationPlane": {
+      "description": "Public operation plane, expressed by outcome rather than implementation.",
+      "type": "string",
+      "enum": [
+        "static",
+        "project",
+        "editor",
+        "runtime"
+      ]
+    },
+    "OutcomeError": {
+      "description": "Stable public outcome error.",
+      "type": "object",
+      "properties": {
+        "details": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/GodotValue"
+          }
+        },
+        "kind": {
+          "$ref": "#/$defs/ErrorKind"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "message",
+        "retryable",
+        "details"
+      ]
+    },
+    "Plane": {
+      "description": "Typed Godot plane.",
+      "type": "object",
+      "properties": {
+        "distance": {
+          "type": "number",
+          "format": "double"
+        },
+        "normal": {
+          "$ref": "#/$defs/Vector3"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "normal",
+        "distance"
+      ]
+    },
+    "PolicyDecision": {
+      "description": "Public policy decision without credentials, permits, or implementation data.",
+      "type": "object",
+      "properties": {
+        "decision_id": {
+          "type": "string"
+        },
+        "principal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrincipalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "reason": {
+          "$ref": "#/$defs/PolicyReason"
+        },
+        "required_capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/PolicyVerdict"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "decision_id",
+        "project",
+        "required_capability",
+        "verdict",
+        "reason"
+      ]
+    },
+    "PolicyReason": {
+      "description": "Stable, non-sensitive reason for a policy verdict.",
+      "type": "string",
+      "enum": [
+        "granted",
+        "missing_capability",
+        "principal_mismatch",
+        "session_mismatch",
+        "project_generation_mismatch",
+        "project_quarantined",
+        "scheduler_unavailable"
+      ]
+    },
+    "PolicyVerdict": {
+      "description": "Public policy verdict.",
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "PrincipalId": {
+      "description": "Validated opaque `principal_` identifier.",
+      "type": "string"
+    },
+    "ProfileManifest": {
+      "description": "Stable capability, tool, and resource names for one public profile.",
+      "type": "object",
+      "properties": {
+        "bootstrap_tools": {
+          "description": "Tools listed while a server launched with a workspace authority has not\nbound a project yet. Absent from the version 0.1 manifests, which had no\nbootstrap state.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "uniqueItems": true
+        },
+        "profile": {
+          "$ref": "#/$defs/CapabilityProfile"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "tools": {
+          "description": "Tools listed while the server is bound to a project.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "profile",
+        "capabilities",
+        "tools",
+        "resources"
+      ]
+    },
+    "ProjectIdentity": {
+      "description": "Public project identity derived from Todo 2's held-object lease identity.\n\nThe public form is a one-way opaque digest plus generation. A path spelling\nis deliberately not a component of identity and cannot be serialized here.",
+      "type": "object",
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "object_id": {
+          "$ref": "#/$defs/ProjectObjectId"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "object_id",
+        "generation"
+      ]
+    },
+    "ProjectObjectId": {
+      "description": "Validated opaque `project_` identifier.",
+      "type": "string"
+    },
+    "ProjectResource": {
+      "description": "Project-relative Godot `res://` resource name, never a local path.",
+      "type": "string"
+    },
+    "Projection": {
+      "description": "Typed Godot projection.",
+      "type": "object",
+      "properties": {
+        "matrix": {
+          "$ref": "#/$defs/Matrix4"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "matrix"
+      ]
+    },
+    "Provenance": {
+      "description": "Evidence and honesty classification carried by every public static result.",
+      "type": "object",
+      "properties": {
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "project_generation": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        },
+        "source": {
+          "$ref": "#/$defs/ProvenanceSource"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "source",
+        "confidence",
+        "subject",
+        "project_generation"
+      ]
+    },
+    "ProvenanceSource": {
+      "description": "Evidence class supporting a public static answer.",
+      "oneOf": [
+        {
+          "description": "Direct syntax-tree evidence.",
+          "type": "string",
+          "const": "static_syntax"
+        },
+        {
+          "description": "A complete deterministic index lookup.",
+          "type": "string",
+          "const": "static_index"
+        },
+        {
+          "description": "A project setting or descriptor parsed without ambiguity.",
+          "type": "string",
+          "const": "project_metadata"
+        },
+        {
+          "description": "Heuristic evidence that may have more than one interpretation.",
+          "type": "string",
+          "const": "heuristic"
+        },
+        {
+          "description": "A reference whose target depends on runtime values.",
+          "type": "string",
+          "const": "dynamic_reference"
+        },
+        {
+          "description": "Runtime-observed evidence.",
+          "type": "string",
+          "const": "runtime_observation"
+        },
+        {
+          "description": "Authoritative editor state.",
+          "type": "string",
+          "const": "editor_observation"
+        },
+        {
+          "description": "No usable evidence resolved the subject.",
+          "type": "string",
+          "const": "unresolved"
+        }
+      ]
+    },
+    "Quaternion": {
+      "description": "Typed Godot quaternion.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "type": "number",
+          "format": "double"
+        },
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        },
+        "z": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z",
+        "w"
+      ]
+    },
+    "RangeSemantics": {
+      "description": "Limits and supported semantics for artifact reads.",
+      "type": "object",
+      "properties": {
+        "accepts_byte_ranges": {
+          "type": "boolean"
+        },
+        "maximum_response_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "total_bytes",
+        "maximum_response_bytes",
+        "accepts_byte_ranges"
+      ]
+    },
+    "Rect2": {
+      "description": "Typed Godot `Rect2`.",
+      "type": "object",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/Vector2"
+        },
+        "size": {
+          "$ref": "#/$defs/Vector2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "size"
+      ]
+    },
+    "Rect2i": {
+      "description": "Typed Godot `Rect2i`.",
+      "type": "object",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/Vector2i"
+        },
+        "size": {
+          "$ref": "#/$defs/Vector2i"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "size"
+      ]
+    },
+    "ResourceReference": {
+      "description": "A Godot project resource reference without a local filesystem path.",
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/ProjectResource"
+        },
+        "resource_type": {
+          "type": "string"
+        },
+        "uid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "resource",
+        "resource_type"
+      ]
+    },
+    "ResourceUri": {
+      "description": "Opaque URI for a non-artifact public resource.",
+      "type": "string"
+    },
+    "SchedulerMode": {
+      "description": "Scheduler admission state.",
+      "type": "string",
+      "enum": [
+        "accepting",
+        "draining",
+        "quarantined",
+        "stopped"
+      ]
+    },
+    "SchedulerState": {
+      "description": "Public bounded scheduler state.",
+      "type": "object",
+      "properties": {
+        "concurrency_limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "mode": {
+          "$ref": "#/$defs/SchedulerMode"
+        },
+        "observed_at_unix_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "queue_limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "queued": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "running": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project",
+        "mode",
+        "running",
+        "queued",
+        "concurrency_limit",
+        "queue_limit",
+        "observed_at_unix_ms"
+      ]
+    },
+    "SessionId": {
+      "description": "Validated opaque `session_` identifier.",
+      "type": "string"
+    },
+    "StaticResult": {
+      "description": "A public static result. Provenance and confidence cannot be omitted.",
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GodotValue"
+          }
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/ContractVersion"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "project",
+        "data",
+        "provenance"
+      ]
+    },
+    "Transform2D": {
+      "description": "Typed Godot 2D transform.",
+      "type": "object",
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/Vector2"
+        },
+        "x": {
+          "$ref": "#/$defs/Vector2"
+        },
+        "y": {
+          "$ref": "#/$defs/Vector2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "origin"
+      ]
+    },
+    "Transform3D": {
+      "description": "Typed Godot 3D transform.",
+      "type": "object",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/Basis"
+        },
+        "origin": {
+          "$ref": "#/$defs/Vector3"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "basis",
+        "origin"
+      ]
+    },
+    "Vector2": {
+      "description": "Typed Godot `Vector2` value.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "Vector2i": {
+      "description": "Typed Godot `Vector2i` value.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "y": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "Vector3": {
+      "description": "Typed Godot `Vector3` value.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        },
+        "z": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "Vector3i": {
+      "description": "Typed Godot `Vector3i` value.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "y": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "z": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "Vector4": {
+      "description": "Typed Godot `Vector4` value.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "type": "number",
+          "format": "double"
+        },
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        },
+        "z": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z",
+        "w"
+      ]
+    },
+    "Vector4i": {
+      "description": "Typed Godot `Vector4i` value.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "x": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "y": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "z": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z",
+        "w"
+      ]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "task": 35,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-cli --test ci_matrix_lock -- --exact ci_matrix_lock_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "exact lock-driven jobs plus a clean release-graph audit"
+      ]
+    },
+    {
+      "command": "RUSTUP_TOOLCHAIN=1.96.0 make release-gates-harness CANDIDATE_WORKTREE=tests/fixtures/release-candidate SOURCE_COMMIT=1111111111111111111111111111111111111111 SOURCE_TREE=2222222222222222222222222222222222222222 ARCHIVES_DIR=tests/fixtures/release-archives OUTPUT=target/qa-task-35/release-gates.json OUTPUT_SHA=target/qa-task-35/release-gates.sha256 QUALIFYING=0",
+      "expected_exit": 0,
+      "assertions": [
+        "produces schema-valid non-qualifying fixture release-gates output only"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-cli --test ci_matrix_lock -- --exact ci_matrix_lock_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "alias/URL/hash/platform/gdext drift, missing/skipped/unavailable/nonzero required checks, and direct QUALIFYING=1 invocation outside Todo 37's producer context are all rejected with no canonical final gate output"
+      ]
+    },
+    {
+      "command": "cargo test -p godot-mcp-cli --test ci_matrix_lock -- --exact missing_command_receipt_fails_binding",
+      "expected_exit": 0,
+      "assertions": [
+        "a receipt missing command evidence fails with the binding-mismatch sentinel"
+      ]
+    },
+    {
+      "command": "cargo test -p godot-mcp-cli --test ci_matrix_lock -- --exact switched_archive_set_fails_receipt_binding",
+      "expected_exit": 0,
+      "assertions": [
+        "unchanged packaged-smoke receipts reject a byte-different qualification archive set"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-35-godot-mcp-server-architecture.txt"
+}

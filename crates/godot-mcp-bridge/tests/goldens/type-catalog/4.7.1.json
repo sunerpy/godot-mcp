@@ -1,0 +1,180 @@
+{
+ "Area2D": {
+  "inherits": [
+   "CollisionObject2D",
+   "Node2D",
+   "CanvasItem",
+   "Node",
+   "Object"
+  ],
+  "properties": [
+   "angular_damp:float",
+   "angular_damp_space_override:int",
+   "audio_bus_name:StringName",
+   "audio_bus_override:bool",
+   "gravity:float",
+   "gravity_direction:Vector2",
+   "gravity_point:bool",
+   "gravity_point_center:Vector2",
+   "gravity_point_unit_distance:float",
+   "gravity_space_override:int",
+   "linear_damp:float",
+   "linear_damp_space_override:int",
+   "monitorable:bool",
+   "monitoring:bool",
+   "priority:int"
+  ],
+  "signals": [
+   "area_entered",
+   "area_exited",
+   "area_shape_entered",
+   "area_shape_exited",
+   "body_entered",
+   "body_exited",
+   "body_shape_entered",
+   "body_shape_exited"
+  ]
+ },
+ "Camera3D": {
+  "inherits": [
+   "Node3D",
+   "Node",
+   "Object"
+  ],
+  "properties": [
+   "attributes:Object",
+   "compositor:Object",
+   "cull_mask:int",
+   "current:bool",
+   "doppler_tracking:int",
+   "environment:Object",
+   "far:float",
+   "fov:float",
+   "frustum_offset:Vector2",
+   "h_offset:float",
+   "keep_aspect:int",
+   "near:float",
+   "projection:int",
+   "size:float",
+   "v_offset:float"
+  ],
+  "signals": []
+ },
+ "CharacterBody2D": {
+  "inherits": [
+   "PhysicsBody2D",
+   "CollisionObject2D",
+   "Node2D",
+   "CanvasItem",
+   "Node",
+   "Object"
+  ],
+  "properties": [
+   "floor_block_on_wall:bool",
+   "floor_constant_speed:bool",
+   "floor_max_angle:float",
+   "floor_snap_length:float",
+   "floor_stop_on_slope:bool",
+   "max_slides:int",
+   "motion_mode:int",
+   "platform_floor_layers:int",
+   "platform_on_leave:int",
+   "platform_wall_layers:int",
+   "safe_margin:float",
+   "slide_on_ceiling:bool",
+   "up_direction:Vector2",
+   "velocity:Vector2",
+   "wall_min_slide_angle:float"
+  ],
+  "signals": []
+ },
+ "Label": {
+  "inherits": [
+   "Control",
+   "CanvasItem",
+   "Node",
+   "Object"
+  ],
+  "properties": [
+   "autowrap_mode:int",
+   "autowrap_trim_flags:int",
+   "clip_text:bool",
+   "ellipsis_char:String",
+   "horizontal_alignment:int",
+   "justification_flags:int",
+   "label_settings:Object",
+   "language:String",
+   "lines_skipped:int",
+   "max_lines_visible:int",
+   "paragraph_separator:String",
+   "structured_text_bidi_override:int",
+   "structured_text_bidi_override_options:Array",
+   "tab_stops:PackedFloat32Array",
+   "text:String",
+   "text_direction:int",
+   "text_overrun_behavior:int",
+   "uppercase:bool",
+   "vertical_alignment:int",
+   "visible_characters:int",
+   "visible_characters_behavior:int",
+   "visible_ratio:float"
+  ],
+  "signals": []
+ },
+ "Node": {
+  "inherits": [
+   "Object"
+  ],
+  "properties": [
+   "auto_translate_mode:int",
+   "editor_description:String",
+   "multiplayer:Object",
+   "name:StringName",
+   "owner:Object",
+   "physics_interpolation_mode:int",
+   "process_mode:int",
+   "process_physics_priority:int",
+   "process_priority:int",
+   "process_thread_group:int",
+   "process_thread_group_order:int",
+   "process_thread_messages:int",
+   "scene_file_path:String",
+   "unique_name_in_owner:bool"
+  ],
+  "signals": [
+   "child_entered_tree",
+   "child_exiting_tree",
+   "child_order_changed",
+   "editor_description_changed",
+   "editor_state_changed",
+   "ready",
+   "renamed",
+   "replacing_by",
+   "tree_entered",
+   "tree_exited",
+   "tree_exiting"
+  ]
+ },
+ "Node2D": {
+  "inherits": [
+   "CanvasItem",
+   "Node",
+   "Object"
+  ],
+  "properties": [
+   "global_position:Vector2",
+   "global_rotation:float",
+   "global_rotation_degrees:float",
+   "global_scale:Vector2",
+   "global_skew:float",
+   "global_transform:Transform2D",
+   "position:Vector2",
+   "rotation:float",
+   "rotation_degrees:float",
+   "scale:Vector2",
+   "skew:float",
+   "transform:Transform2D"
+  ],
+  "signals": []
+ }
+}

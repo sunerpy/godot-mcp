@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": false,
+  "pull-request-title-pattern": "chore: release${component} ${version}",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "godot-mcp",
+      "bump-minor-pre-major": true,
+      "initial-version": "0.1.0",
+      "include-v-in-tag": true,
+      "draft": true,
+      "force-tag-creation": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(!@.source)].version"
+        },
+        {
+          "type": "json",
+          "path": ".github/scaffold.json",
+          "jsonpath": "$.placeholders.CURRENT_VERSION"
+        }
+      ]
+    }
+  }
+}

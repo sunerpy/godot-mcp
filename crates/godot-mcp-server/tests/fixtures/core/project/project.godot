@@ -1,0 +1,25 @@
+; Committed fixture manifest for the Todo 12 core-outcome tests.
+;
+; This fixture is owned by `crates/godot-mcp-server/tests/core_outcomes.rs` and is
+; deliberately NOT shared with another todo's fixture, so an edit here cannot
+; move another todo's golden. No Godot binary is required and none is launched:
+; every fact below is derived by the Todo 7-11 static layers.
+
+config_version=5
+
+[application]
+
+config/name="Core Outcome Fixture"
+config/description="Static-only fixture for the core capability profile."
+run/main_scene="res://scenes/main.tscn"
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"
+
+[input]
+
+jump={
+"deadzone": 0.5,
+"events": []
+}

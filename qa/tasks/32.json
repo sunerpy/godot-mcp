@@ -1,0 +1,25 @@
+{
+  "task": 32,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test outcome_router -- --exact outcome_router_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "one client workflow routes analyze, validate, edit, run, inspect, capture and composed outcomes to the correct planes through the production `ProjectRuntime::open` assembly, with the cross-plane idempotency gate, durable store and survivor probe proven bound on that production path",
+        "the shipped planes really execute: a static/file-plane write commits, refreshes the affected snapshot only after the commit is proven, and its exact-context identity replays without a second effect, while a lagging static index is refreshed before a read is answered",
+        "every cancelled editor/runtime-plane execution is refused with `unavailable` naming the missing plane instead of falling back to raw text or stale disk state; no real `EditorUndoRedoManager` edit, running-game inspection or screenshot capture is executed, because Todos 20-25 are cancelled"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test outcome_router -- --exact outcome_router_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "an unsaved editor conflict refuses engine/text overwrite and returns an actionable conflict instead of fallback"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-32-godot-mcp-server-architecture.json"
+}

@@ -1,0 +1,10 @@
+{
+  "task": 20,
+  "status": "cancelled",
+  "cancelled_on": "2026-07-28",
+  "cancelled_reason": "Todo 20 (thin pure-GDScript EditorPlugin connection and main-thread dispatcher) was cancelled on 2026-07-28 by maintainer instruction, recorded in .omo/notepads/godot-mcp-server-architecture/decisions.md (2026-07-28 three-plane capability matrix entry) and in docs/contributor/adr/0004-editor-plane-cancelled.md. No addons/ tree and no editor_plugin_harness test exist, so this descriptor owns zero commands; the shipped-versus-not boundary is stated in docs/operator/editor-bridge.md and an editor-plane call answers unavailable.",
+  "wrapper": "simple",
+  "happy": [],
+  "failure": [],
+  "evidence": "<attemptDir>/task-20-godot-mcp-server-architecture.txt"
+}

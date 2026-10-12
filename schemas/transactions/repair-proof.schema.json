@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://godot-mcp.invalid/schemas/transactions/repair-proof.schema.json",
+  "title": "Operator-repair proof (discriminated by effect_kind)",
+  "description": "Canonical proof for the local operator-repair command, a discriminated union keyed by the transaction's recorded effect_kind, matching Todo 6's three typed proof forms. Owned/implemented by Todo 34. Todo 1 ships this as a restrictive, syntactically valid stub schema.",
+  "type": "object",
+  "required": ["effect_kind", "transaction_id", "project_object_identity", "project_generation"],
+  "properties": {
+    "effect_kind": { "type": "string", "enum": ["file", "process_launch", "editor_runtime"] },
+    "transaction_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "project_object_identity": { "type": "string", "minLength": 1 },
+    "project_generation": { "type": "integer", "minimum": 0 },
+    "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state"] }
+  },
+  "oneOf": [
+    {
+      "title": "file proof",
+      "additionalProperties": false,
+      "required": [
+        "effect_kind",
+        "transaction_id",
+        "project_object_identity",
+        "project_generation",
+        "observed_touched_object_identities",
+        "observed_existence",
+        "claimed_disposition"
+      ],
+      "properties": {
+        "effect_kind": { "const": "file" },
+        "transaction_id": { "type": "string" },
+        "project_object_identity": { "type": "string" },
+        "project_generation": { "type": "integer" },
+        "observed_touched_object_identities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "observed_existence": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "enum": ["present", "absent"] }
+        },
+        "observed_hashes": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state"] }
+      }
+    },
+    {
+      "title": "process_launch proof",
+      "additionalProperties": false,
+      "required": [
+        "effect_kind",
+        "transaction_id",
+        "project_object_identity",
+        "project_generation",
+        "observed_pid",
+        "observed_start_time",
+        "observed_boundary_membership",
+        "observed_release_status"
+      ],
+      "properties": {
+        "effect_kind": { "const": "process_launch" },
+        "transaction_id": { "type": "string" },
+        "project_object_identity": { "type": "string" },
+        "project_generation": { "type": "integer" },
+        "observed_pid": { "type": ["integer", "null"] },
+        "observed_start_time": { "type": ["string", "null"] },
+        "observed_boundary_membership": { "type": "string" },
+        "observed_release_status": {
+          "type": "string",
+          "enum": ["suspended", "resumed-contained", "exited-clean", "signaled", "nonzero-exit", "unknown"]
+        },
+        "observed_exit_code": { "type": ["integer", "null"] },
+        "observed_boundary_empty": { "type": ["boolean", "null"] },
+        "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state"] }
+      }
+    },
+    {
+      "title": "editor_runtime proof",
+      "additionalProperties": false,
+      "required": [
+        "effect_kind",
+        "transaction_id",
+        "project_object_identity",
+        "project_generation",
+        "bridge_reachable"
+      ],
+      "properties": {
+        "effect_kind": { "const": "editor_runtime" },
+        "transaction_id": { "type": "string" },
+        "project_object_identity": { "type": "string" },
+        "project_generation": { "type": "integer" },
+        "bridge_reachable": { "type": "boolean" },
+        "bridge_receipt": { "type": ["string", "null"] },
+        "live_state_probe": { "type": ["string", "null"] },
+        "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state"] }
+      }
+    }
+  ]
+}

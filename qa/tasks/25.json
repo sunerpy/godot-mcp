@@ -1,0 +1,10 @@
+{
+  "task": 25,
+  "status": "cancelled",
+  "cancelled_on": "2026-07-28",
+  "cancelled_reason": "Todo 25 (runtime inspection, signals, input simulation and domain scene helpers) was cancelled on 2026-07-28 by maintainer instruction, recorded in .omo/notepads/godot-mcp-server-architecture/decisions.md (2026-07-28 three-plane capability matrix entry) and in docs/contributor/adr/0004-editor-plane-cancelled.md. No runtime service, synthetic input, heartbeat or temporary autoload/settings path and no runtime_inspection test exist, so this descriptor owns zero commands; the shipped-versus-not boundary is stated in docs/operator/editor-bridge.md and docs/operator/recovery.md.",
+  "wrapper": "simple",
+  "happy": [],
+  "failure": [],
+  "evidence": "<attemptDir>/task-25-godot-mcp-server-architecture.json"
+}

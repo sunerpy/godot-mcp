@@ -1,0 +1,23 @@
+{
+  "_comment": "The committed fixture-editor receipt. Every fact here is one Todo 14's launch protocol durably records: the argv this server chose (including the two port flags, whose values the test substitutes for the ports it actually binds), the editor child's PID and process start time, the revalidated engine binary hash, and the held project's identity and generation. The endpoint's legitimacy comes from THIS record, never from observing a loopback listener.",
+  "transaction_id": "00000000-0000-4000-8000-000000001801",
+  "project_object_identity": "project_2222222222222222222222222222222222222222222222222222222222222222",
+  "project_root_object": "unix:dev=1,ino=1801",
+  "project_file_object": "unix:dev=1,ino=1802",
+  "project_generation": 18,
+  "project_root_uri": "file:///fixtures/adapters/editor-project",
+  "argv": [
+    "/fixtures/bin/godot-editor",
+    "--editor",
+    "--path",
+    "/fixtures/adapters/editor-project",
+    "--lsp-port",
+    "{lsp_port}",
+    "--dap-port",
+    "{dap_port}"
+  ],
+  "child_pid": 481801,
+  "child_start_time": "18010042",
+  "binary_sha256": "18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa18aa",
+  "boundary_identity": "container_adapter:godot-mcp-1801"
+}

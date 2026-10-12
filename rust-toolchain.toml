@@ -1,0 +1,9 @@
+# Frozen qualifying toolchain for the godot-mcp workspace.
+#
+# MSRV is 1.96. The qualifying gate pins the exact channel `1.96.0` (never the
+# floating `stable` alias). A separately recorded `cargo +stable` run is only a
+# non-qualifying compatibility observation and can never substitute for 1.96.0.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

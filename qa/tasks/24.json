@@ -1,0 +1,10 @@
+{
+  "task": 24,
+  "status": "cancelled",
+  "cancelled_on": "2026-07-28",
+  "cancelled_reason": "Todo 24 (bounded screenshots and runtime recordings) was cancelled on 2026-07-28 by maintainer instruction, recorded in .omo/notepads/godot-mcp-server-architecture/decisions.md (2026-07-28 three-plane capability matrix entry) and in docs/contributor/adr/0004-editor-plane-cancelled.md. No capture or recording path and no screenshots_recording test exist, so this descriptor owns zero commands; Todo 30 proved authenticated-HTTP artifact parity on the Todo 3 ArtifactContract instead, and the shipped-versus-not boundary is stated in docs/operator/editor-bridge.md and docs/operator/artifacts.md.",
+  "wrapper": "simple",
+  "happy": [],
+  "failure": [],
+  "evidence": "<attemptDir>/task-24-godot-mcp-server-architecture.json"
+}

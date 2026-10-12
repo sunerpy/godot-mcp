@@ -1,0 +1,23 @@
+{
+  "task": 16,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test disposable_execution -- --exact disposable_execution_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "validation on a copied fixture leaves the source hash unchanged"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-engine --test disposable_execution -- --exact disposable_execution_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "a symlink/secret-copy attempt is rejected and no outside marker appears"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-16-godot-mcp-server-architecture.txt"
+}

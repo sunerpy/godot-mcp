@@ -1,0 +1,23 @@
+{
+  "task": 19,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-bridge --test bridge_protocol -- --exact bridge_protocol_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "when Godot is configured, the real headless GDScript codec emits all ten encoded canonical JSON vectors in frozen order and Rust parses and compares those engine-produced bytes with the committed protocol-v1 goldens before a Rust fake plugin and the server exchange hello/ping/read/cancel over a real loopback socket using the rendezvous secret; without an engine the test emits an actionable SKIP naming GODOT_MCP_GODOT_BINARY directly to process stderr, and an internal child-libtest probe fails the command if that line is hidden by passing-test capture"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-bridge --test bridge_protocol -- --exact bridge_protocol_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "missing/wrong/replayed secret, stale project identity, major-version mismatch, 16 MiB frame and duplicate mutation ID fail with stable errors"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-19-godot-mcp-server-architecture.json"
+}

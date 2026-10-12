@@ -1,0 +1,23 @@
+{
+  "task": 5,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test kernel_rmcp_parity -- --exact in_memory_client_initialize_list_call_read_cancel",
+      "expected_exit": 0,
+      "assertions": [
+        "drives an in-memory rmcp client through initialize/list/call/read/cancel"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test kernel_rmcp_parity -- --exact malformed_params_returns_invalid_params",
+      "expected_exit": 0,
+      "assertions": [
+        "malformed schema input returns deterministic MCP invalid_input error data without a panic"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-5-godot-mcp-server-architecture.json"
+}

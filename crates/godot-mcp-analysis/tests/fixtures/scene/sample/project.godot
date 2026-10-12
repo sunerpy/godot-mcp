@@ -1,0 +1,7 @@
+; Minimal manifest so the scene fixtures live inside a real resolvable project.
+config_version=5
+
+[application]
+
+config/name="Scene Fixture"
+run/main_scene="res://main.tscn"

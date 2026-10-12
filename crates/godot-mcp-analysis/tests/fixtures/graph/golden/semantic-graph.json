@@ -1,0 +1,2522 @@
+{
+  "schema": "godot-mcp.semantic-graph.v1",
+  "project_generation": 10,
+  "nodes": {
+    "asset:art/icon.png": {
+      "id": "asset:art/icon.png",
+      "kind": "asset",
+      "name": "art/icon.png",
+      "file": "art/icon.png",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "asset art/icon.png",
+        "project_generation": 10
+      }
+    },
+    "asset:project.godot": {
+      "id": "asset:project.godot",
+      "kind": "asset",
+      "name": "project.godot",
+      "file": "project.godot",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "asset project.godot",
+        "project_generation": 10
+      }
+    },
+    "autoload:ComboUi": {
+      "id": "autoload:ComboUi",
+      "kind": "autoload",
+      "name": "ComboUi",
+      "file": "project.godot",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "autoload ComboUi",
+        "project_generation": 10
+      }
+    },
+    "autoload:GameState": {
+      "id": "autoload:GameState",
+      "kind": "autoload",
+      "name": "GameState",
+      "file": "project.godot",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "autoload GameState",
+        "project_generation": 10
+      }
+    },
+    "class:BaseActor": {
+      "id": "class:BaseActor",
+      "kind": "script_class",
+      "name": "BaseActor",
+      "file": "scripts/base_actor.gd",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "script class BaseActor",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/base_actor.gd::shared_helper": {
+      "id": "function:scripts/base_actor.gd::shared_helper",
+      "kind": "function",
+      "name": "shared_helper",
+      "file": "scripts/base_actor.gd",
+      "span": {
+        "start_line": 10,
+        "start_column": 1,
+        "end_line": 11,
+        "end_column": 6
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function shared_helper",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/base_actor.gd::take_damage": {
+      "id": "function:scripts/base_actor.gd::take_damage",
+      "kind": "function",
+      "name": "take_damage",
+      "file": "scripts/base_actor.gd",
+      "span": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 8,
+        "end_column": 25
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function take_damage",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/dynamic.gd::dispatch": {
+      "id": "function:scripts/dynamic.gd::dispatch",
+      "kind": "function",
+      "name": "dispatch",
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 10,
+        "end_column": 28
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function dispatch",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/dynamic.gd::only_here": {
+      "id": "function:scripts/dynamic.gd::only_here",
+      "kind": "function",
+      "name": "only_here",
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 12,
+        "start_column": 1,
+        "end_line": 13,
+        "end_column": 6
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function only_here",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/game_state.gd::register_hit": {
+      "id": "function:scripts/game_state.gd::register_hit",
+      "kind": "function",
+      "name": "register_hit",
+      "file": "scripts/game_state.gd",
+      "span": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 8,
+        "end_column": 11
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function register_hit",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/game_state.gd::take_damage": {
+      "id": "function:scripts/game_state.gd::take_damage",
+      "kind": "function",
+      "name": "take_damage",
+      "file": "scripts/game_state.gd",
+      "span": {
+        "start_line": 10,
+        "start_column": 1,
+        "end_line": 11,
+        "end_column": 16
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function take_damage",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/hud.gd::_on_player_health_changed": {
+      "id": "function:scripts/hud.gd::_on_player_health_changed",
+      "kind": "function",
+      "name": "_on_player_health_changed",
+      "file": "scripts/hud.gd",
+      "span": {
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 4,
+        "end_column": 25
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function _on_player_health_changed",
+        "project_generation": 10
+      }
+    },
+    "function:scripts/player.gd::take_damage": {
+      "id": "function:scripts/player.gd::take_damage",
+      "kind": "function",
+      "name": "take_damage",
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 10,
+        "end_column": 17
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "function take_damage",
+        "project_generation": 10
+      }
+    },
+    "input_action:jump": {
+      "id": "input_action:jump",
+      "kind": "input_action",
+      "name": "jump",
+      "file": "project.godot",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "input action jump",
+        "project_generation": 10
+      }
+    },
+    "project:.": {
+      "id": "project:.",
+      "kind": "project",
+      "name": ".",
+      "file": null,
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "project",
+        "project_generation": 10
+      }
+    },
+    "resource:resources/buff.tres": {
+      "id": "resource:resources/buff.tres",
+      "kind": "text_resource",
+      "name": "resources/buff.tres",
+      "file": "resources/buff.tres",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "document resources/buff.tres",
+        "project_generation": 10
+      }
+    },
+    "scene:main.tscn": {
+      "id": "scene:main.tscn",
+      "kind": "scene",
+      "name": "main.tscn",
+      "file": "main.tscn",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "document main.tscn",
+        "project_generation": 10
+      }
+    },
+    "scene:scenes/enemy.tscn": {
+      "id": "scene:scenes/enemy.tscn",
+      "kind": "scene",
+      "name": "scenes/enemy.tscn",
+      "file": "scenes/enemy.tscn",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "document scenes/enemy.tscn",
+        "project_generation": 10
+      }
+    },
+    "scene:scenes/hud.tscn": {
+      "id": "scene:scenes/hud.tscn",
+      "kind": "scene",
+      "name": "scenes/hud.tscn",
+      "file": "scenes/hud.tscn",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "document scenes/hud.tscn",
+        "project_generation": 10
+      }
+    },
+    "scene_node:main.tscn::.": {
+      "id": "scene_node:main.tscn::.",
+      "kind": "scene_node",
+      "name": "Main",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 13,
+        "start_column": 1,
+        "end_line": 13,
+        "end_column": 33
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node .",
+        "project_generation": 10
+      }
+    },
+    "scene_node:main.tscn::Hud": {
+      "id": "scene_node:main.tscn::Hud",
+      "kind": "scene_node",
+      "name": "Hud",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 24,
+        "start_column": 1,
+        "end_line": 24,
+        "end_column": 59
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node Hud",
+        "project_generation": 10
+      }
+    },
+    "scene_node:main.tscn::Player": {
+      "id": "scene_node:main.tscn::Player",
+      "kind": "scene_node",
+      "name": "Player",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 15,
+        "start_column": 1,
+        "end_line": 15,
+        "end_column": 55
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node Player",
+        "project_generation": 10
+      }
+    },
+    "scene_node:main.tscn::Player/Body": {
+      "id": "scene_node:main.tscn::Player/Body",
+      "kind": "scene_node",
+      "name": "Body",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 21,
+        "start_column": 1,
+        "end_line": 21,
+        "end_column": 59
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node Player/Body",
+        "project_generation": 10
+      }
+    },
+    "scene_node:scenes/enemy.tscn::.": {
+      "id": "scene_node:scenes/enemy.tscn::.",
+      "kind": "scene_node",
+      "name": "Enemy",
+      "file": "scenes/enemy.tscn",
+      "span": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 43
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node .",
+        "project_generation": 10
+      }
+    },
+    "scene_node:scenes/hud.tscn::.": {
+      "id": "scene_node:scenes/hud.tscn::.",
+      "kind": "scene_node",
+      "name": "Hud",
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 37
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node .",
+        "project_generation": 10
+      }
+    },
+    "scene_node:scenes/hud.tscn::Overlay": {
+      "id": "scene_node:scenes/hud.tscn::Overlay",
+      "kind": "scene_node",
+      "name": "Overlay",
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 9,
+        "start_column": 1,
+        "end_line": 9,
+        "end_column": 48
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "scene node Overlay",
+        "project_generation": 10
+      }
+    },
+    "script:scripts/base_actor.gd": {
+      "id": "script:scripts/base_actor.gd",
+      "kind": "script",
+      "name": "scripts/base_actor.gd",
+      "file": "scripts/base_actor.gd",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "script scripts/base_actor.gd",
+        "project_generation": 10
+      }
+    },
+    "script:scripts/dynamic.gd": {
+      "id": "script:scripts/dynamic.gd",
+      "kind": "script",
+      "name": "scripts/dynamic.gd",
+      "file": "scripts/dynamic.gd",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "script scripts/dynamic.gd",
+        "project_generation": 10
+      }
+    },
+    "script:scripts/game_state.gd": {
+      "id": "script:scripts/game_state.gd",
+      "kind": "script",
+      "name": "scripts/game_state.gd",
+      "file": "scripts/game_state.gd",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "script scripts/game_state.gd",
+        "project_generation": 10
+      }
+    },
+    "script:scripts/hud.gd": {
+      "id": "script:scripts/hud.gd",
+      "kind": "script",
+      "name": "scripts/hud.gd",
+      "file": "scripts/hud.gd",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "script scripts/hud.gd",
+        "project_generation": 10
+      }
+    },
+    "script:scripts/player.gd": {
+      "id": "script:scripts/player.gd",
+      "kind": "script",
+      "name": "scripts/player.gd",
+      "file": "scripts/player.gd",
+      "span": null,
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "script scripts/player.gd",
+        "project_generation": 10
+      }
+    },
+    "signal:scripts/player.gd::health_changed": {
+      "id": "signal:scripts/player.gd::health_changed",
+      "kind": "signal",
+      "name": "health_changed",
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 3,
+        "end_column": 35
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_syntax",
+        "confidence": "exact",
+        "subject": "signal health_changed",
+        "project_generation": 10
+      }
+    },
+    "sub_resource:main.tscn::CircleShape2D_body": {
+      "id": "sub_resource:main.tscn::CircleShape2D_body",
+      "kind": "sub_resource",
+      "name": "CircleShape2D",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 10,
+        "start_column": 1,
+        "end_line": 10,
+        "end_column": 60
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "sub resource CircleShape2D_body",
+        "project_generation": 10
+      }
+    },
+    "sub_resource:resources/buff.tres::Curve_ramp": {
+      "id": "sub_resource:resources/buff.tres::Curve_ramp",
+      "kind": "sub_resource",
+      "name": "Curve",
+      "file": "resources/buff.tres",
+      "span": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 44
+      },
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "project_metadata",
+        "confidence": "exact",
+        "subject": "sub resource Curve_ramp",
+        "project_generation": 10
+      }
+    }
+  },
+  "edges": [
+    {
+      "kind": "autoload_registration",
+      "source": "project:.",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "autoload:GameState",
+          "hint": "GameState",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "GameState",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "project.godot",
+      "span": {
+        "start_line": 13,
+        "start_column": 1,
+        "end_line": 13,
+        "end_column": 1
+      },
+      "detail": "[autoload] GameState",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[autoload] GameState",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "autoload_registration",
+      "source": "project:.",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "autoload:ComboUi",
+          "hint": "ComboUi",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "ComboUi",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "project.godot",
+      "span": {
+        "start_line": 14,
+        "start_column": 1,
+        "end_line": 14,
+        "end_column": 1
+      },
+      "detail": "[autoload] ComboUi",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[autoload] ComboUi",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "autoload_script",
+      "source": "autoload:ComboUi",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "uid://cneverdeclared1",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "uid://cneverdeclared1",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "project.godot",
+      "span": {
+        "start_line": 14,
+        "start_column": 1,
+        "end_line": 14,
+        "end_column": 1
+      },
+      "detail": "[autoload] ComboUi -> singleton",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "[autoload] ComboUi -> singleton",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "autoload_script",
+      "source": "autoload:GameState",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/game_state.gd",
+          "hint": "script:scripts/game_state.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/game_state.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "project.godot",
+      "span": {
+        "start_line": 13,
+        "start_column": 1,
+        "end_line": 13,
+        "end_column": 1
+      },
+      "detail": "[autoload] GameState -> singleton",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[autoload] GameState -> singleton",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/base_actor.gd::take_damage",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "set_process",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "set_process",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/base_actor.gd",
+      "span": {
+        "start_line": 8,
+        "start_column": 2,
+        "end_line": 8,
+        "end_column": 25
+      },
+      "detail": "set_process()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "set_process()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/dynamic.gd::dispatch",
+      "resolution": "inferred",
+      "candidates": [
+        {
+          "rank": 4294967294,
+          "target": "function:scripts/base_actor.gd::take_damage",
+          "hint": "scripts/base_actor.gd::take_damage",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "dynamic_reference",
+            "confidence": "inferred",
+            "subject": "scripts/base_actor.gd::take_damage",
+            "project_generation": 10
+          }
+        },
+        {
+          "rank": 4294967294,
+          "target": "function:scripts/game_state.gd::take_damage",
+          "hint": "scripts/game_state.gd::take_damage",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "dynamic_reference",
+            "confidence": "inferred",
+            "subject": "scripts/game_state.gd::take_damage",
+            "project_generation": 10
+          }
+        },
+        {
+          "rank": 4294967294,
+          "target": "function:scripts/player.gd::take_damage",
+          "hint": "scripts/player.gd::take_damage",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "dynamic_reference",
+            "confidence": "inferred",
+            "subject": "scripts/player.gd::take_damage",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 6,
+        "start_column": 9,
+        "end_line": 6,
+        "end_column": 23
+      },
+      "detail": "target.take_damage()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "dynamic_reference",
+        "confidence": "inferred",
+        "subject": "target.take_damage()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/dynamic.gd::dispatch",
+      "resolution": "inferred",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "function:scripts/dynamic.gd::only_here",
+          "hint": "scripts/dynamic.gd::only_here",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "dynamic_reference",
+            "confidence": "inferred",
+            "subject": "scripts/dynamic.gd::only_here",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 7,
+        "start_column": 9,
+        "end_line": 7,
+        "end_column": 20
+      },
+      "detail": "target.only_here()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "dynamic_reference",
+        "confidence": "inferred",
+        "subject": "target.only_here()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/dynamic.gd::dispatch",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "queue_redraw",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "queue_redraw",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 8,
+        "start_column": 2,
+        "end_line": 8,
+        "end_column": 16
+      },
+      "detail": "queue_redraw()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "queue_redraw()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/dynamic.gd::dispatch",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "set_process",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "set_process",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 10,
+        "start_column": 2,
+        "end_line": 10,
+        "end_column": 28
+      },
+      "detail": "set_process()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "set_process()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/hud.gd::_on_player_health_changed",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "set_process",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "set_process",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/hud.gd",
+      "span": {
+        "start_line": 4,
+        "start_column": 2,
+        "end_line": 4,
+        "end_column": 25
+      },
+      "detail": "set_process()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "set_process()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/player.gd::take_damage",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "emit",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "emit",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 8,
+        "start_column": 17,
+        "end_line": 8,
+        "end_column": 29
+      },
+      "detail": "health_changed.emit()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "health_changed.emit()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/player.gd::take_damage",
+      "resolution": "inferred",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "function:scripts/game_state.gd::register_hit",
+          "hint": "scripts/game_state.gd::register_hit",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "dynamic_reference",
+            "confidence": "inferred",
+            "subject": "scripts/game_state.gd::register_hit",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 9,
+        "start_column": 12,
+        "end_line": 9,
+        "end_column": 26
+      },
+      "detail": "GameState.register_hit()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "dynamic_reference",
+        "confidence": "inferred",
+        "subject": "GameState.register_hit()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "calls",
+      "source": "function:scripts/player.gd::take_damage",
+      "resolution": "inferred",
+      "candidates": [
+        {
+          "rank": 1,
+          "target": "function:scripts/base_actor.gd::shared_helper",
+          "hint": "scripts/base_actor.gd::shared_helper",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "dynamic_reference",
+            "confidence": "inferred",
+            "subject": "scripts/base_actor.gd::shared_helper",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 10,
+        "start_column": 2,
+        "end_line": 10,
+        "end_column": 17
+      },
+      "detail": "shared_helper()",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "dynamic_reference",
+        "confidence": "inferred",
+        "subject": "shared_helper()",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "inherits",
+      "source": "script:scripts/base_actor.gd",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "Node",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "Node",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/base_actor.gd",
+      "span": null,
+      "detail": "extends Node",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "extends Node",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "inherits",
+      "source": "script:scripts/dynamic.gd",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "Node",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "Node",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/dynamic.gd",
+      "span": null,
+      "detail": "extends Node",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "extends Node",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "inherits",
+      "source": "script:scripts/game_state.gd",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "Node",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "Node",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/game_state.gd",
+      "span": null,
+      "detail": "extends Node",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "extends Node",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "inherits",
+      "source": "script:scripts/hud.gd",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "CanvasLayer",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "CanvasLayer",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/hud.gd",
+      "span": null,
+      "detail": "extends CanvasLayer",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "extends CanvasLayer",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "inherits",
+      "source": "script:scripts/player.gd",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/base_actor.gd",
+          "hint": "BaseActor",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "BaseActor",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/player.gd",
+      "span": null,
+      "detail": "extends BaseActor",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "extends BaseActor",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "input_action_declaration",
+      "source": "project:.",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "input_action:jump",
+          "hint": "jump",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "jump",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "project.godot",
+      "span": {
+        "start_line": 18,
+        "start_column": 1,
+        "end_line": 18,
+        "end_column": 1
+      },
+      "detail": "[input] jump",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[input] jump",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "main_scene",
+      "source": "project:.",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene:main.tscn",
+          "hint": "scene:main.tscn",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "scene:main.tscn",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "project.godot",
+      "span": {
+        "start_line": 9,
+        "start_column": 1,
+        "end_line": 9,
+        "end_column": 1
+      },
+      "detail": "application/run/main_scene",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "application/run/main_scene",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "preloads",
+      "source": "script:scripts/player.gd",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "resource:resources/buff.tres",
+          "hint": "resource:resources/buff.tres",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "resource:resources/buff.tres",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 5,
+        "start_column": 15,
+        "end_line": 5,
+        "end_column": 51
+      },
+      "detail": "preload(\"res://resources/buff.tres\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "preload(\"res://resources/buff.tres\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "resource:resources/buff.tres",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/base_actor.gd",
+          "hint": "script:scripts/base_actor.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/base_actor.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "resources/buff.tres",
+      "span": {
+        "start_line": 4,
+        "start_column": 1,
+        "end_line": 4,
+        "end_column": 76
+      },
+      "detail": "[ext_resource id=1_buff]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=1_buff]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/player.gd",
+          "hint": "script:scripts/player.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/player.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 3,
+        "end_column": 103
+      },
+      "detail": "[ext_resource id=1_player]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=1_player]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene:scenes/hud.tscn",
+          "hint": "scene:scenes/hud.tscn",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "scene:scenes/hud.tscn",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 4,
+        "start_column": 1,
+        "end_line": 4,
+        "end_column": 102
+      },
+      "detail": "[ext_resource id=2_hud]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=2_hud]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "res://../outside/escape.tres",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "res://../outside/escape.tres",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 81
+      },
+      "detail": "[ext_resource id=3_escape]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "[ext_resource id=3_escape]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "art/missing.png",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "art/missing.png",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 76
+      },
+      "detail": "[ext_resource id=4_missing]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "[ext_resource id=4_missing]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene:scenes/enemy.tscn",
+          "hint": "scene:scenes/enemy.tscn",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "scene:scenes/enemy.tscn",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 76
+      },
+      "detail": "[ext_resource id=5_enemy]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=5_enemy]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/hud.gd",
+          "hint": "script:scripts/hud.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/hud.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 8,
+        "start_column": 1,
+        "end_line": 8,
+        "end_column": 68
+      },
+      "detail": "[ext_resource id=6_hud]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=6_hud]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:scenes/enemy.tscn",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/base_actor.gd",
+          "hint": "script:scripts/base_actor.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/base_actor.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/enemy.tscn",
+      "span": {
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 3,
+        "end_column": 77
+      },
+      "detail": "[ext_resource id=1_actor]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=1_actor]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:scenes/hud.tscn",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/hud.gd",
+          "hint": "script:scripts/hud.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/hud.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 3,
+        "end_column": 68
+      },
+      "detail": "[ext_resource id=1_hud]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[ext_resource id=1_hud]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene:scenes/hud.tscn",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "uid://cgraphundeclared",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "uid://cgraphundeclared",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 4,
+        "start_column": 1,
+        "end_line": 4,
+        "end_column": 74
+      },
+      "detail": "[ext_resource id=2_overlay]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "[ext_resource id=2_overlay]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene_node:main.tscn::Player",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene:scenes/enemy.tscn",
+          "hint": "scene:scenes/enemy.tscn",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "scene:scenes/enemy.tscn",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 18,
+        "start_column": 1,
+        "end_line": 18,
+        "end_column": 37
+      },
+      "detail": "spawn_scene = ExtResource(\"5_enemy\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "spawn_scene = ExtResource(\"5_enemy\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "resource_reference",
+      "source": "scene_node:main.tscn::Player",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "art/missing.png",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "art/missing.png",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 19,
+        "start_column": 1,
+        "end_line": 19,
+        "end_column": 36
+      },
+      "detail": "portrait = ExtResource(\"4_missing\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "portrait = ExtResource(\"4_missing\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "scene_instance",
+      "source": "scene_node:main.tscn::Hud",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene:scenes/hud.tscn",
+          "hint": "scene:scenes/hud.tscn",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "scene:scenes/hud.tscn",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 24,
+        "start_column": 1,
+        "end_line": 24,
+        "end_column": 59
+      },
+      "detail": "instance=ExtResource(\"2_hud\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "instance=ExtResource(\"2_hud\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "scene_parent",
+      "source": "scene_node:main.tscn::Hud",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene_node:main.tscn::.",
+          "hint": ".",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": ".",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 24,
+        "start_column": 1,
+        "end_line": 24,
+        "end_column": 59
+      },
+      "detail": "parent=\".\"",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "parent=\".\"",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "scene_parent",
+      "source": "scene_node:main.tscn::Player",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene_node:main.tscn::.",
+          "hint": ".",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": ".",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 15,
+        "start_column": 1,
+        "end_line": 15,
+        "end_column": 55
+      },
+      "detail": "parent=\".\"",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "parent=\".\"",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "scene_parent",
+      "source": "scene_node:main.tscn::Player/Body",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene_node:main.tscn::Player",
+          "hint": "Player",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "Player",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 21,
+        "start_column": 1,
+        "end_line": 21,
+        "end_column": 59
+      },
+      "detail": "parent=\"Player\"",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "parent=\"Player\"",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "scene_parent",
+      "source": "scene_node:scenes/hud.tscn::Overlay",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "scene_node:scenes/hud.tscn::.",
+          "hint": ".",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": ".",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 9,
+        "start_column": 1,
+        "end_line": 9,
+        "end_column": 48
+      },
+      "detail": "parent=\".\"",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "parent=\".\"",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "script_attachment",
+      "source": "resource:resources/buff.tres",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/base_actor.gd",
+          "hint": "script:scripts/base_actor.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/base_actor.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "resources/buff.tres",
+      "span": {
+        "start_line": 10,
+        "start_column": 1,
+        "end_line": 10,
+        "end_column": 31
+      },
+      "detail": "script = ExtResource(\"1_buff\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "script = ExtResource(\"1_buff\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "script_attachment",
+      "source": "scene_node:main.tscn::Hud",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/hud.gd",
+          "hint": "script:scripts/hud.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/hud.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 25,
+        "start_column": 1,
+        "end_line": 25,
+        "end_column": 30
+      },
+      "detail": "script = ExtResource(\"6_hud\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "script = ExtResource(\"6_hud\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "script_attachment",
+      "source": "scene_node:main.tscn::Player",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/player.gd",
+          "hint": "script:scripts/player.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/player.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 16,
+        "start_column": 1,
+        "end_line": 16,
+        "end_column": 33
+      },
+      "detail": "script = ExtResource(\"1_player\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "script = ExtResource(\"1_player\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "script_attachment",
+      "source": "scene_node:scenes/enemy.tscn::.",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/base_actor.gd",
+          "hint": "script:scripts/base_actor.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/base_actor.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/enemy.tscn",
+      "span": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 32
+      },
+      "detail": "script = ExtResource(\"1_actor\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "script = ExtResource(\"1_actor\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "script_attachment",
+      "source": "scene_node:scenes/hud.tscn::.",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "script:scripts/hud.gd",
+          "hint": "script:scripts/hud.gd",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "script:scripts/hud.gd",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 30
+      },
+      "detail": "script = ExtResource(\"1_hud\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "script = ExtResource(\"1_hud\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "script_attachment",
+      "source": "scene_node:scenes/hud.tscn::Overlay",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "uid://cgraphundeclared",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "uid://cgraphundeclared",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 10,
+        "start_column": 1,
+        "end_line": 10,
+        "end_column": 34
+      },
+      "detail": "script = ExtResource(\"2_overlay\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "script = ExtResource(\"2_overlay\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "signal_connection",
+      "source": "scene_node:main.tscn::Hud",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": null,
+          "hint": "_on_missing_pressed",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "_on_missing_pressed",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 29,
+        "start_column": 1,
+        "end_line": 29,
+        "end_column": 79
+      },
+      "detail": "[connection signal=\"pressed\" from=\"Hud\" to=\"Hud\" method=\"_on_missing_pressed\"]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "[connection signal=\"pressed\" from=\"Hud\" to=\"Hud\" method=\"_on_missing_pressed\"]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "signal_connection",
+      "source": "scene_node:main.tscn::Player",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "function:scripts/hud.gd::_on_player_health_changed",
+          "hint": "scripts/hud.gd::_on_player_health_changed",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "scripts/hud.gd::_on_player_health_changed",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 28,
+        "start_column": 1,
+        "end_line": 28,
+        "end_column": 95
+      },
+      "detail": "[connection signal=\"health_changed\" from=\"Player\" to=\"Hud\" method=\"_on_player_health_changed\"]",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "[connection signal=\"health_changed\" from=\"Player\" to=\"Hud\" method=\"_on_player_health_changed\"]",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "signal_declaration",
+      "source": "script:scripts/player.gd",
+      "resolution": "exact",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "signal:scripts/player.gd::health_changed",
+          "hint": "health_changed",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "static_index",
+            "confidence": "exact",
+            "subject": "health_changed",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 3,
+        "start_column": 1,
+        "end_line": 3,
+        "end_column": 35
+      },
+      "detail": "signal health_changed",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "static_index",
+        "confidence": "exact",
+        "subject": "signal health_changed",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "sub_resource_relation",
+      "source": "resource:resources/buff.tres",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "sub_resource:resources/buff.tres::Curve_ramp",
+          "hint": "SubResource(\"Curve_ramp\")",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "SubResource(\"Curve_ramp\")",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "resources/buff.tres",
+      "span": {
+        "start_line": 11,
+        "start_column": 1,
+        "end_line": 11,
+        "end_column": 33
+      },
+      "detail": "ramp = SubResource(\"Curve_ramp\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "ramp = SubResource(\"Curve_ramp\")",
+        "project_generation": 10
+      }
+    },
+    {
+      "kind": "sub_resource_relation",
+      "source": "scene_node:main.tscn::Player/Body",
+      "resolution": "unresolved",
+      "candidates": [
+        {
+          "rank": 0,
+          "target": "sub_resource:main.tscn::CircleShape2D_body",
+          "hint": "SubResource(\"CircleShape2D_body\")",
+          "provenance": {
+            "schema_version": "0.2.0",
+            "source": "unresolved",
+            "confidence": "unresolved",
+            "subject": "SubResource(\"CircleShape2D_body\")",
+            "project_generation": 10
+          }
+        }
+      ],
+      "file": "main.tscn",
+      "span": {
+        "start_line": 22,
+        "start_column": 1,
+        "end_line": 22,
+        "end_column": 42
+      },
+      "detail": "shape = SubResource(\"CircleShape2D_body\")",
+      "provenance": {
+        "schema_version": "0.2.0",
+        "source": "unresolved",
+        "confidence": "unresolved",
+        "subject": "shape = SubResource(\"CircleShape2D_body\")",
+        "project_generation": 10
+      }
+    }
+  ],
+  "dangling": [
+    {
+      "kind": "target_absent",
+      "edge_kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "hint": "art/missing.png",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 76
+      },
+      "reason": "the named project-relative file is not present in the supplied inventory"
+    },
+    {
+      "kind": "target_absent",
+      "edge_kind": "resource_reference",
+      "source": "scene_node:main.tscn::Player",
+      "hint": "art/missing.png",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 19,
+        "start_column": 1,
+        "end_line": 19,
+        "end_column": 36
+      },
+      "reason": "the named project-relative file is not present in the supplied inventory"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "autoload_script",
+      "source": "autoload:ComboUi",
+      "hint": "uid://cneverdeclared1",
+      "file": "project.godot",
+      "span": {
+        "start_line": 14,
+        "start_column": 1,
+        "end_line": 14,
+        "end_column": 1
+      },
+      "reason": "the target cannot be decided statically: an unindexed uid://, a path escaping the project root, or a file the caller did not vouch for"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "calls",
+      "source": "function:scripts/base_actor.gd::take_damage",
+      "hint": "set_process",
+      "file": "scripts/base_actor.gd",
+      "span": {
+        "start_line": 8,
+        "start_column": 2,
+        "end_line": 8,
+        "end_column": 25
+      },
+      "reason": "no declaration of this name is visible; it may be an engine API, an inherited built-in method, or a runtime-only member"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "calls",
+      "source": "function:scripts/dynamic.gd::dispatch",
+      "hint": "queue_redraw",
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 8,
+        "start_column": 2,
+        "end_line": 8,
+        "end_column": 16
+      },
+      "reason": "no declaration of this name is visible; it may be an engine API, an inherited built-in method, or a runtime-only member"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "calls",
+      "source": "function:scripts/dynamic.gd::dispatch",
+      "hint": "set_process",
+      "file": "scripts/dynamic.gd",
+      "span": {
+        "start_line": 10,
+        "start_column": 2,
+        "end_line": 10,
+        "end_column": 28
+      },
+      "reason": "no declaration of this name is visible; it may be an engine API, an inherited built-in method, or a runtime-only member"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "calls",
+      "source": "function:scripts/hud.gd::_on_player_health_changed",
+      "hint": "set_process",
+      "file": "scripts/hud.gd",
+      "span": {
+        "start_line": 4,
+        "start_column": 2,
+        "end_line": 4,
+        "end_column": 25
+      },
+      "reason": "no declaration of this name is visible; it may be an engine API, an inherited built-in method, or a runtime-only member"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "calls",
+      "source": "function:scripts/player.gd::take_damage",
+      "hint": "emit",
+      "file": "scripts/player.gd",
+      "span": {
+        "start_line": 8,
+        "start_column": 17,
+        "end_line": 8,
+        "end_column": 29
+      },
+      "reason": "no declaration of this name is visible; it may be an engine API, an inherited built-in method, or a runtime-only member"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "inherits",
+      "source": "script:scripts/base_actor.gd",
+      "hint": "Node",
+      "file": "scripts/base_actor.gd",
+      "span": null,
+      "reason": "no engine class registry is available, so a built-in base type cannot be distinguished from a missing script class"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "inherits",
+      "source": "script:scripts/dynamic.gd",
+      "hint": "Node",
+      "file": "scripts/dynamic.gd",
+      "span": null,
+      "reason": "no engine class registry is available, so a built-in base type cannot be distinguished from a missing script class"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "inherits",
+      "source": "script:scripts/game_state.gd",
+      "hint": "Node",
+      "file": "scripts/game_state.gd",
+      "span": null,
+      "reason": "no engine class registry is available, so a built-in base type cannot be distinguished from a missing script class"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "inherits",
+      "source": "script:scripts/hud.gd",
+      "hint": "CanvasLayer",
+      "file": "scripts/hud.gd",
+      "span": null,
+      "reason": "no engine class registry is available, so a built-in base type cannot be distinguished from a missing script class"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "resource_reference",
+      "source": "scene:main.tscn",
+      "hint": "res://../outside/escape.tres",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 5,
+        "end_column": 81
+      },
+      "reason": "the target cannot be decided statically: an unindexed uid://, a path escaping the project root, or a file the caller did not vouch for"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "resource_reference",
+      "source": "scene:scenes/hud.tscn",
+      "hint": "uid://cgraphundeclared",
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 4,
+        "start_column": 1,
+        "end_line": 4,
+        "end_column": 74
+      },
+      "reason": "the target cannot be decided statically: an unindexed uid://, a path escaping the project root, or a file the caller did not vouch for"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "script_attachment",
+      "source": "scene_node:scenes/hud.tscn::Overlay",
+      "hint": "uid://cgraphundeclared",
+      "file": "scenes/hud.tscn",
+      "span": {
+        "start_line": 10,
+        "start_column": 1,
+        "end_line": 10,
+        "end_column": 34
+      },
+      "reason": "the target cannot be decided statically: an unindexed uid://, a path escaping the project root, or a file the caller did not vouch for"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "signal_connection",
+      "source": "scene_node:main.tscn::Hud",
+      "hint": "_on_missing_pressed",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 29,
+        "start_column": 1,
+        "end_line": 29,
+        "end_column": 79
+      },
+      "reason": "neither the receiving script nor its indexed base chain declares this handler, and the chain ends at an engine class this layer cannot inspect, so the handler may still be inherited"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "sub_resource_relation",
+      "source": "resource:resources/buff.tres",
+      "hint": "SubResource(\"Curve_ramp\")",
+      "file": "resources/buff.tres",
+      "span": {
+        "start_line": 11,
+        "start_column": 1,
+        "end_line": 11,
+        "end_column": 33
+      },
+      "reason": "internal [sub_resource] semantics are not modelled by this layer, so the relation stays unresolved rather than being reported as exact or omitted"
+    },
+    {
+      "kind": "target_undecidable",
+      "edge_kind": "sub_resource_relation",
+      "source": "scene_node:main.tscn::Player/Body",
+      "hint": "SubResource(\"CircleShape2D_body\")",
+      "file": "main.tscn",
+      "span": {
+        "start_line": 22,
+        "start_column": 1,
+        "end_line": 22,
+        "end_column": 42
+      },
+      "reason": "internal [sub_resource] semantics are not modelled by this layer, so the relation stays unresolved rather than being reported as exact or omitted"
+    }
+  ],
+  "limitations": [
+    {
+      "kind": "call_arguments_not_recorded",
+      "subjects": [
+        "scripts/base_actor.gd",
+        "scripts/dynamic.gd",
+        "scripts/hud.gd",
+        "scripts/player.gd"
+      ]
+    },
+    {
+      "kind": "dynamic_resource_path_not_recorded",
+      "subjects": [
+        "scripts/dynamic.gd:9"
+      ]
+    },
+    {
+      "kind": "engine_class_registry_unavailable",
+      "subjects": [
+        "CanvasLayer",
+        "Node",
+        "emit",
+        "queue_redraw",
+        "scripts/hud.gd",
+        "set_process"
+      ]
+    },
+    {
+      "kind": "sub_resource_semantics_unsupported",
+      "subjects": [
+        "main.tscn:22",
+        "resources/buff.tres:11"
+      ]
+    },
+    {
+      "kind": "uid_index_incomplete",
+      "subjects": [
+        "uid://cgraphundeclared",
+        "uid://cneverdeclared1"
+      ]
+    }
+  ],
+  "provenance": {
+    "schema_version": "0.2.0",
+    "source": "static_index",
+    "confidence": "exact",
+    "subject": "semantic graph",
+    "project_generation": 10
+  }
+}

@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3 uid="uid://cgraphhudscene1"]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1_hud"]
+[ext_resource type="Script" path="uid://cgraphundeclared" id="2_overlay"]
+
+[node name="Hud" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="Overlay" type="Control" parent="."]
+script = ExtResource("2_overlay")

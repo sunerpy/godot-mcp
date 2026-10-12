@@ -1,0 +1,23 @@
+{
+  "task": 8,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test project_identity -- --exact project_identity_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "a nested script reached through a symlink-free lexical/case or supported same-object junction/bind alias resolves one fixture project identity"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-analysis --test project_identity -- --exact project_identity_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "even a same-object path containing a symlink component, a retargeted junction/bind, or an outside-root path fails with permission_denied before lease/file read"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-8-godot-mcp-server-architecture.json"
+}

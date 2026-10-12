@@ -1,0 +1,23 @@
+{
+  "task": 28,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test http_transport -- --exact http_transport_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "an ephemeral trusted_local client reads the ACL-protected launch secret and initialize/list/call/stream/cancel match stdio"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test http_transport -- --exact http_transport_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "missing/stale/wrong secret, direct non-loopback bind, proxied dispatch before Todo 29, forwarded headers, HTTP external URL, invalid Origin/Host, oversize body and query token are rejected before kernel dispatch"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-28-godot-mcp-server-architecture.json"
+}

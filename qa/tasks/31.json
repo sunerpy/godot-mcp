@@ -1,0 +1,23 @@
+{
+  "task": 31,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test audit_limits -- --exact audit_limits_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "an allowed mutation creates a redacted policy/effect/outcome event"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test audit_limits -- --exact audit_limits_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "raw token/source/media bytes never appear, rate/concurrency limit blocks before dispatch, full registry/schema enumeration and a negative MCP call prove arbitrary execution is absent"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-31-godot-mcp-server-architecture.json"
+}

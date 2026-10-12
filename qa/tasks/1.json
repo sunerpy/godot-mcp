@@ -1,0 +1,110 @@
+{
+  "task": 1,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo +1.96.0 metadata --format-version 1",
+      "expected_exit": 0,
+      "assertions": [
+        "dependency graph is parseable and acyclic",
+        "lists exactly the intended workspace members",
+        "lists all eight qualification binaries including produce-qualification"
+      ]
+    },
+    {
+      "command": "cargo test -p godot-mcp-domain --test architecture_boundaries -- --exact no_transport_ui_imports",
+      "expected_exit": 0,
+      "assertions": [
+        "domain/analysis/engine crates import no transport/UI layer"
+      ]
+    },
+    {
+      "command": "cargo test -p godot-mcp-cli --test tooling_lock -- --exact tooling_lock_populated",
+      "expected_exit": 0,
+      "assertions": [
+        "tooling.lock.json records exact toolchain/cargo-deny/cargo-cyclonedx version/URL/checksum/executable-SHA"
+      ]
+    },
+    {
+      "command": "cargo test -p godot-mcp-cli --test release_graph_audit -- --exact no_shipping_gdext_artifact",
+      "expected_exit": 0,
+      "assertions": [
+        "no shipping crate godot / .gdextension in the manifest graph"
+      ]
+    },
+    {
+      "command": "cargo test -p godot-mcp-cli --test qa_descriptors -- --exact all_37_descriptors_present_and_valid",
+      "expected_exit": 0,
+      "assertions": [
+        "every qa/tasks/1.json through qa/tasks/37.json exists, schema-validates and has non-empty command/assertion fields",
+        "qa/tasks/34.json contains its fixed IDs and full commands with no angle-bracket transaction token or shorthand"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture ordinary-dependency-library",
+      "expected_exit": 0,
+      "assertions": [
+        "an ordinary native .so/.dylib/.dll outside the shipping addon/bridge tree is accepted (native-bridge detection is scoped and produces no false positive)"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture domain-imports-server",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture adding godot-mcp-server as a domain dependency fails no_transport_ui_imports"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture shipping-godot",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture pinning production godot = 0.5.4 fails no_shipping_gdext_artifact with the exact forbidden edge named"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture shipping-gdext-bridge",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture declaring a shipping gdext-bridge dependency fails no_shipping_gdext_artifact by name"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture shipping-gdextension",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture shipping a .gdextension descriptor fails no_shipping_gdext_artifact by name"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture shipping-native-bridge-lib",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture shipping a native bridge library in the addon tree fails no_shipping_gdext_artifact by name at its addon location"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture unpopulated-tooling-lock",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture with an unpopulated or checksum-mismatched tooling.lock.json fails tooling_lock_populated"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture missing-descriptor",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture with a deleted/emptied qa/tasks/17.json fails all_37_descriptors_present_and_valid by name"
+      ]
+    },
+    {
+      "command": "cargo +1.96.0 run --locked -p godot-mcp-cli --features test-hooks --bin qa-audit -- --fixture task34-angle-bracket",
+      "expected_exit": 1,
+      "assertions": [
+        "a fixture with a Todo 34 angle-bracket transaction token fails all_37_descriptors_present_and_valid by name"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-1-godot-mcp-server-architecture.txt"
+}

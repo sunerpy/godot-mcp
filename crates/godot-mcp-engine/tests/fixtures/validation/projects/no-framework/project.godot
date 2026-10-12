@@ -1,0 +1,12 @@
+; Committed Todo 15 fixture project: no test framework is installed.
+;
+; There is deliberately no `addons/` directory at all. Running tests against
+; this project must report `unsupported` with the exact detection detail, and
+; must never install a framework to make the run possible.
+
+config_version=5
+
+[application]
+
+config/name="Todo 15 Frameworkless Fixture"
+config/features=PackedStringArray("4.4")

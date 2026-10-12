@@ -1,0 +1,47 @@
+Godot Engine v4.4.1.stable.official.49a5bc7b6 - https://godotengine.org
+
+---  GUT  ---
+[1m[INFO]:  [0musing [/config/.local/share/godot/app_userdata/gutrun] for temporary output.
+Godot version:  4.4.1
+GUT version:  9.4.0
+[4m
+
+res://test/test_mixed.gd
+[0m* test_fails
+[31m    [Failed]:  [0m[1] expected to equal [2]:  
+      at line -1
+* test_pending
+[33m    [Pending]:  [0mlater
+[1m0/2 passed.
+[0m[4m
+
+res://test/test_player.gd
+[0m* test_next_score_adds_one
+[1m1/1 passed.
+[0m
+
+
+
+[33m==============================================
+[0m[33m= Run Summary
+[0m[33m==============================================
+[0m[4m
+res://test/test_mixed.gd
+[0m- test_fails
+[31m    [Failed]:  [0m[1] expected to equal [2]:  
+          at line -1
+- test_pending
+[33m    [Pending]:  [0mlater
+
+---- Totals ----
+Scripts           2
+Tests             3
+  Passing         1
+  Failing         1
+  Risky/Pending   1
+Asserts           2
+Time              0.045s
+
+
+[31m---- 1 failing tests ----
+[0m

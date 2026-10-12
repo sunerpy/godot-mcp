@@ -1,0 +1,23 @@
+# The isolated, NON-SHIPPING gdext spike of ADR 0010.
+#
+# Its own workspace, never a member of the repository's: nothing here is a
+# dependency of any shipping crate, enters the shipping Cargo.lock, or reaches
+# a release archive. `godot` is pinned exactly, at the version ADR 0010 names,
+# and built against the lowest API level the supported matrix needs (4.4), with
+# no experimental Godot API.
+[package]
+name = "godot-mcp-gdext-spike"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+publish = false
+description = "Non-shipping gdext spike: one bridge read implemented natively, to measure against the GDScript bridge."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = { version = "=0.5.5", default-features = false, features = ["api-4-4"] }
+
+[workspace]

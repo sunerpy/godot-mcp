@@ -1,0 +1,10 @@
+{
+  "task": 21,
+  "status": "cancelled",
+  "cancelled_on": "2026-07-28",
+  "cancelled_reason": "Todo 21 (reproducible TypeCatalog metadata and typed Variant serialization) was cancelled on 2026-07-28 by maintainer instruction, recorded in .omo/notepads/godot-mcp-server-architecture/decisions.md (2026-07-28 three-plane capability matrix entry) and in docs/contributor/adr/0004-editor-plane-cancelled.md. No TypeCatalog and no type_catalog test exist, so this descriptor owns zero commands; the shipped-versus-not boundary is stated in docs/operator/editor-bridge.md and an editor-plane call answers unavailable.",
+  "wrapper": "simple",
+  "happy": [],
+  "failure": [],
+  "evidence": "<attemptDir>/task-21-godot-mcp-server-architecture.json"
+}

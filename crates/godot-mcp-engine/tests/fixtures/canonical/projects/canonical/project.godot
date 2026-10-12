@@ -1,0 +1,12 @@
+; Todo 17 canonical-write project fixture.
+;
+; Engine configuration file for a fake Godot build. Minimal on purpose: the
+; canonical-write suite only needs a real `project.godot` so the Todo 2 lease can
+; be acquired and the project identity revalidated.
+
+config_version=5
+
+[application]
+
+config/name="godot-mcp-canonical-fixture"
+config/features=PackedStringArray("4.4")

@@ -1,0 +1,24 @@
+{
+  "task": 30,
+  "wrapper": "simple",
+  "happy": [
+    {
+      "command": "cargo test -p godot-mcp-server --test http_session_binding -- --exact http_session_binding_happy_path",
+      "expected_exit": 0,
+      "assertions": [
+        "an authenticated subject resumes its own SSE/session/task and reads its own opaque artifact range, and that bounded range read is byte-identical after normalization across stdio, authenticated `trusted_local` HTTP and authenticated `proxied_oidc` HTTP over the deterministic Todo 3 `ArtifactContract` vector registered through Todo 5, with every range read authorized and no raw storage path in any response",
+        "no screenshot or recording parity is asserted: Todo 24 is cancelled, so its stdio capture vectors were never produced and this descriptor claims no capture capability"
+      ]
+    }
+  ],
+  "failure": [
+    {
+      "command": "cargo test -p godot-mcp-server --test http_session_binding -- --exact http_session_binding_failure_paths",
+      "expected_exit": 0,
+      "assertions": [
+        "missing proxy-hop identity or second subject reuses an ID and receives 404/403 per the non-enumerating contract with zero task/artifact disclosure or dispatch"
+      ]
+    }
+  ],
+  "evidence": "<attemptDir>/task-30-godot-mcp-server-architecture.json"
+}

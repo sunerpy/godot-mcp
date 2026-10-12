@@ -1,0 +1,12 @@
+; A committed .tres fixture: it closes the resource -> script leg so the impact of
+; `scripts/player.gd` has a non-scene referrer too.
+[gd_resource type="Buff" format=3 uid="uid://ccorebuffres01"]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_buff"]
+
+[sub_resource type="Curve" id="Curve_1"]
+
+[resource]
+script = ExtResource("1_buff")
+duration = 2.5
+curve = SubResource("Curve_1")

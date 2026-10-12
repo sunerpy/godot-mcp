@@ -1,0 +1,3 @@
+397589cab139460d4567623f3efdf7a315752703bc70267a6b91d16a3a4c5cae  godot-mcp-0.1.0-x86_64-unknown-linux-musl.tar.gz
+896ad10c5dd5f30fb4fbf3c9d67ccd3bb66f5f0f1e530a75dc47054274e5a3d8  godot-mcp-0.1.0-aarch64-apple-darwin.tar.gz
+ed68f4e041bdd9edc152db5bd81f51cd42a7d8275f1036601922a3c9177e1098  godot-mcp-0.1.0-x86_64-pc-windows-msvc.zip

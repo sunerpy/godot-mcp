@@ -1,0 +1,12 @@
+; The Todo 8 trap, committed so the exclusion is provable rather than asserted.
+;
+; Godot writes its own copy of `project.godot` inside its `.godot/` cache. It is
+; NOT source: a naive upward project discovery that finds this file would decide
+; the cache directory is a project root. `.godot/` is engine-generated state and
+; is excluded from every disposable copy, so this file must never appear in one.
+
+config_version=5
+
+[application]
+
+config/name="godot-mcp disposable fixture (ENGINE CACHE COPY, not source)"
