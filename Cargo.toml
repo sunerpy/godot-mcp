@@ -110,7 +110,7 @@ tracing-subscriber = { version = "=0.3.23", default-features = false, features =
 clap = { version = "=4.6.7", features = ["derive", "env"] }
 
 # --- Test / dev ----------------------------------------------------------
-rstest = "=0.26.1"
+rstest = "=0.27.0"
 assert_cmd = "=2.2.2"
 assert_fs = "=1.1.4"
 predicates = "=3.1.4"
