@@ -131,7 +131,7 @@ home:
     title: From install to the first answer
     items:
       - title: Install
-        body: Run the installer for your platform from the Install section below, or download an archive from GitHub Releases; the installer checks it against the release's SHA256SUMS.txt. No release is published yet, so for now build from source.
+        body: Run the installer for your platform from the Install section below, or download an archive from GitHub Releases; the installer checks it against the release's SHA256SUMS.txt.
       - title: Register it with your client
         command: claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game
         body: Any MCP client that starts a process takes the same command. It starts in the read-only core profile.
@@ -259,9 +259,6 @@ archive against the newest, on its own platform.
 <HomePrivacy />
 
 ## Install
-
-No release is published yet, so the installers have nothing to download; until the first release,
-use the Source tab.
 
 ::: code-group
 

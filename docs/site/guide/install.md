@@ -5,11 +5,6 @@ it, the project assets it installs, an example configuration, the licences, an S
 tree. Keep the package together; the server finds its supervisor and its assets next to its own
 executable.
 
-::: warning No release yet
-godot-mcp has not published a release yet, so the installer and the archives below have nothing
-to download. Until the first release, [build from source](#build-from-source).
-:::
-
 ## Release installer
 
 The installers pick the archive for your platform, refuse it unless its digest matches the

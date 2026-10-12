@@ -131,7 +131,7 @@ home:
     title: 从安装到第一个答复
     items:
       - title: 安装
-        body: 运行下方「安装」一节里对应平台的安装脚本，或者从 GitHub Releases 下载归档，安装脚本会用发布里的 SHA256SUMS.txt 核对归档。目前尚未发布任何版本，暂时请从源码构建。
+        body: 运行下方「安装」一节里对应平台的安装脚本，或者从 GitHub Releases 下载归档，安装脚本会用发布里的 SHA256SUMS.txt 核对归档。
       - title: 在客户端里注册
         command: claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game
         body: 任何会启动进程的 MCP 客户端都用同一条命令。默认是只读的 core profile。
@@ -252,8 +252,6 @@ profile 是服务器能对项目做的一切的上限。`core` 只读，什么�
 <HomePrivacy />
 
 ## 安装
-
-目前尚未发布任何版本，安装脚本暂时没有可下载的内容；首个版本发布之前，请使用「源码」一栏。
 
 ::: code-group
 

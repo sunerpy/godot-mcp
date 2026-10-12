@@ -165,12 +165,12 @@ builds each archive on its own platform, smoke-tests it against the locked Godot
 attests and uploads the archives, verifies the remote bytes and only then publishes the
 draft release. Nobody edits the version, the changelog or a tag by hand.
 
-No release has been published yet. The first releasable commit on `main` (`feat:` or `fix:`)
-makes Release Please propose `0.1.0`, its `initial-version`; a pull request whose description
-ends with the footer `Release-As: 0.1.0` does the same without a feature. Once that release is
-published, remove the notes that say there is none from `README.md`,
-`docs/readme/README.zh-CN.md`, `docs/site/index.md`, `docs/site/zh/index.md`,
-`docs/site/guide/install.md` and `docs/site/zh/guide/install.md`.
+Release Please picks the next version from the Conventional Commit types since the last
+release: a `fix:` bumps the patch version (`0.1.0` to `0.1.1`), and before 1.0 a `feat:` bumps
+the minor version. A fix ships as a patch release of its own rather than waiting for features.
+The release pull request is opened with the workflow's `GITHUB_TOKEN`, so its CI runs stop at
+`action_required` until a maintainer approves them; `CI Success` and the pull request title
+check must pass on its head before it is merged.
 
 ## Architecture boundaries
 
