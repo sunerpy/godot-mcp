@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
@@ -216,6 +217,30 @@ fn recorded_marker(
     }
 }
 
+/// How long a contended lock is retried before it is reported as held.
+///
+/// An `flock` lock belongs to the open file description, and `FD_CLOEXEC`
+/// closes a descriptor at `exec`, not at `fork`: while a thread of this process
+/// starts a child, the child holds a duplicate of every descriptor open here,
+/// a lock file this process has just released included. That hold ends when
+/// the child executes its program, milliseconds later on a loaded host, while a
+/// live owner keeps the lock for as long as it runs. Retrying for a moment tells
+/// the two apart; a live owner is still refused, only that much later.
+const LOCK_CONTENTION_GRACE: Duration = Duration::from_millis(500);
+const LOCK_CONTENTION_RETRY: Duration = Duration::from_millis(10);
+
+fn lock_exclusive_within_grace(file: &FileHandle) -> Result<(), SysError> {
+    let deadline = Instant::now() + LOCK_CONTENTION_GRACE;
+    loop {
+        match try_lock_exclusive(file) {
+            Err(SysError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(LOCK_CONTENTION_RETRY);
+            }
+            outcome => return outcome,
+        }
+    }
+}
+
 fn take_lock(
     state_dir: &DirHandle,
     state_root: &Path,
@@ -225,7 +250,7 @@ fn take_lock(
     let lock_path = state_root.join(name);
     let lock_file = open_private_lock_file(state_dir, name)
         .map_err(|error| classify_private(error, &lock_path))?;
-    match try_lock_exclusive(&lock_file) {
+    match lock_exclusive_within_grace(&lock_file) {
         Ok(()) => Ok(lock_file),
         Err(SysError::WouldBlock) => Err(LeaseError::Conflict {
             path: display_root.to_path_buf(),
@@ -396,7 +421,7 @@ impl Lease {
         let lock_path = display.join(&lock_name);
         let lock_file = open_private_lock_file(&directory, &lock_name)
             .map_err(|error| classify_private(error, &lock_path))?;
-        match try_lock_exclusive(&lock_file) {
+        match lock_exclusive_within_grace(&lock_file) {
             Ok(()) => Ok(SiblingStateLock {
                 _lock_file: lock_file,
                 _directory: directory,

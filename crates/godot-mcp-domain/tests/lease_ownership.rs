@@ -1117,3 +1117,23 @@ fn child_helper_reports_inherited_fds() {
     }
     assert!(reported > 0, "expected at least the std descriptors");
 }
+
+/// A contender that asks while the owner is letting go gets the lease. A process
+/// that is starting a child shares its open lock file with that child until the
+/// child executes its program, so a lock its owner has just released can still
+/// look held for that moment; only an owner that keeps the lock is refused.
+#[test]
+fn a_lease_released_while_a_contender_waits_is_acquired() {
+    let fx = fixture();
+    let first = LeaseManager::new(&fx.state)
+        .acquire(&fx.root)
+        .expect("the first owner");
+    // The holder of the moment lets go after the contender has asked.
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(first);
+    });
+    let second = LeaseManager::new(&fx.state).acquire(&fx.root);
+    releaser.join().expect("the releasing thread");
+    assert!(second.is_ok(), "{:?}", second.err());
+}
