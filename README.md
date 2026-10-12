@@ -52,10 +52,6 @@ cannot.
 
 ## Install
 
-> [!NOTE]
-> No release has been published yet, so the installers and archives below have
-> nothing to download. Until the first release, [build from source](#build-from-source).
-
 ### Release installer
 
 The installers pick the archive for your platform, refuse it unless its digest
