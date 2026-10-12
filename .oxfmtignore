@@ -7,6 +7,8 @@ changelog/
 CHANGELOG.md
 .release-please-manifest.json
 release-please-config.json
+# release-please rewrites the placeholder version here and its own JSON layout with it
+.github/scaffold.json
 
 # Lockfiles and tool pins
 Cargo.lock
