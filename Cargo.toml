@@ -32,17 +32,17 @@ publish = false
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
 # --- MCP + async runtime -------------------------------------------------
-rmcp = { version = "=2.2.0", default-features = false }
+rmcp = { version = "=3.5.1", default-features = false }
 rmcp-macros = { version = "=2.2.0" }
-tokio = { version = "=1.53.1", default-features = false }
+tokio = { version = "=1.53.2", default-features = false }
 tokio-util = { version = "=0.7.19", default-features = false }
-futures = { version = "=0.3.33", default-features = false }
-async-trait = { version = "=0.1.91" }
+futures = { version = "=0.3.34", default-features = false }
+async-trait = { version = "=0.1.92" }
 
 # --- Optional HTTP transport (feature `http`) ----------------------------
 axum = { version = "=0.8.9", default-features = false }
 tower = { version = "=0.5.3", default-features = false }
-tower-http = { version = "=0.7.0", default-features = false }
+tower-http = { version = "=0.7.1", default-features = false }
 
 # --- Optional HTTP auth (feature `auth`) ---------------------------------
 # jsonwebtoken is pinned exactly with `aws_lc_rs` to remove `rsa 0.9.10`:
@@ -50,17 +50,17 @@ tower-http = { version = "=0.7.0", default-features = false }
 # On musl targets with pre-generated bindings, aws-lc-sys selects `CcBuilder` and
 # statically links its object code (`readelf -d`: `NEEDED` = 0). The plan's line-24
 # OpenSSL/native-tls prohibition above remains unchanged.
-jsonwebtoken = { version = "=10.4.0", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+jsonwebtoken = { version = "=11.1.0", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 # reqwest pinned exactly; rustls only (never default-tls/native-tls/OpenSSL),
 # with json. In reqwest 0.13.x the rustls TLS feature is spelled `rustls`.
-reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "http2", "json"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "http2", "json"] }
 
 # --- OS object identity / handle-relative filesystem (Todo 2) ------------
 # Safe POSIX syscall bindings. Used by the domain layer for descriptor-relative
 # filesystem operations and by server observability to compare an opened log
 # file's identity with stdout. The only in-tree `unsafe` on Unix is the macOS
 # process observation (`sysctl`/`libproc`), which rustix does not cover.
-rustix = { version = "=1.1.4", default-features = false, features = ["std", "fs", "process"] }
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs", "process"] }
 # Windows syscall bindings for the same handle-relative primitives: NT
 # handle-relative opens with reparse-point nofollow, volume-serial + 128-bit
 # file-ID object identity, `LockFileEx` advisory locking, handle-relative
@@ -87,18 +87,18 @@ windows-sys = { version = "=0.61.2", features = [
 getrandom = "=0.4.3"
 
 # --- Static analysis -----------------------------------------------------
-tree-sitter = "=0.26.11"
+tree-sitter = "=0.27.1"
 tree-sitter-gdscript = "=6.1.0"
 streaming-iterator = "=0.1.9"
-rusqlite = { version = "=0.40.1", features = ["bundled"] }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 notify = "=8.2.0"
 
 # --- Serialization / schema ---------------------------------------------
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
-toml = "=0.9.8"
-schemars = "=1.2.1"
-thiserror = "=2.0.19"
+toml = "=1.1.3"
+schemars = "=1.2.2"
+thiserror = "=2.0.21"
 anyhow = "=1.0.104"
 sha2 = "=0.11.0"
 
@@ -107,10 +107,10 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["env-filter", "fmt", "json", "std"] }
 
 # --- CLI -----------------------------------------------------------------
-clap = { version = "=4.6.4", features = ["derive", "env"] }
+clap = { version = "=4.6.7", features = ["derive", "env"] }
 
 # --- Test / dev ----------------------------------------------------------
-rstest = "=0.26.1"
+rstest = "=0.27.0"
 assert_cmd = "=2.2.2"
 assert_fs = "=1.1.4"
 predicates = "=3.1.4"
