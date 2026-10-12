@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 
 use godot_mcp_server::http::LaunchSecret;
 use godot_mcp_server::rmcp_adapter::ARTIFACT_RANGE_META_KEY;
-use rmcp::model::{CallToolRequestParams, Meta, ReadResourceRequestParams, ResourceContents};
+use rmcp::model::{
+    CallToolRequestParams, ReadResourceRequestParams, RequestMetaObject, ResourceContents,
+};
 use rmcp::service::RunningService;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -288,7 +290,7 @@ async fn http_read(
 ) -> ReadAnswer {
     let mut request = ReadResourceRequestParams::new(uri);
     if let Some((start, end)) = range {
-        let mut meta = Meta::new();
+        let mut meta = RequestMetaObject::new();
         meta.0.insert(
             ARTIFACT_RANGE_META_KEY.to_owned(),
             json!({ "start": start, "endInclusive": end }),

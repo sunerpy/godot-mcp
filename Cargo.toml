@@ -32,8 +32,8 @@ publish = false
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
 # --- MCP + async runtime -------------------------------------------------
-rmcp = { version = "=2.2.0", default-features = false }
-rmcp-macros = { version = "=2.2.0" }
+rmcp = { version = "=3.5.1", default-features = false }
+rmcp-macros = { version = "=3.5.1" }
 tokio = { version = "=1.53.2", default-features = false }
 tokio-util = { version = "=0.7.20", default-features = false }
 futures = { version = "=0.3.34", default-features = false }

@@ -67,7 +67,7 @@ use godot_mcp_server::http::{
 use godot_mcp_server::idempotency::{ModePrincipal, TransportAuthMode};
 use godot_mcp_server::kernel::{AccessContext, KernelToolCall, KernelToolHandler, ServiceKernel};
 use godot_mcp_server::rmcp_adapter::{ARTIFACT_RANGE_META_KEY, RmcpAdapter};
-use rmcp::model::{Meta, ReadResourceRequestParams, ResourceContents};
+use rmcp::model::{ReadResourceRequestParams, RequestMetaObject, ResourceContents};
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
 use serde_json::{Value, json};
 
@@ -576,7 +576,7 @@ async fn stdio_observation() -> anyhow::Result<ArtifactObservation> {
     });
     let client: rmcp::service::RunningService<RoleClient, StdioClient> =
         StdioClient.serve(client_transport).await?;
-    let mut meta = Meta::new();
+    let mut meta = RequestMetaObject::new();
     meta.0.insert(
         ARTIFACT_RANGE_META_KEY.to_owned(),
         json!({ "start": PARITY_RANGE.0, "endInclusive": PARITY_RANGE.1 }),

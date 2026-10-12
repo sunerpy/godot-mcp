@@ -10,7 +10,7 @@ archive. This page summarizes what that file records and why.
 
 | Component | Licence | Relationship |
 | --- | --- | --- |
-| `rmcp` (exactly `2.2.0`) | Apache-2.0 | Runtime dependency: the MCP protocol implementation |
+| `rmcp` (exactly `3.5.1`) | Apache-2.0 | Runtime dependency: the MCP protocol implementation |
 | `tree-sitter-gdscript` (exactly `6.1.0`) | MIT | Runtime dependency: the GDScript grammar |
 | `codegraph-rust` | MIT | Behaviour and fixtures adapted; **not** a dependency |
 

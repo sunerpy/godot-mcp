@@ -111,6 +111,18 @@ what the backend does when either half of that pair is missing.
 ## What a client should expect
 
 * `initialize` is answered by the shared kernel; `serverInfo` names the server.
+* The server speaks MCP revisions 2024-11-05 through 2025-11-25, over the
+  `initialize` handshake. A client that asks for a later revision is answered with
+  2025-11-25.
+* The 2026-07-28 revision's per-request lifecycle is not served. `server/discover` is
+  answered "method not found" (`-32601`), as a server that predates it answers, so a
+  client that probes falls back to `initialize`. A tool, resource or prompt request
+  that carries its client context in its own `_meta` instead is refused as
+  `unsupported` (`-32600`) on stdio and over HTTP, before the kernel sees it, so over
+  HTTP none is served outside a session that `initialize` opened. Measured over stdio
+  on Linux x86_64 with the official MCP Python SDK 2.3.0, whose default `auto` mode
+  probes first: the client fell back to `initialize` and negotiated 2025-11-25.
+  Pinned to 2026-07-28, it could not connect.
 * `tools/list` and `resources/list` reflect the selected profile exactly. A tool is
   listed because it is in the profile, not because it happens to be reachable right
   now.

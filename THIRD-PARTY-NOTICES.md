@@ -54,7 +54,7 @@ SOFTWARE.
 
 ## rmcp — modelcontextprotocol/rust-sdk (Apache-2.0)
 
-The MCP protocol crate `rmcp` (pinned exactly to `=2.2.0`) is distributed
+The MCP protocol crate `rmcp` (pinned exactly to `=3.5.1`) is distributed
 under the Apache License, Version 2.0. See
 <https://www.apache.org/licenses/LICENSE-2.0> for the full text.
 
