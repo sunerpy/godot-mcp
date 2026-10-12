@@ -132,9 +132,13 @@ sbom:
 ## the stable no-op entry point Todo 1 froze. With GODOT_ARTIFACT_URL and
 ## GODOT_ARTIFACT_SHA256 (both supplied by the lock-derived CI matrix, never by
 ## hand) it fetches that exact artifact into a digest-keyed cache, verifies it,
-## and runs the engine compatibility suite against it. A download that does not
-## match the locked digest is a hard failure, so only hash-verified artifacts are
-## ever cached or executed.
+## and runs the engine's locked-artifact check against it
+## (crates/godot-mcp-engine/tests/locked_artifact.rs): an editor is probed and
+## checks scripts, export templates must match the build, and with
+## GODOT_DISPLAY_REQUIRED=1 the editor must also run windowed and render. A
+## download that does not match the locked digest is a hard failure, so only
+## hash-verified artifacts are ever cached or executed, and a run in which the
+## check itself did not run fails too.
 godot-test:
 	@if [ -z "$(GODOT_ARTIFACT_URL)" ]; then \
 		echo "godot-test: no locked Godot artifact requested (set GODOT_ARTIFACT_URL from make ci-matrix)"; \
@@ -146,9 +150,14 @@ godot-test:
 	artifact=$$(scripts/godot-artifact.sh --url "$(GODOT_ARTIFACT_URL)" \
 		--sha256 "$(GODOT_ARTIFACT_SHA256)" --name "$(GODOT_ARTIFACT_NAME)") || exit 1; \
 	echo "godot-test: verified artifact $$artifact"; \
-	GODOT_MCP_LOCKED_ARTIFACT="$$artifact" \
-	GODOT_MCP_DISPLAY_REQUIRED="$(GODOT_DISPLAY_REQUIRED)" \
-		$(CARGO) test -p godot-mcp-engine --all-features
+	output=$$(GODOT_MCP_LOCKED_ARTIFACT="$$artifact" \
+		GODOT_MCP_DISPLAY_REQUIRED="$(GODOT_DISPLAY_REQUIRED)" \
+		$(CARGO) test -p godot-mcp-engine --all-features --test locked_artifact -- \
+			--ignored --exact the_locked_artifact_serves_the_engine_plane 2>&1); \
+	status=$$?; printf '%s\n' "$$output"; \
+	[ "$$status" -eq 0 ] || exit "$$status"; \
+	printf '%s\n' "$$output" | grep -q 'test result: ok. 1 passed' || { \
+		echo "godot-test: FAIL: the locked-artifact check did not run" >&2; exit 1; }
 
 ## check: the local gate to run before pushing: formatting, lint, tests, build, licences.
 check: fmt-check lint test build deny

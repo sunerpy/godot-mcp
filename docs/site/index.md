@@ -165,10 +165,10 @@ home:
   versions:
     columns: [Godot, CI runs, Platforms]
     rows:
-      - cells: [4.7.1, "Engine suite, export templates, display check, packaged smoke", "Linux, macOS, Windows"]
-      - cells: [4.6.1, "Engine suite, export templates", Linux]
-      - cells: [4.5.1, "Engine suite, export templates", Linux]
-      - cells: [4.4.1, "Engine suite, export templates", Linux]
+      - cells: [4.7.1, "Editor check, export templates, display check, packaged smoke", "Linux, macOS, Windows"]
+      - cells: [4.6.1, "Editor check, export templates", Linux]
+      - cells: [4.5.1, "Editor check, export templates", Linux]
+      - cells: [4.4.1, "Editor check, export templates", Linux]
     code: [0]
     caption: Exact builds from one lock, each checked against its official SHA-256. The minimum supported version is 4.4.0.
 
@@ -247,8 +247,8 @@ breakpoints and the call stack. When the session ends, every input it held is re
 ## The engine, exactly
 
 Every Godot build the project supports is an exact patch version in one lock, with its official
-download and digest. CI runs the engine suite against each of them and smoke-tests every release
-archive against the newest, on its own platform.
+download and digest. CI probes each editor and has it check scripts, verifies each set of export
+templates, and smoke-tests every release archive against the newest, on its own platform.
 
 [Running the engine](guide/engine.md) · [Godot versions](../operator/version-matrix.md)
 

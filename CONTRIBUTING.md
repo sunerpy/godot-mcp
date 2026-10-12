@@ -41,9 +41,11 @@ the default sits under `/var`, a symlink to `/private/var`, and the project
 filesystem refuses a path with a symlink in it.
 
 The GDScript codec harness in the bridge suite runs against the Godot build named
-by `GODOT_MCP_GODOT_BINARY` and prints a `SKIP` line when it is unset. The engine
-compatibility suite runs through `make godot-test` against an exact locked build,
-fetched and verified by digest (the URLs and digests come from `make ci-matrix`).
+by `GODOT_MCP_GODOT_BINARY` and prints a `SKIP` line when it is unset.
+`make godot-test` checks an exact locked build, fetched and verified by digest
+(the URLs and digests come from `make ci-matrix`): an editor is probed and checks
+scripts, export templates must match the build, and with
+`GODOT_DISPLAY_REQUIRED=1` the editor must also run windowed and render.
 
 ## Work on a change
 
