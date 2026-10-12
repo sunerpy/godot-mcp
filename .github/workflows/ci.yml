@@ -323,10 +323,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The catalogue's display check runs the engine suite against the newest locked
-  # Linux editor with GODOT_DISPLAY_REQUIRED=1. It runs under a virtual X server,
-  # so a test that opens a window has a display; hosted runners have no GPU, so
-  # rendering is Mesa's software rasterizer.
+  # The catalogue's display check runs the locked-artifact check against the
+  # newest locked Linux editor with GODOT_DISPLAY_REQUIRED=1, which also runs the
+  # editor windowed and requires it to report a display server and render. It
+  # runs under a virtual X server; hosted runners have no GPU, so rendering is
+  # Mesa's software rasterizer.
   display:
     name: display editor smoke
     needs: matrix

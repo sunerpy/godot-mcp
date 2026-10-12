@@ -29,7 +29,7 @@ make hooks    # pre-commit 时格式化，pre-push 时运行 make lint test
 make check    # 格式检查、clippy、工作区测试、锁定构建、cargo-deny
 ```
 
-采用测试先行：先写会失败的测试，读懂它为什么失败，再让它通过。桥接测试套件里的 GDScript 编解码检查使用 `GODOT_MCP_GODOT_BINARY` 指定的 Godot，没有时打印一行 `SKIP`；`make godot-test` 针对一个按摘要获取并校验的确切锁定版本运行引擎兼容性套件。
+采用测试先行：先写会失败的测试，读懂它为什么失败，再让它通过。桥接测试套件里的 GDScript 编解码检查使用 `GODOT_MCP_GODOT_BINARY` 指定的 Godot，没有时打印一行 `SKIP`；`make godot-test` 检查一个按摘要获取并校验的确切锁定版本：探测编辑器并用它检查脚本，核对导出模板与该版本一致，显示检查还会以窗口方式运行编辑器。
 
 CI 在各自的运行器上运行发布门禁目录（`make release-gate-specs`）里的每一项检查——工作区检查、Godot 引擎矩阵、显示检查、Linux、macOS 与 Windows 上的打包冒烟，以及 Docker 洁净室隔离检查——再由发布门禁汇总程序合并全部观察结果，只要有一项必需检查缺失或失败就判为失败。工作区测试还会在 macOS 和 Windows 上原生运行。`CI Success` 要求以上全部通过。
 

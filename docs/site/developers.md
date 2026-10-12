@@ -35,8 +35,9 @@ make check    # format check, clippy, workspace tests, locked build, cargo-deny
 
 Work test-first: write the failing test, read why it fails, then make it pass. The GDScript codec
 harness in the bridge suite runs against the Godot build named by `GODOT_MCP_GODOT_BINARY` and
-prints a `SKIP` line without one; `make godot-test` runs the engine compatibility suite against an
-exact locked build, fetched and verified by its digest.
+prints a `SKIP` line without one; `make godot-test` checks one exact locked build, fetched and
+verified by its digest: an editor is probed and checks scripts, export templates must match the
+build, and the display check also runs the editor windowed.
 
 CI runs every check of the release-gate catalogue (`make release-gate-specs`) on its own runner —
 the workspace checks, the Godot engine matrix, the display check, the packaged smokes on Linux,
