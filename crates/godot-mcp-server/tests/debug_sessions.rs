@@ -384,7 +384,23 @@ fn an_editor_whose_state_directory_was_removed_still_ends_with_the_server() {
     let mut session = server(&tree);
     let _editor = start_editor(&mut session, 2, "m5-removed");
     let pid = editor_pid(&tree);
-    std::fs::remove_dir_all(tree.root.join(".godot-mcp")).expect("remove the state directory");
+    // The running session keeps writing into the state directory, so one
+    // removal can race a file it is creating; retry until the directory is gone.
+    let state = tree.root.join(".godot-mcp");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match std::fs::remove_dir_all(&state) {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("remove the state directory: {error}"),
+        }
+    }
     let stopping = Instant::now();
     let _ = session.finish();
     wait_gone(pid);
