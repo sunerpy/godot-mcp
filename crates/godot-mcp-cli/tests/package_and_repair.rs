@@ -515,7 +515,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a proof for another transaction is refused");
-    assert!(matches!(error, RepairError::WrongBinding(_)));
+    assert!(matches!(error, RepairError::WrongBinding(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         format!(
@@ -540,7 +540,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a proof for another project object is refused");
-    assert!(matches!(error, RepairError::WrongBinding(_)));
+    assert!(matches!(error, RepairError::WrongBinding(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         format!(
@@ -563,7 +563,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a proof for another project generation is refused");
-    assert!(matches!(error, RepairError::WrongBinding(_)));
+    assert!(matches!(error, RepairError::WrongBinding(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         format!(
@@ -583,7 +583,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a proof of another effect kind is refused");
-    assert!(matches!(error, RepairError::WrongBinding(_)));
+    assert!(matches!(error, RepairError::WrongBinding(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         format!(
@@ -600,7 +600,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a pre-state proof cannot acknowledge a post-state");
-    assert!(matches!(error, RepairError::Unproven(_)));
+    assert!(matches!(error, RepairError::Unproven(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         "the state this operation requires is not proven: acknowledge-safe-state requires a \
@@ -632,7 +632,10 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a compensated transaction is no longer repairable");
-    assert!(matches!(error, RepairError::NotQuarantined { .. }));
+    assert!(
+        matches!(error, RepairError::NotQuarantined { .. }),
+        "{error:?}"
+    );
     assert_eq!(
         error.to_string(),
         format!(
@@ -655,7 +658,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
         false,
     ))
     .expect_err("a file transaction is not terminable");
-    assert!(matches!(error, RepairError::NotTerminable(_)));
+    assert!(matches!(error, RepairError::NotTerminable(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         "terminate applies only to a process_launch transaction, not file"
@@ -784,7 +787,7 @@ fn operator_repair_rederives_every_proof_kind_end_to_end() {
     ));
     std::fs::rename(&offline_rendezvous, &rendezvous).expect("restore bridge rendezvous");
     let error = unreachable.expect_err("an undiscoverable bridge is refused");
-    assert!(matches!(error, RepairError::Unproven(_)));
+    assert!(matches!(error, RepairError::Unproven(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         format!(

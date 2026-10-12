@@ -160,9 +160,10 @@ jobs:
           path: ci-catalogue
 
       # Versions come from tooling.lock.json, which records the exact pin and the
-      # crates.io package it was installed from.
+      # crates.io package it was installed from. The unit check needs them too:
+      # its tooling_lock suite validates the lock against the installed executables.
       - name: Install the locked cargo subcommands
-        if: matrix.check == 'license' || matrix.check == 'advisory' || matrix.check == 'sbom'
+        if: matrix.check == 'license' || matrix.check == 'advisory' || matrix.check == 'sbom' || matrix.check == 'unit'
         run: |
           set -euo pipefail
           deny=$(python3 -c 'import json;print(json.load(open("tooling.lock.json"))["tools"]["cargo-deny"]["version"])')
@@ -512,6 +513,8 @@ jobs:
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: "off"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -548,8 +551,16 @@ jobs:
             exit 1
           }
 
+      # macOS's default TMPDIR sits under /var, a symlink to /private/var, and the
+      # project filesystem refuses a path with a symlink in it, so the suites that
+      # build projects in a temporary directory get one without.
+      - name: Use a temporary directory without symlinks
+        if: runner.os == 'macOS'
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      # Every suite runs, so one platform difference does not hide the next.
       - name: Run the workspace tests
-        run: cargo +1.96.0 test --workspace --all-features --locked
+        run: cargo +1.96.0 test --workspace --all-features --locked --no-fail-fast
 
   # Informational, so it is left out of CI Success on purpose: the floor in the
   # Makefile was measured on a host that runs every isolation suite, and a hosted
@@ -585,6 +596,16 @@ jobs:
         uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-llvm-cov@0.8.7
+
+      # The coverage run includes the tooling_lock suite, which validates the
+      # locked cargo subcommands against the installed executables.
+      - name: Install the locked cargo subcommands
+        run: |
+          set -euo pipefail
+          deny=$(python3 -c 'import json;print(json.load(open("tooling.lock.json"))["tools"]["cargo-deny"]["version"])')
+          cyclonedx=$(python3 -c 'import json;print(json.load(open("tooling.lock.json"))["tools"]["cargo-cyclonedx"]["version"])')
+          cargo +1.96.0 install cargo-deny --version "$deny" --locked
+          cargo +1.96.0 install cargo-cyclonedx --version "$cyclonedx" --locked
 
       - name: Run the coverage gate
         run: make coverage-gate

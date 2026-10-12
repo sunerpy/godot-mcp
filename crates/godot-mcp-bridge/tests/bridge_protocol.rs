@@ -697,17 +697,22 @@ fn bridge_protocol_failure_paths() {
     RendezvousFile::set_mode(&loose, 0o644).expect("relax the mode");
     // Windows has no mode: a file written the ordinary way inherits its
     // directory's ACL, which is exactly what a private rendezvous must not do.
-    let loose_refusal = if cfg!(windows) {
-        RendezvousError::InsecureAccess {
-            detail: "DACL inheritance is not protected".to_owned(),
-        }
+    // Which check refuses it first depends on the host: a file an elevated
+    // administrator creates is owned by the Administrators group, so the owner
+    // check fires before the inheritance check. Either way it is insecure.
+    let loose_refusal =
+        RendezvousFile::read(&loose).expect_err("a world-readable rendezvous is refused");
+    if cfg!(windows) {
+        assert!(
+            matches!(loose_refusal, RendezvousError::InsecureAccess { .. }),
+            "{loose_refusal:?}"
+        );
     } else {
-        RendezvousError::InsecurePermissions { mode: 0o644 }
-    };
-    assert_eq!(
-        RendezvousFile::read(&loose).expect_err("a world-readable rendezvous is refused"),
-        loose_refusal
-    );
+        assert_eq!(
+            loose_refusal,
+            RendezvousError::InsecurePermissions { mode: 0o644 }
+        );
+    }
     let missing = temp.path().join("absent.rendezvous");
     assert!(matches!(
         RendezvousFile::read(&missing),

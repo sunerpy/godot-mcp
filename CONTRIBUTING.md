@@ -35,6 +35,11 @@ make hooks      # optional: pre-commit runs make fmt, pre-push runs make lint te
 make check
 ```
 
+On macOS, run the test suites with `TMPDIR` pointing at a directory whose path
+contains no symlink, such as `TMPDIR="$(mktemp -d "$HOME/tmp.XXXXXX")" make test`:
+the default sits under `/var`, a symlink to `/private/var`, and the project
+filesystem refuses a path with a symlink in it.
+
 The GDScript codec harness in the bridge suite runs against the Godot build named
 by `GODOT_MCP_GODOT_BINARY` and prints a `SKIP` line when it is unset. The engine
 compatibility suite runs through `make godot-test` against an exact locked build,
