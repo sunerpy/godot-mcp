@@ -96,7 +96,7 @@ test to make a change pass. Tests that need a maintainer-only input (`.omo/`) ar
 
 - `docs/` is checked mechanically by `docs-check`; generated pages are
   regenerated with `docs-check -- --write`, never edited by hand.
-- The Chinese README (`README.md`) and the English one (`docs/readme/README.en.md`)
+- The English README (`README.md`) and the Chinese one (`docs/readme/README.zh-CN.md`)
   keep the same structure, commands and claims.
 - The website's words live in `docs/site/` (English at the root, Chinese under
   `zh/`), published at <https://firlab.app/godot-mcp/>; `docs/site/README.md`
