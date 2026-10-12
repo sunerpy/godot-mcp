@@ -1,6 +1,9 @@
 # 0009 — JWT uses the aws-lc-rs backend
 
-**Status:** accepted; supersedes ADR 0007's residual-advisory decision.
+**Status:** accepted; supersedes ADR 0007's residual-advisory decision. Still in force at
+`jsonwebtoken 11.1.0` (2026-10-13): the same two features, the same backend, and
+`cargo tree --workspace --all-features -i rsa` matches no package. The versions below are
+the ones this decision was made against.
 
 ## Decision
 

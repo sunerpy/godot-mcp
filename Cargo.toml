@@ -50,7 +50,7 @@ tower-http = { version = "=0.7.1", default-features = false }
 # On musl targets with pre-generated bindings, aws-lc-sys selects `CcBuilder` and
 # statically links its object code (`readelf -d`: `NEEDED` = 0). The plan's line-24
 # OpenSSL/native-tls prohibition above remains unchanged.
-jsonwebtoken = { version = "=10.4.0", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+jsonwebtoken = { version = "=11.1.0", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 # reqwest pinned exactly; rustls only (never default-tls/native-tls/OpenSSL),
 # with json. In reqwest 0.13.x the rustls TLS feature is spelled `rustls`.
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "http2", "json"] }
