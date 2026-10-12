@@ -39,8 +39,13 @@ fn string_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> BTreeSet<Str
 }
 
 fn published_pattern_matches(pattern: &str, paths: &[&str]) -> Vec<bool> {
+    // UTF-8 mode, so the paths on stdin decode the same way on every host: Windows
+    // would otherwise read them in its ANSI code page, which turns a C1 control
+    // into printable text and makes the regex accept what the runtime refuses.
     let mut child = Command::new("python3")
         .args([
+            "-X",
+            "utf8",
             "-c",
             "import json, re, sys; pattern = re.compile(sys.argv[1]); values = json.load(sys.stdin); json.dump([pattern.fullmatch(value) is not None for value in values], sys.stdout)",
             pattern,
@@ -63,8 +68,13 @@ fn published_pattern_matches(pattern: &str, paths: &[&str]) -> Vec<bool> {
 }
 
 fn full_scalar_pattern_divergences() -> Vec<(u32, bool, bool)> {
+    // UTF-8 mode, so the paths on stdin decode the same way on every host: Windows
+    // would otherwise read them in its ANSI code page, which turns a C1 control
+    // into printable text and makes the regex accept what the runtime refuses.
     let mut child = Command::new("python3")
         .args([
+            "-X",
+            "utf8",
             "-c",
             "import json, re, sys\npattern = re.compile(sys.argv[1])\nfor line in sys.stdin:\n    codepoint, value, runtime = json.loads(line)\n    published = pattern.fullmatch(value) is not None\n    if published != runtime:\n        print(json.dumps([codepoint, published, runtime]))",
             PROJECT_RELATIVE_PATH_PATTERN,

@@ -1190,7 +1190,10 @@ mod tests {
             "{}",
             snapshot.to_value()
         );
-        assert_eq!(snapshot.revision(), 2);
+        // The scan after the watch starts publishes revision 2. macOS's FSEvents
+        // may still deliver the creation, made a moment before the stream began,
+        // and the coordinator applies it as one more revision of the same files.
+        assert!(snapshot.revision() >= 2, "{}", snapshot.to_value());
         assert!(snapshot.coherence().is_coherent());
     }
 
