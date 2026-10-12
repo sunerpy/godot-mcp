@@ -53,7 +53,7 @@ jobs:
             exit 1
           fi
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-09-12
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09
         with:
           toolchain: 1.96.0
       - name: Build the reference lane in place
