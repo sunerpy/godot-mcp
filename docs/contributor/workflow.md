@@ -35,6 +35,10 @@ missing, skipped or red. The workspace suite also runs natively on macOS and Win
 `CI Success`, the one required check, waits for all of them; the coverage job reports
 without gating.
 
+A new push to a pull request cancels the run of its previous head. A push to `main` never
+cancels another run: each commit there keeps its own run to the end, because a release
+needs `CI Success` on its exact commit.
+
 ## Test-first, and what that means concretely
 
 1. **Write the failing test first**, and check *why* it fails. A test that fails for the

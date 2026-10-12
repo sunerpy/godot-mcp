@@ -25,8 +25,11 @@ on:
   merge_group:
   workflow_dispatch:
 
+# A new head of a pull request cancels its stale run. Every other run has a group
+# of its own event and commit, so no later push cancels a main commit's CI, running
+# or pending: release.yml's verify-ci needs CI Success on the exact release commit.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 permissions:
