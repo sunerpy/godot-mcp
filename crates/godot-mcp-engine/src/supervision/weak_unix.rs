@@ -609,6 +609,13 @@ mod imp {
         }
     }
 
+    /// Whether a socket option was refused because the peer already shut the
+    /// connection down: macOS answers EINVAL then, where Linux accepts the option.
+    fn peer_has_shut_down(error: &std::io::Error) -> bool {
+        cfg!(target_os = "macos")
+            && error.raw_os_error() == Some(rustix::io::Errno::INVAL.raw_os_error())
+    }
+
     struct SupervisorLink {
         reader: BufReader<UnixStream>,
         nonce: String,
@@ -618,10 +625,14 @@ mod imp {
 
     impl SupervisorLink {
         fn read_line(&mut self, deadline: Duration) -> Result<String, BoundaryError> {
-            self.reader
-                .get_ref()
-                .set_read_timeout(Some(deadline))
-                .map_err(|error| BoundaryError::Control(error.to_string()))?;
+            if let Err(error) = self.reader.get_ref().set_read_timeout(Some(deadline)) {
+                // macOS refuses a receive timeout with EINVAL once the supervisor has
+                // closed its end. Nothing can block then: the read below returns what
+                // the supervisor wrote before it exited, or end of file.
+                if !peer_has_shut_down(&error) {
+                    return Err(BoundaryError::Control(error.to_string()));
+                }
+            }
             let mut line = String::new();
             match self.reader.read_line(&mut line) {
                 Ok(0) => Err(BoundaryError::SupervisorLost(
@@ -725,6 +736,36 @@ mod imp {
             signal,
             timed_out: false,
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A supervisor that reports its child's exit and closes its end before
+        /// the server reads is still heard: on macOS the receive timeout is then
+        /// refused, and the report was failed as a broken control channel.
+        #[test]
+        fn a_report_sent_before_the_supervisor_closed_its_end_is_still_read() {
+            let (ours, mut theirs) = UnixStream::pair().expect("a socket pair");
+            theirs.write_all(b"exited code=0\n").expect("the report");
+            drop(theirs);
+            let mut link = SupervisorLink {
+                reader: BufReader::new(ours),
+                nonce: String::new(),
+                supervisor_pid: 0,
+                process_group: None,
+            };
+            let outcome = link
+                .wait(Duration::from_secs(5))
+                .expect("the report written before the close is read");
+            assert_eq!(outcome.exit_code, Some(0));
+            assert!(!outcome.timed_out);
+            assert!(matches!(
+                link.read_line(Duration::from_secs(5)),
+                Err(BoundaryError::SupervisorLost(_))
+            ));
+        }
     }
 }
 
