@@ -3,7 +3,7 @@
 //! # One kernel, two transports
 //!
 //! This module contains no tool logic. It mounts the official
-//! [`StreamableHttpService`] from `rmcp` 2.2.0 on Axum and points it at the very
+//! [`StreamableHttpService`] from `rmcp` 3.5.1 on Axum and points it at the very
 //! same [`RmcpAdapter`] over the very same [`ServiceKernel`] that
 //! [`stdio`](crate::stdio) serves, which is what makes the shared parity suite in
 //! `tests/http_transport.rs` meaningful rather than tautological. The only thing

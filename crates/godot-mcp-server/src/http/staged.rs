@@ -32,10 +32,10 @@ use godot_mcp_domain::config::HttpMode;
 use godot_mcp_domain::contracts::{ErrorKind, OutcomeError};
 
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ErrorCode, ErrorData, GetPromptRequestParams,
-    GetPromptResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
-    ListToolsResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult,
-    ServerInfo,
+    CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult, ErrorCode, ErrorData,
+    GetPromptRequestParams, GetPromptResponse, ListPromptsResult, ListResourceTemplatesResult,
+    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ReadResourceRequestParams,
+    ReadResourceResponse, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler};
@@ -45,7 +45,7 @@ use crate::binding::{
     BindingRefusal, BindingRegistry, BoundSubject, SessionLease, binding_refusal,
 };
 use crate::kernel::IDEMPOTENCY_ARGUMENT;
-use crate::rmcp_adapter::{RmcpAdapter, parse_range};
+use crate::rmcp_adapter::{RmcpAdapter, parse_range, refuse_inline_lifecycle};
 
 /// The URI prefix every opaque artifact resource carries.
 ///
@@ -178,8 +178,15 @@ impl StagedHandler {
 }
 
 impl ServerHandler for StagedHandler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         self.adapter.get_info()
+    }
+
+    async fn discover(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<DiscoverResult, ErrorData> {
+        self.adapter.discover(context).await
     }
 
     async fn list_tools(
@@ -195,6 +202,7 @@ impl ServerHandler for StagedHandler {
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        refuse_inline_lifecycle(&context.meta)?;
         // The listing names the artifacts the subject this request re-proved
         // could read, so it is answered as that subject.
         let (subject, lease) = match self.bindings.as_ref() {
@@ -231,9 +239,10 @@ impl ServerHandler for StagedHandler {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
+        refuse_inline_lifecycle(&context.meta)?;
         if !self.dispatch_available() {
-            return Ok(CallToolResult::structured_error(Self::refusal_value()));
+            return Ok(CallToolResult::structured_error(Self::refusal_value()).into());
         }
         let admitted = match self.bindings.as_ref() {
             None => None,
@@ -288,7 +297,8 @@ impl ServerHandler for StagedHandler {
         &self,
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, ErrorData> {
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        refuse_inline_lifecycle(&context.meta)?;
         if !self.dispatch_available() {
             return Err(Self::refusal_error());
         }
@@ -328,7 +338,8 @@ impl ServerHandler for StagedHandler {
         &self,
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<GetPromptResult, ErrorData> {
+    ) -> Result<GetPromptResponse, ErrorData> {
+        refuse_inline_lifecycle(&context.meta)?;
         if !self.dispatch_available() {
             return Err(Self::refusal_error());
         }

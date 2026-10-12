@@ -41,8 +41,8 @@ use godot_mcp_server::kernel::{AccessContext, KernelToolCall, KernelToolHandler,
 use godot_mcp_server::rmcp_adapter::{ARTIFACT_RANGE_META_KEY, RmcpAdapter};
 use godot_mcp_server::stdio::{ProjectRuntime, StdioOptions, state_dir_for};
 use rmcp::model::{
-    CallToolRequestParams, ClientRequest, GetPromptRequestParams, Meta, ProgressNotificationParam,
-    ProgressToken, ReadResourceRequestParams, Request, ResourceContents,
+    CallToolRequestParams, ClientRequest, GetPromptRequestParams, ProgressNotificationParam,
+    ProgressToken, ReadResourceRequestParams, Request, RequestMetaObject, ResourceContents,
 };
 use rmcp::service::{PeerRequestOptions, RunningService};
 use rmcp::transport::StreamableHttpClientTransport;
@@ -222,6 +222,8 @@ async fn parity_snapshot(
         .peer_info()
         .expect("initialize returned server info")
         .server_info
+        .as_ref()
+        .expect("initialize names the server")
         .name
         .clone();
 
@@ -271,7 +273,7 @@ async fn parity_snapshot(
         other => anyhow::bail!("expected text capabilities resource, got {other:?}"),
     };
 
-    let mut range_meta = Meta::new();
+    let mut range_meta = RequestMetaObject::new();
     range_meta.0.insert(
         ARTIFACT_RANGE_META_KEY.to_owned(),
         json!({ "start": 1, "endInclusive": 3 }),

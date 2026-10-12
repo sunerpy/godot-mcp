@@ -14,8 +14,9 @@ use godot_mcp_domain::objid::{LeaseKey, StableObjectId};
 use godot_mcp_server::kernel::{AccessContext, KernelToolCall, KernelToolHandler, ServiceKernel};
 use godot_mcp_server::rmcp_adapter::{ARTIFACT_RANGE_META_KEY, RmcpAdapter};
 use rmcp::model::{
-    CallToolRequestParams, ClientRequest, ErrorCode, GetPromptRequestParams, Meta,
-    ProgressNotificationParam, ProgressToken, ReadResourceRequestParams, Request, ResourceContents,
+    CallToolRequestParams, ClientRequest, ErrorCode, GetPromptRequestParams,
+    ProgressNotificationParam, ProgressToken, ReadResourceRequestParams, Request,
+    RequestMetaObject, ResourceContents,
 };
 use rmcp::service::PeerRequestOptions;
 use rmcp::{ClientHandler, ServiceError, ServiceExt};
@@ -195,7 +196,14 @@ async fn in_memory_client_initialize_list_call_read_cancel() -> anyhow::Result<(
 
     let (client, server_task) = start_pair(kernel, access).await?;
     let server_info = client.peer_info().expect("initialize returned server info");
-    assert_eq!(server_info.server_info.name, "godot-mcp-server");
+    assert_eq!(
+        server_info
+            .server_info
+            .as_ref()
+            .expect("initialize names the server")
+            .name,
+        "godot-mcp-server"
+    );
 
     let expected_tools = canonical_manifest(CapabilityProfile::Full).tools;
     let listed_tools: BTreeSet<_> = client
@@ -254,7 +262,7 @@ async fn in_memory_client_initialize_list_call_read_cancel() -> anyhow::Result<(
         .await?;
     assert_eq!(capabilities.contents.len(), 1);
 
-    let mut range_meta = Meta::new();
+    let mut range_meta = RequestMetaObject::new();
     range_meta.0.insert(
         ARTIFACT_RANGE_META_KEY.to_owned(),
         json!({ "start": 1, "endInclusive": 3 }),
