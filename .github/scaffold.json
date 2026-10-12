@@ -1,6 +1,9 @@
 {
   "profile": "rust",
-  "addons": ["pr-title", "codecov"],
+  "addons": [
+    "pr-title",
+    "codecov"
+  ],
   "placeholders": {
     "BINARY": "godot-mcp",
     "CRATE": "godot-mcp-cli",
