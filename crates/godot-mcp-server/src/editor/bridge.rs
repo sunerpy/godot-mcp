@@ -305,7 +305,7 @@ impl EditorBridge {
             RendezvousFile::write_new(&config.rendezvous, listener.endpoint(), project.clone())
                 .map_err(|error| error.to_string())?;
         let server = ServerIdentity {
-            server_version: env!("CARGO_PKG_VERSION").to_owned(),
+            server_version: crate::SERVER_VERSION.to_owned(),
             protocol_version: PROTOCOL_VERSION.to_owned(),
             session_id: session_id(),
         };

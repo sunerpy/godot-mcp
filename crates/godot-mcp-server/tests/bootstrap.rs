@@ -70,6 +70,16 @@ fn an_empty_workspace_becomes_one_bound_project_through_mcp_alone() {
     );
     let health = session.call_tool(3, "health.get", json!({}));
     assert_eq!(ok(&health)["state"], "bootstrap", "{health}");
+    assert_eq!(
+        ok(&health)["server_version"],
+        env!("CARGO_PKG_VERSION"),
+        "{health}"
+    );
+    assert_eq!(
+        ok(&health)["contract_version"],
+        godot_mcp_domain::CONTRACT_VERSION,
+        "{health}"
+    );
     let listed = session.call_tool(4, "workspace.projects.list", json!({}));
     assert_eq!(ok(&listed)["projects"], json!([]));
     let unbound = session.call_tool(5, "file.create", json!({ "path": "x", "content": "" }));

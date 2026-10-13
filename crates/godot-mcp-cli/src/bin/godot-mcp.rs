@@ -668,7 +668,7 @@ fn main() -> ExitCode {
     match cli.command {
         Some(Command::Version) | None => {
             println!("godot-mcp {}", env!("CARGO_PKG_VERSION"));
-            println!("server-contract {}", godot_mcp_server::SERVER_VERSION);
+            println!("server-contract {}", godot_mcp_domain::CONTRACT_VERSION);
             ExitCode::SUCCESS
         }
         Some(Command::CheckConfig { config }) => {

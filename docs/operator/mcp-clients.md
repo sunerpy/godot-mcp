@@ -110,7 +110,9 @@ what the backend does when either half of that pair is missing.
 
 ## What a client should expect
 
-* `initialize` is answered by the shared kernel; `serverInfo` names the server.
+* `initialize` is answered by the shared kernel; `serverInfo` names the server,
+  `godot-mcp-server`, and its version, the one the first line of `godot-mcp version`
+  prints.
 * The server speaks MCP revisions 2024-11-05 through 2025-11-25, over the
   `initialize` handshake. A client that asks for a later revision is answered with
   2025-11-25.

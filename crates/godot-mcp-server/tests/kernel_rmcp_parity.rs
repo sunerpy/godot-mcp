@@ -204,6 +204,15 @@ async fn in_memory_client_initialize_list_call_read_cancel() -> anyhow::Result<(
             .name,
         "godot-mcp-server"
     );
+    assert_eq!(
+        server_info
+            .server_info
+            .as_ref()
+            .expect("initialize names the server")
+            .version,
+        env!("CARGO_PKG_VERSION"),
+        "serverInfo carries the release's version, the one `godot-mcp --version` prints"
+    );
 
     let expected_tools = canonical_manifest(CapabilityProfile::Full).tools;
     let listed_tools: BTreeSet<_> = client
