@@ -7,7 +7,7 @@
   "placeholders": {
     "BINARY": "godot-mcp",
     "CRATE": "godot-mcp-cli",
-    "CURRENT_VERSION": "0.1.0",
+    "CURRENT_VERSION": "0.1.1",
     "DEFAULT_BRANCH": "main",
     "OWNER": "sunerpy",
     "PACKAGE_NAME": "godot-mcp",
