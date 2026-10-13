@@ -87,7 +87,7 @@ windows-sys = { version = "=0.61.2", features = [
 getrandom = "=0.4.3"
 
 # --- Static analysis -----------------------------------------------------
-tree-sitter = "=0.26.11"
+tree-sitter = "=0.27.1"
 tree-sitter-gdscript = "=6.1.0"
 streaming-iterator = "=0.1.9"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
