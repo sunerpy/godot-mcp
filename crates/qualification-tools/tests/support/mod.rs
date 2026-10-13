@@ -17,8 +17,31 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+/// The workspace version the committed release fixtures were recorded at:
+/// `tests/fixtures/release-candidate` observes `godot-mcp-<version>-<target>`
+/// archives, and `tests/fixtures/release-archives` names its stand-ins the same way.
+///
+/// `ci_matrix_lock` calls the harness in process and evaluates the fixture at this
+/// version. The producer here runs the harness as a separate binary, which
+/// evaluates at its own version, so the fixture copy is renamed to that version
+/// instead ([`reversion_release_fixture`]).
+const FIXTURE_VERSION: &str = "0.1.0";
+
+/// The version the release-gates harness evaluates a candidate at: the one the
+/// `release-package` binary was built with, which is this workspace's.
+#[must_use]
+pub fn harness_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 /// The host archive the F3 fixture turns into a real, extractable package.
-pub const HOST_ARCHIVE: &str = "godot-mcp-0.1.0-x86_64-unknown-linux-musl.tar.gz";
+#[must_use]
+pub fn host_archive() -> String {
+    format!(
+        "godot-mcp-{}-x86_64-unknown-linux-musl.tar.gz",
+        harness_version()
+    )
+}
 
 /// The frozen candidate commit/tree the committed observation fixture records.
 pub const CANDIDATE_COMMIT: &str = "1111111111111111111111111111111111111111";
@@ -336,6 +359,45 @@ pub fn bind_host_archive_observation(fixture: &Fixture, archive: &Path) {
     write(&path, &canonical(&observations));
 }
 
+/// Rename the copied release fixture from [`FIXTURE_VERSION`] to
+/// [`harness_version`]: the archive stand-ins, their checksum lines and the
+/// packaged-smoke observations that name them.
+///
+/// The harness binds every packaged smoke to the archive name of the version it
+/// was built with, so a fixture left at the version it was recorded at fails from
+/// the first release after it. The stand-ins are opaque bytes bound by digest, so
+/// renaming one changes no digest.
+fn reversion_release_fixture(candidate: &Path, archives: &Path) {
+    let from = format!("godot-mcp-{FIXTURE_VERSION}-");
+    let to = format!("godot-mcp-{}-", harness_version());
+    if from == to {
+        return;
+    }
+    let names: Vec<String> = std::fs::read_dir(archives)
+        .expect("archive fixture directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    for name in names {
+        if let Some(rest) = name.strip_prefix(&from) {
+            std::fs::rename(archives.join(&name), archives.join(format!("{to}{rest}")))
+                .expect("rename an archive stand-in");
+        }
+    }
+    for file in [
+        archives.join("SHA256SUMS.txt"),
+        candidate.join("ci/observations/all-required-checks-passed.json"),
+    ] {
+        let text = std::fs::read_to_string(&file).expect("a fixture text file");
+        assert!(
+            text.contains(&from),
+            "{} names no {from} archive",
+            file.display()
+        );
+        write(&file, text.replace(&from, &to).as_bytes());
+    }
+}
+
 /// Rewrite the fixture checksum catalogue after replacing one opaque stand-in
 /// with a real archive.
 pub fn refresh_archive_checksums(archives: &Path) {
@@ -422,6 +484,7 @@ impl Fixture {
                 .join("release-archives"),
             &archives_dir,
         );
+        reversion_release_fixture(&candidate_worktree, &archives_dir);
 
         let candidate_identity = root.join("candidate-identity.json");
         write(
@@ -887,7 +950,7 @@ esac
             "supervisor": "bin/godot-mcp-supervisor",
             "files": files,
             "target": "x86_64-unknown-linux-musl",
-            "version": "0.1.0",
+            "version": harness_version(),
         })),
     );
     package

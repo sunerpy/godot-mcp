@@ -21,10 +21,11 @@ type RoundMutation = Box<dyn Fn(&Round)>;
 
 use serde_json::{Value, json};
 use support::{
-    CHECKERS, Fixture, HOST_ARCHIVE, archive_package, binary, bind_candidate_identity,
+    CHECKERS, Fixture, archive_package, binary, bind_candidate_identity,
     bind_host_archive_observation, build_release_package, canonical, clean_candidate_worktree,
     commit_candidate_changes, failing_step_plan, fake_fixture_cargo, fake_package, file_sha256,
-    mutate, read_json, rebind_qualification_candidate, refresh_archive_checksums, sidecar, write,
+    host_archive, mutate, read_json, rebind_qualification_candidate, refresh_archive_checksums,
+    sidecar, write,
 };
 
 /// Build the frozen Todo 35 harness, then a complete fixture rooted at `root`.
@@ -610,7 +611,7 @@ impl Round {
         let worktree = clean_candidate_worktree(root.path());
         bind_candidate_identity(&fixture, &worktree);
         let package = fake_package(root.path());
-        let archive = fixture.archives_dir.join(HOST_ARCHIVE);
+        let archive = fixture.archives_dir.join(host_archive());
         archive_package(&package, &archive);
         bind_host_archive_observation(&fixture, &archive);
         refresh_archive_checksums(&fixture.archives_dir);
@@ -693,7 +694,7 @@ impl Round {
         archive_package(&self.package, &self.archive);
         let digest = file_sha256(&self.archive);
         let mut identity = read_json(&self.fixture.input_identity);
-        identity["bound_inputs"][format!("archive:{HOST_ARCHIVE}")]["sha256"] = json!(digest);
+        identity["bound_inputs"][format!("archive:{}", host_archive())]["sha256"] = json!(digest);
         let identity_sha = support::write_pair(&self.fixture.input_identity, &identity);
         let mut report = read_json(&self.fixture.qualification_report);
         report["input_identity_sha256"] = json!(identity_sha);
@@ -1289,7 +1290,7 @@ fn f3_rejects_a_lock_without_the_exact_locked_engine() {
 )]
 fn f3_rejects_an_archive_whose_digest_is_not_bound_by_the_identity() {
     let round = Round::produce();
-    let unrelated = round.root.path().join("unrelated").join(HOST_ARCHIVE);
+    let unrelated = round.root.path().join("unrelated").join(host_archive());
     std::fs::create_dir_all(unrelated.parent().expect("unrelated archive parent"))
         .expect("create unrelated archive directory");
     std::fs::copy(&round.archive, &unrelated).expect("copy bound archive");

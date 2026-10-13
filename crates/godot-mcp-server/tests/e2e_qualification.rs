@@ -31,9 +31,9 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 use support::{
-    CHECKERS, Fixture, HOST_ARCHIVE, Outcome, archive_package, binary, bind_candidate_identity,
+    CHECKERS, Fixture, Outcome, archive_package, binary, bind_candidate_identity,
     bind_host_archive_observation, canonical, clean_candidate_worktree, commit_candidate_changes,
-    failing_step_plan, fake_package, file_sha256, git_revision, mutate, read_json,
+    failing_step_plan, fake_package, file_sha256, git_revision, host_archive, mutate, read_json,
     rebind_qualification_archive, rebind_qualification_candidate, refresh_archive_checksums,
     sidecar, write, write_pair,
 };
@@ -76,7 +76,7 @@ impl Round {
         let worktree = clean_candidate_worktree(root.path());
         bind_candidate_identity(&fixture, &worktree);
         let package = fake_package(root.path());
-        let archive = fixture.archives_dir.join(HOST_ARCHIVE);
+        let archive = fixture.archives_dir.join(host_archive());
         archive_package(&package, &archive);
         bind_host_archive_observation(&fixture, &archive);
         refresh_archive_checksums(&fixture.archives_dir);
