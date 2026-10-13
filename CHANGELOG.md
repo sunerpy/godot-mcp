@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/sunerpy/godot-mcp/compare/v0.1.1...v0.1.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **server:** report the build's version in serverInfo and health ([#26](https://github.com/sunerpy/godot-mcp/issues/26)) ([dece784](https://github.com/sunerpy/godot-mcp/commit/dece7843319f782448cd660840a4a9107c86952b))
+
 ## [0.1.1](https://github.com/sunerpy/godot-mcp/compare/v0.1.0...v0.1.1) (2026-10-13)
 
 
