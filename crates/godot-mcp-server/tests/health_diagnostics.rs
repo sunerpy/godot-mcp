@@ -868,6 +868,11 @@ async fn production_health_uses_live_diagnostics_bindings() {
         "cancelled Todo 25 leaves an empty, vacuously reconciled restoration set"
     );
     assert_eq!(tool["versions"]["engine"], "unknown");
+    assert_eq!(
+        tool["server_version"],
+        env!("CARGO_PKG_VERSION"),
+        "the health document names the release's version"
+    );
     // The full profile attaches the editor bridge, managed game sessions and
     // managed editor sessions; with no add-on connected and no session
     // running, each plane is reported idle with its own remedy, never as

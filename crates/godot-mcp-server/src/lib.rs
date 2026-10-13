@@ -54,8 +54,12 @@ pub mod stdio;
 pub mod test_support;
 pub mod workspace;
 
-/// Version of the server kernel/handler surface.
-pub const SERVER_VERSION: &str = "0.1.0";
+/// The version of this server build: the workspace version Release Please sets.
+///
+/// `serverInfo` in `initialize`, the health document and the editor bridge's
+/// handshake all report it. The domain contract has a version of its own,
+/// [`godot_mcp_domain::CONTRACT_VERSION`].
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Whether the optional Streamable HTTP transport was compiled in.
 #[must_use]

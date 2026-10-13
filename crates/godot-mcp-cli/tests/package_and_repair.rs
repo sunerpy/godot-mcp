@@ -844,8 +844,14 @@ fn package_and_repair_happy_path() {
         .arg("version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("godot-mcp "))
-        .stdout(predicate::str::contains("server-contract "));
+        .stdout(predicate::str::contains(format!(
+            "godot-mcp {}\n",
+            env!("CARGO_PKG_VERSION")
+        )))
+        .stdout(predicate::str::contains(format!(
+            "server-contract {}\n",
+            godot_mcp_domain::CONTRACT_VERSION
+        )));
 
     // The exact interface: `transaction repair` exists, takes exactly the five
     // documented arguments, and accepts exactly the four proof-driven operations.
@@ -1126,8 +1132,14 @@ fn packaging_happy_path() {
         .arg("version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("godot-mcp "))
-        .stdout(predicate::str::contains("server-contract "));
+        .stdout(predicate::str::contains(format!(
+            "godot-mcp {}\n",
+            env!("CARGO_PKG_VERSION")
+        )))
+        .stdout(predicate::str::contains(format!(
+            "server-contract {}\n",
+            godot_mcp_domain::CONTRACT_VERSION
+        )));
     Command::new(&extracted_binary)
         .arg("self-check")
         .assert()

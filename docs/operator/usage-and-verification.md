@@ -60,7 +60,7 @@ godot-mcp serve --stdio --project <项目目录> --profile full
 握手顺序，实测：
 
 1. 发 `initialize`。SDK 1.28.1 协商出的 `protocolVersion` 为 `2025-11-25`。
-2. 服务器回 `serverInfo` 为 `{"name":"godot-mcp-server","version":"0.1.0"}`，并声明 `prompts`、`resources`、`tools` 三组能力。
+2. 服务器回 `serverInfo` 为 `{"name":"godot-mcp-server","version":"0.1.0"}`，并声明 `prompts`、`resources`、`tools` 三组能力。`version` 是这个构建的版本号，与 `godot-mcp version` 输出的第一行相同；`server-contract` 那一行是领域契约的版本，见 [Schema evolution](../protocol/schema-evolution.md)。
 3. 发 `notifications/initialized` 通知。
 4. 之后才可以发 `tools/list`、`resources/list`、`tools/call`。
 
