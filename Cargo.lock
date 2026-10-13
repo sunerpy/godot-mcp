@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "godot-mcp-analysis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "godot-mcp-domain",
  "notify",
@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "godot-mcp-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "getrandom 0.4.3",
  "godot-mcp-analysis",
@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "godot-mcp-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "godot-mcp-domain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rstest",
  "rustix",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "godot-mcp-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "assert_fs",
  "godot-mcp-analysis",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "godot-mcp-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "qualification-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
