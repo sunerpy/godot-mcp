@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/sunerpy/godot-mcp/compare/v0.1.2...v0.2.0) (2026-11-03)
+
+
+### Features
+
+* **editor:** inspect, edit, save, capture, scan and run through the live editor ([#36](https://github.com/sunerpy/godot-mcp/issues/36)) ([0d729fd](https://github.com/sunerpy/godot-mcp/commit/0d729fdc697d721205bb12177f9bfbb98e0247e3))
+* **editor:** typed editing calls for tilemaps, animations, curves and themes ([#37](https://github.com/sunerpy/godot-mcp/issues/37)) ([22e1a9f](https://github.com/sunerpy/godot-mcp/commit/22e1a9f8fa5d306d9ee1523d32deffa39b374230))
+
+
+### Bug Fixes
+
+* **deps:** update rustls, rustls-webpki, webpki-root-certs and tokio for RustSec advisories ([#38](https://github.com/sunerpy/godot-mcp/issues/38)) ([25b138a](https://github.com/sunerpy/godot-mcp/commit/25b138ab45ed97c40fa8e90b49e8518071dde902))
+* **server:** keep project settings and import caches coherent while an editor is connected ([#35](https://github.com/sunerpy/godot-mcp/issues/35)) ([aeae3e9](https://github.com/sunerpy/godot-mcp/commit/aeae3e9f0eefaeec04da127d582e1137023838ba))
+
 ## [0.1.2](https://github.com/sunerpy/godot-mcp/compare/v0.1.1...v0.1.2) (2026-10-13)
 
 
