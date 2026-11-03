@@ -124,8 +124,23 @@ pub(crate) struct EditorEffectIntent {
     /// each with the content precondition it must hold when the transaction
     /// opens. Empty for a change to editor state only.
     pub(crate) files: Vec<(String, WritePrecondition)>,
+    /// Whether the editor may also write project files nobody can list in
+    /// advance: an import, a plugin's own code. The journal then scopes the
+    /// transaction to the whole project with the [`PROJECT_WIDE_SCOPE`] entry,
+    /// so an unresolved answer quarantines rather than compensates.
+    pub(crate) project_wide: bool,
+    /// Whether a committed answer refreshes the whole workspace rather than
+    /// only `files`.
+    pub(crate) observe_all: bool,
+    /// The workspace revision the caller built the request against, rechecked
+    /// inside the serialized effect lane exactly as for a file effect.
+    pub(crate) expected_revision: Option<u64>,
     pub(crate) opened_at_unix_ms: u64,
 }
+
+/// The touched-path entry of a transaction that may have written any project
+/// file. It names no file, so no file pre-state is taken for it.
+pub(crate) const PROJECT_WIDE_SCOPE: &str = "*";
 
 /// The terminal disposition of one executed effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -718,6 +733,13 @@ impl EffectGateway {
             });
             pre_hashes.push(pre);
         }
+        if intent.project_wide {
+            touched_paths.push(PROJECT_WIDE_SCOPE.to_owned());
+            touched_object_identities.push(TouchedObject {
+                path: PROJECT_WIDE_SCOPE.to_owned(),
+                object_identity: Some(self.held.root_object.clone()),
+            });
+        }
         let (canonical_request_hash, canonical_request_bytes) =
             canonical_request(&intent.tool_name, &intent.arguments);
         let record = TransactionRecord {
@@ -915,7 +937,15 @@ impl EffectGateway {
                     Some(format!(
                         "{command} is unresolved ({}); whether it wrote {} is not decidable",
                         reason.unwrap_or_default(),
-                        record.touched_paths.join(", ")
+                        if record
+                            .touched_paths
+                            .iter()
+                            .any(|path| path == PROJECT_WIDE_SCOPE)
+                        {
+                            "any project file".to_owned()
+                        } else {
+                            record.touched_paths.join(", ")
+                        }
                     )),
                     Some(TerminalOutcome::failed(ErrorKind::Uncertain)),
                 )?;

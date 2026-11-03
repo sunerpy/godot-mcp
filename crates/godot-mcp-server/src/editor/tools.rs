@@ -321,6 +321,9 @@ impl EditorToolRuntime {
             session: Some(access.connection_session().to_owned()),
             arguments: arguments.clone(),
             files,
+            project_wide: false,
+            observe_all: false,
+            expected_revision: None,
             opened_at_unix_ms: access.observed_at_unix_ms(),
         };
         let request = RouteRequest {

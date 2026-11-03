@@ -11,7 +11,7 @@ const VariantCodec = preload("variant_codec.gd")
 const TypeCatalog = preload("type_catalog.gd")
 const Mutations = preload("mutation_handlers.gd")
 
-const PLUGIN_VERSION := "0.2.0"
+const PLUGIN_VERSION := "0.3.0"
 const MAX_NODES := 2000
 const MAX_PROPERTIES_PER_NODE := 256
 const READS := [

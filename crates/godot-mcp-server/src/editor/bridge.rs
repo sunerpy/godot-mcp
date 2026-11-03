@@ -54,6 +54,7 @@ pub(crate) const BRIDGE_METHODS: &[&str] = &[
     "editor.scene.open",
     "editor.scene.tree",
     "editor.selection.set",
+    "editor.settings.apply",
     "editor.state",
     "editor.types.class",
 ];
@@ -188,6 +189,22 @@ impl BridgeFailure {
     }
 }
 
+/// An editor is connected, so the bridge cannot be held free of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EditorConnected;
+
+/// While this is held, the bridge installs no editor session.
+pub(crate) struct ConnectionExclusion {
+    inner: Arc<Inner>,
+}
+
+impl Drop for ConnectionExclusion {
+    fn drop(&mut self) {
+        let mut exclusions = lock(&self.inner.admission);
+        *exclusions = exclusions.saturating_sub(1);
+    }
+}
+
 /// What the bridge can say about its connection, path-free.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BridgeStatus {
@@ -241,6 +258,9 @@ struct Inner {
     methods: &'static [&'static str],
     label: &'static str,
     events: BridgeEvents,
+    /// How many exclusions are held. While one is, no session is installed.
+    /// Taken before `current` wherever both are held.
+    admission: Mutex<usize>,
     current: Mutex<Option<Session>>,
     /// Waiting callers by request message id, with the session generation the
     /// request was sent on.
@@ -317,6 +337,7 @@ impl EditorBridge {
             methods: config.methods,
             label: config.label,
             events: config.events,
+            admission: Mutex::new(0),
             current: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
             next_message: AtomicU64::new(1),
@@ -356,6 +377,24 @@ impl EditorBridge {
             sessions_closed: counters.closed,
             last_close_reason: counters.last_close_reason.clone(),
         }
+    }
+
+    /// Keep every editor out while the returned exclusion is held: a headless
+    /// writer of the editor's import and UID caches must not run beside an
+    /// editor that writes them too. A plugin that dials in meanwhile is closed
+    /// and connects on a later dial.
+    ///
+    /// # Errors
+    /// [`EditorConnected`] when an editor is connected already.
+    pub(crate) fn exclude_connections(&self) -> Result<ConnectionExclusion, EditorConnected> {
+        let mut exclusions = lock(&self.inner.admission);
+        if lock(&self.inner.current).is_some() {
+            return Err(EditorConnected);
+        }
+        *exclusions += 1;
+        Ok(ConnectionExclusion {
+            inner: Arc::clone(&self.inner),
+        })
     }
 
     /// Send one request and wait for its answer, at most `timeout`.
@@ -654,6 +693,22 @@ fn accept_loop(inner: &Arc<Inner>, listener: &BridgeListener, handshake: &Handsh
                     .collect()
             })
             .unwrap_or_default();
+        // An exclusion is checked and the session installed under one lock,
+        // so no exclusion is granted between the check and the install.
+        let admission = lock(&inner.admission);
+        if *admission > 0 {
+            drop(admission);
+            tracing::info!(
+                event = inner.events.refused,
+                reason = "excluded",
+                "a bridge peer was kept out while a headless cache writer ran"
+            );
+            let _ = writer.close(
+                1013,
+                "the server is running a headless import or UID update; retry shortly",
+            );
+            continue;
+        }
         let replaced = lock(&inner.current).replace(Session {
             generation,
             writer: writer.clone(),
@@ -661,6 +716,7 @@ fn accept_loop(inner: &Arc<Inner>, listener: &BridgeListener, handshake: &Handsh
             description,
             methods,
         });
+        drop(admission);
         {
             let mut counters = lock(&inner.counters);
             counters.opened += 1;
@@ -1011,6 +1067,48 @@ mod tests {
             !scratch.0.join(RENDEZVOUS_FILE).exists(),
             "stop removes the rendezvous"
         );
+    }
+
+    /// While a headless writer of the editor's caches holds an exclusion, no
+    /// editor session is installed: a plugin that dials in is closed after it
+    /// described itself, and one that dials after the exclusion is released
+    /// connects. A connected editor makes an exclusion impossible.
+    #[test]
+    fn an_exclusion_keeps_editors_out_until_it_is_released() {
+        let scratch = Scratch::new("exclusion");
+        let bridge = EditorBridge::start(&scratch.0, project()).expect("start");
+        let exclusion = bridge
+            .exclude_connections()
+            .expect("no editor is connected");
+        let refused = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]),
+        );
+        wait_until("the excluded plugin to be described", || {
+            refused
+                .received()
+                .iter()
+                .any(|(method, _)| method == "bridge.describe_session")
+        });
+        refused
+            .join()
+            .expect("the excluded session was closed by the server");
+        let status = bridge.status();
+        assert!(!status.connected, "{status:?}");
+        assert_eq!(status.sessions_opened, 0, "{status:?}");
+
+        drop(exclusion);
+        let admitted = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]),
+        );
+        wait_until("the plugin to connect", || bridge.status().connected);
+        assert!(
+            bridge.exclude_connections().is_err(),
+            "no exclusion is held while an editor is connected"
+        );
+        bridge.stop();
+        admitted.join().expect("the plugin saw a clean shutdown");
     }
 
     #[test]

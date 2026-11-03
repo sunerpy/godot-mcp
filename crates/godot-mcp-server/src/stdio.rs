@@ -498,6 +498,7 @@ impl ProjectRuntime {
             workspace: Arc::clone(&workspace),
             uploads_dir: state_dir.join("uploads"),
             generation: INITIAL_PROJECT_GENERATION,
+            editor: editor_bridge.clone(),
         }));
         register_authoring_tools(&mut kernel, authoring)
             .map_err(|error| StdioError::Analysis(error.to_string()))?;

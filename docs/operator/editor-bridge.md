@@ -74,8 +74,27 @@ A dry run always uses the headless helper.
 
 Every headless writer — the `file.*`, `script.*`, `asset.*` and settings tools, and the headless
 scene and resource tools — refuses with `conflict` a path the connected editor holds: any open
-scene, and an open script whose editor buffer differs from its file or cannot be compared. Close
-it or save it in the editor, or change a scene through `scene.batch.apply`.
+scene, `project.godot`, and an open script whose editor buffer differs from its file or cannot
+be compared. Close it or save it in the editor, or change a scene through `scene.batch.apply`.
+
+## The project file and caches belong to the editor
+
+While an editor is connected, it owns `project.godot` and the `.godot/` caches:
+
+- `project.settings.patch` is carried out by the editor, which writes the file with Godot's own
+  writer, so comments in it are not kept. The editor's in-memory value of every changed key must
+  still be the file's, or nothing changes. The answer is computed from the file the editor
+  wrote, with `changed_keys` and `unrequested_keys`, the keys the editor wrote besides the ones
+  asked for. Without an editor connected, the file keeps unrelated keys and comments as before.
+- A plugin older than this server's cannot apply settings, so the patch answers `unsupported`
+  and names the plugin's version; run `editor.addon.update`, then `editor.addon.reload`.
+- Every other headless write to `project.godot` is refused with `conflict`.
+- `project.import.run` and `project.uid.update` are refused with `conflict`, since the editor
+  imports on its own; close the editor to run them. While either runs, the server admits no
+  editor connection; the plugin connects once it has ended.
+
+An editor that does not run this plugin cannot be detected. With the editor already open, enable
+the plugin in it before writing through the server.
 
 ## Three outcomes, and no replay
 
@@ -87,10 +106,12 @@ Every editor mutation ends in exactly one of three states.
   the deadline passed. The call answers `uncertain` and the change is **never sent again**, not on
   retry and not after the editor reconnects.
 
-An unresolved change that may have saved a file (a scene batch, or `editor.undo`/`editor.redo`
-with `save`) is quarantined, and writes stay blocked until it is resolved; see
-[Recovery](recovery.md). An unresolved change to editor state alone (selection, the open scene,
-an unsaved undo) touches no project file, so it blocks nothing.
+An unresolved change that may have saved a file (a scene batch, `editor.undo`/`editor.redo`
+with `save`, or a settings patch the editor carries out) is quarantined, and writes stay blocked
+until it is resolved; see [Recovery](recovery.md). A settings patch that switches a plugin may
+also write files nobody can list in advance, so its transaction covers the whole project. An
+unresolved change to editor state alone (selection, the open scene, an unsaved undo) touches no
+project file, so it blocks nothing.
 
 ## Inside the editor
 

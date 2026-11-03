@@ -221,6 +221,12 @@ impl StdioSession {
             "method": method,
             "params": params
         }));
+        self.await_response(id, method)
+    }
+
+    /// Read frames until the response to request `id` (sent as `method`)
+    /// arrives, skipping notifications and other responses.
+    pub fn await_response(&mut self, id: u64, method: &str) -> Value {
         loop {
             let mut line = String::new();
             let read = self.reader.read_line(&mut line).expect("read frame");

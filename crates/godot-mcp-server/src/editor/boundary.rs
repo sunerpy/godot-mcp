@@ -179,9 +179,10 @@ impl LiveEditorView for BridgeEditorBoundary {
 
 /// The paths an `editor.state` answer says the editor holds, project-relative:
 /// every open scene, whose live tree a file write would silently diverge
-/// from, and every open script whose editor buffer differs from its file or
-/// cannot be compared. A script open with no edits is reloaded by the editor
-/// and is not held.
+/// from, every open script whose editor buffer differs from its file or
+/// cannot be compared, and `project.godot`, whose settings a running editor
+/// keeps in memory and writes back whenever it saves them. A script open with
+/// no edits is reloaded by the editor and is not held.
 pub(crate) fn held_paths(state: &Value) -> Vec<HeldPath> {
     let mut held = Vec::new();
     for (key, always) in [("open_scenes", true), ("open_scripts", false)] {
@@ -207,8 +208,15 @@ pub(crate) fn held_paths(state: &Value) -> Vec<HeldPath> {
             }
         }
     }
+    held.push(HeldPath {
+        path: PROJECT_SETTINGS.to_owned(),
+        unsaved: None,
+    });
     held
 }
+
+/// The project settings file a connected editor owns.
+pub(crate) const PROJECT_SETTINGS: &str = "project.godot";
 
 #[cfg(test)]
 mod tests {
@@ -239,7 +247,23 @@ mod tests {
                 ("levels/one.tscn".to_owned(), None),
                 ("enemy.gd".to_owned(), Some(true)),
                 ("hud.gd".to_owned(), None),
+                ("project.godot".to_owned(), None),
             ]
+        );
+    }
+
+    /// A running editor writes its in-memory project settings back whenever it
+    /// saves them, so a connected editor holds `project.godot` even with
+    /// nothing open.
+    #[test]
+    fn a_connected_editor_always_holds_project_godot() {
+        let held = held_paths(&json!({ "open_scenes": [], "open_scripts": [] }));
+        assert_eq!(
+            held,
+            vec![HeldPath {
+                path: "project.godot".to_owned(),
+                unsaved: None,
+            }]
         );
     }
 }

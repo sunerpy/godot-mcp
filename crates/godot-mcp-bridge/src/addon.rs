@@ -13,7 +13,7 @@ pub const ADDON_DIRECTORY: &str = "addons/godot_mcp";
 pub const PLUGIN_CONFIG: &str = "res://addons/godot_mcp/plugin.cfg";
 
 /// The add-on version, as `plugin.cfg` and the plugin itself report it.
-pub const ADDON_VERSION: &str = "0.2.0";
+pub const ADDON_VERSION: &str = "0.3.0";
 
 /// One add-on file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,10 @@ pub const FILES: &[AddonFile] = &[
     AddonFile {
         name: "plugin.gd",
         bytes: include_bytes!("../addon/godot_mcp/plugin.gd"),
+    },
+    AddonFile {
+        name: "project_settings_apply.gd",
+        bytes: include_bytes!("../addon/godot_mcp/project_settings_apply.gd"),
     },
     AddonFile {
         name: "reloader.gd",

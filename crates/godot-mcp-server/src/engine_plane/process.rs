@@ -128,6 +128,8 @@ impl EngineRuntime {
                 return Ok(ProcessExecutionResult::Replayed(result));
             }
         }
+        // Held until this returns: no editor connects while the process runs.
+        let _exclusive = self.exclusive_editor_guard(execution.tool)?;
         let resolved = self.resolve_engine().await?;
         if let Some(missing) = execution
             .required_capabilities

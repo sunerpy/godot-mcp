@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 ## Editor mutations: selection, opening a scene, semantic scene batches as one
-## undoable action, undo/redo, and reloading this plugin.
+## undoable action, undo/redo, project settings, and reloading this plugin.
 ##
 ## A scene batch is the same typed command model the headless helper applies
 ## (`add_node`, `set_property`, `connect_signal`, ...). It is applied to the
@@ -23,6 +23,7 @@ extends RefCounted
 ## renames and moves and never names a node created later at the same path.
 
 const VariantCodec = preload("variant_codec.gd")
+const ProjectSettingsApply = preload("project_settings_apply.gd")
 
 const HANDLE_PREFIX := "nh1:"
 const MAX_OPERATIONS := 128
@@ -37,6 +38,7 @@ const METHODS := [
 	"editor.scene.batch",
 	"editor.scene.open",
 	"editor.selection.set",
+	"editor.settings.apply",
 ]
 
 ## The owning handler set, held weakly: it owns this object, and a strong
@@ -80,6 +82,8 @@ func dispatch(method: String, payload: Dictionary, _context: Dictionary) -> Dict
 			return _history(payload, false)
 		"editor.addon.reload":
 			return _reload()
+		"editor.settings.apply":
+			return ProjectSettingsApply.apply(payload)
 	return fail("unsupported", "the editor bridge does not implement %s" % method)
 
 

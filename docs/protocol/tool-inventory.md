@@ -314,7 +314,7 @@ Return the typed project settings — application name, main scene, autoloads, i
 
 ### `project.settings.patch`
 
-Apply typed `operations` — set or clear the main scene, set or remove an autoload or an input action, set an allowlisted value, enable or disable an installed plugin — to project.godot whose SHA-256 is `expectedSha256`, preserving unrelated keys and comments. Journaled; requires `idempotencyId`.
+Apply typed `operations` — set or clear the main scene, set or remove an autoload or an input action, set an allowlisted value, enable or disable an installed plugin — to project.godot whose SHA-256 is `expectedSha256`, preserving unrelated keys and comments. While a live editor is connected it owns project.godot: the editor applies the change and saves the file with its own writer, which keeps every setting but not comments or layout, and the answer describes the bytes it saved. Journaled; requires `idempotencyId`.
 
 ### `project.test`
 

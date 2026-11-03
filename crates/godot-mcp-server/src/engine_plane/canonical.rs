@@ -57,6 +57,9 @@ impl EngineRuntime {
                 return Ok(result);
             }
         }
+        // Held until this returns: no editor connects while the helper stages,
+        // the change is published and the staging is cleaned up, dry run or not.
+        let _exclusive = self.exclusive_editor_guard(tool)?;
         // The helper derives the staged bytes from the target as it is now. A
         // change between this read and the transaction opening must refuse the
         // write rather than be overwritten by bytes derived from older content.
@@ -618,6 +621,9 @@ impl EngineRuntime {
                 author.target.clone(),
                 WritePrecondition::Sha256(expected.clone()),
             )],
+            project_wide: false,
+            observe_all: false,
+            expected_revision: None,
             opened_at_unix_ms: access.observed_at_unix_ms(),
         };
         let route_request = RouteRequest {
