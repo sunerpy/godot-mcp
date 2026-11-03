@@ -24,6 +24,7 @@
 pub mod catalog;
 pub mod config;
 pub mod contracts;
+pub mod editing_methods;
 pub mod editor_preferences;
 pub mod editor_shortcuts;
 pub mod jsonschema;

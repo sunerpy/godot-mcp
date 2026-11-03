@@ -24,10 +24,10 @@
 //! helper:
 //!
 //! ```text
-//! res://godot_mcp_helpers/2/canonical_write.gd     the pinned script
-//! res://godot_mcp_helpers/2/io/<id>.request        the request document
-//! res://godot_mcp_helpers/2/io/<id>.response       the helper's answer
-//! res://godot_mcp_helpers/2/staging/<id>.<ext>     the staged artifact
+//! res://godot_mcp_helpers/3/canonical_write.gd     the pinned script
+//! res://godot_mcp_helpers/3/io/<id>.request        the request document
+//! res://godot_mcp_helpers/3/io/<id>.response       the helper's answer
+//! res://godot_mcp_helpers/3/staging/<id>.<ext>     the staged artifact
 //! ```
 //!
 //! The helper writes **only** inside `staging/` (plus the response document it
@@ -52,7 +52,7 @@ use crate::supervision::journal::hex_sha256;
 
 /// The installed helper version. Part of the `res://` path, so an upgrade never
 /// overwrites an older server's helper.
-pub const HELPER_VERSION: &str = "2";
+pub const HELPER_VERSION: &str = "3";
 
 /// The helper script's bytes, embedded from the committed file.
 const HELPER_SOURCE: &str = include_str!("../../scripts/canonical/canonical_write.gd");
@@ -61,7 +61,7 @@ const HELPER_SOURCE: &str = include_str!("../../scripts/canonical/canonical_writ
 ///
 /// Asserted by [`tests::the_embedded_helper_matches_its_pinned_digest`]. Editing
 /// the script without updating this constant fails that test.
-pub const HELPER_SHA256: &str = "8a08359379979ef5d96b2aa3c89fd13597dae79dff2bbb5a98c9fadd8dc0052a";
+pub const HELPER_SHA256: &str = "09cdce6fe67d6d5387c32734bea50e24d55f0f8dd7fc6810bad16771afd5f983";
 
 /// Project-relative directory every helper artifact lives under.
 pub const HELPER_ROOT: &str = "godot_mcp_helpers";
@@ -152,7 +152,7 @@ impl HelperScript {
         Self::observed_sha256() == HELPER_SHA256
     }
 
-    /// The project-relative install path, e.g. `godot_mcp_helpers/2/canonical_write.gd`.
+    /// The project-relative install path, e.g. `godot_mcp_helpers/3/canonical_write.gd`.
     #[must_use]
     pub fn install_path() -> String {
         format!("{HELPER_ROOT}/{HELPER_VERSION}/canonical_write.gd")
@@ -246,6 +246,10 @@ pub struct HelperResponse {
     pub extra: std::collections::BTreeMap<String, String>,
 }
 
+/// The `results` pair: what each `call_method` of a batch returned, in batch
+/// order.
+pub const RESULTS_KEY: &str = "results";
+
 impl HelperResponse {
     /// Parse the helper's response document.
     ///
@@ -278,6 +282,28 @@ impl HelperResponse {
     #[must_use]
     pub fn reports_ok(&self) -> bool {
         self.status == "ok"
+    }
+
+    /// What each `call_method` of the batch returned, in batch order: one
+    /// `{index, method, value}` object per call. A response without the pair
+    /// made no call.
+    ///
+    /// # Errors
+    /// Returns the reason when the pair is present but is not a JSON array of
+    /// objects, which no helper of this version writes.
+    pub fn call_results(&self) -> Result<Vec<serde_json::Value>, String> {
+        let Some(text) = self.extra.get(RESULTS_KEY) else {
+            return Ok(Vec::new());
+        };
+        match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(serde_json::Value::Array(results))
+                if results.iter().all(serde_json::Value::is_object) =>
+            {
+                Ok(results)
+            }
+            Ok(_) => Err("`results` is not a JSON array of objects".to_owned()),
+            Err(error) => Err(format!("`results` is not JSON: {error}")),
+        }
     }
 }
 
@@ -353,7 +379,7 @@ mod tests {
     fn the_helper_only_ever_writes_inside_its_versioned_staging_prefix() {
         assert!(
             HELPER_SOURCE
-                .contains("const STAGING_PREFIX := \"res://godot_mcp_helpers/2/staging/\""),
+                .contains("const STAGING_PREFIX := \"res://godot_mcp_helpers/3/staging/\""),
             "the embedded helper's staging prefix must be the versioned one this module installs"
         );
         assert!(
@@ -376,14 +402,14 @@ mod tests {
         ];
         for path in &paths {
             assert!(
-                path.starts_with("godot_mcp_helpers/2/"),
+                path.starts_with("godot_mcp_helpers/3/"),
                 "{path} is versioned under the helper root"
             );
             assert!(HelperScript::is_helper_owned(path));
         }
         assert_eq!(
             HelperScript::script_argument(),
-            "res://godot_mcp_helpers/2/canonical_write.gd"
+            "res://godot_mcp_helpers/3/canonical_write.gd"
         );
         assert!(!HelperScript::is_helper_owned("scenes/main.tscn"));
         assert!(!HelperScript::is_helper_owned("godot_mcp_helpers_other/x"));
@@ -393,8 +419,8 @@ mod tests {
     fn the_argument_array_passes_user_arguments_after_a_bare_separator() {
         let argv = helper_arguments(
             Path::new("/tmp/a project"),
-            "godot_mcp_helpers/2/io/abc.request",
-            "godot_mcp_helpers/2/io/abc.response",
+            "godot_mcp_helpers/3/io/abc.request",
+            "godot_mcp_helpers/3/io/abc.response",
         );
         assert_eq!(
             argv,
@@ -403,12 +429,12 @@ mod tests {
                 "--path".to_owned(),
                 "/tmp/a project".to_owned(),
                 "--script".to_owned(),
-                "res://godot_mcp_helpers/2/canonical_write.gd".to_owned(),
+                "res://godot_mcp_helpers/3/canonical_write.gd".to_owned(),
                 "--".to_owned(),
                 "--request".to_owned(),
-                "godot_mcp_helpers/2/io/abc.request".to_owned(),
+                "godot_mcp_helpers/3/io/abc.request".to_owned(),
                 "--response".to_owned(),
-                "godot_mcp_helpers/2/io/abc.response".to_owned(),
+                "godot_mcp_helpers/3/io/abc.response".to_owned(),
             ],
             "a path with a space stays one element, and user arguments follow a bare --"
         );
@@ -424,16 +450,16 @@ mod tests {
         pairs.insert("operation".to_owned(), "create_resource".to_owned());
         pairs.insert(
             "artifact".to_owned(),
-            "godot_mcp_helpers/2/staging/a.tscn".to_owned(),
+            "godot_mcp_helpers/3/staging/a.tscn".to_owned(),
         );
         let document = request_document(&pairs);
         assert_eq!(
-            document, "artifact=godot_mcp_helpers/2/staging/a.tscn\noperation=create_resource\n",
+            document, "artifact=godot_mcp_helpers/3/staging/a.tscn\noperation=create_resource\n",
             "keys are sorted, so identical requests produce identical bytes"
         );
 
         let parsed = HelperResponse::parse(
-            "artifact=res://godot_mcp_helpers/2/staging/a.tscn\nhelper_version=2\nstatus=ok\n\
+            "artifact=res://godot_mcp_helpers/3/staging/a.tscn\nhelper_version=3\nstatus=ok\n\
              target=res://scenes/main.tscn\nuid=uid://b1234567890ab\nunexpected=kept\n",
         );
         assert!(parsed.reports_ok());
@@ -449,6 +475,33 @@ mod tests {
             !empty.reports_ok(),
             "an unparsable response is never read as success"
         );
+    }
+
+    #[test]
+    fn the_helper_carries_the_editing_methods_table_verbatim() {
+        assert!(
+            HELPER_SOURCE.contains(&godot_mcp_domain::editing_methods::gdscript_table()),
+            "the helper's copy of the editing methods must be the domain table's GDScript \
+             rendering, character for character"
+        );
+    }
+
+    #[test]
+    fn call_results_are_read_only_from_a_well_formed_results_pair() {
+        let none = HelperResponse::parse("status=ok\n");
+        assert_eq!(none.call_results(), Ok(Vec::new()));
+        let some = HelperResponse::parse(
+            "results=[{\"index\":2,\"method\":\"add_track\",\"value\":{\"type\":\"integer\",\"value\":0}}]\nstatus=ok\n",
+        );
+        let results = some.call_results().expect("a well-formed pair parses");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["method"], "add_track");
+        for malformed in ["results=[1]\n", "results={}\n", "results=[{\n"] {
+            assert!(
+                HelperResponse::parse(malformed).call_results().is_err(),
+                "{malformed:?} is refused rather than read as no calls"
+            );
+        }
     }
 
     #[test]

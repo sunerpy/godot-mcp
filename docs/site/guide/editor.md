@@ -75,6 +75,19 @@ file, and on success the batch is one undo action and the scene is saved. A head
 file the editor holds is refused with `conflict`, so the editor and the server never overwrite
 each other.
 
+## Tiles, animations, curves and themes
+
+Painting a tile map, keying an animation or adding curve points has no property to set, so a batch
+makes these edits with a `call_method` operation. It may call only the methods of one fixed table:
+cells of a `TileMapLayer` or `GridMap`, the points of a `Line2D`, curves and gradients, the
+libraries, animations, tracks and keys of an `AnimationPlayer`, the frames of `SpriteFrames`, and
+the items of a `Theme`. The call goes to a node of the scene or to a resource the scene embeds;
+a resource saved in its own file is edited with `resource.batch.apply`. Arguments are checked
+against the method's signature in your Godot build, a new resource can be passed for a call such
+as adding an animation, and every answer lists what each call returned. In the editor the calls
+are undone like any other edit. The table and the rules are in the
+[editor bridge reference](../../operator/editor-bridge.md#editing-calls).
+
 ## The project file belongs to the editor
 
 While an editor is connected it owns `project.godot` and the import caches. `project.settings.patch`

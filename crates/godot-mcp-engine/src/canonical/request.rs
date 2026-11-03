@@ -417,7 +417,7 @@ mod tests {
             "scenes\\main.tscn",
             "https://example.test/main.tscn",
             "scenes/a\u{0085}b.tscn",
-            "godot_mcp_helpers/2/staging/x.tscn",
+            "godot_mcp_helpers/3/staging/x.tscn",
             "",
         ] {
             assert!(
@@ -495,7 +495,7 @@ mod tests {
         let staging_id = request.staging_id();
         let pairs = request.helper_pairs(&staging_id, TextResourceKind::Scene);
         let artifact = pairs.get("artifact").expect("an artifact path");
-        assert!(artifact.starts_with("godot_mcp_helpers/2/staging/"));
+        assert!(artifact.starts_with("godot_mcp_helpers/3/staging/"));
         assert!(artifact.ends_with(".tscn"));
         assert_eq!(
             pairs.get("target").map(String::as_str),

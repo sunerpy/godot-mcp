@@ -49,6 +49,8 @@ pub(crate) fn one_of(variants: Vec<Value>) -> Value {
 const WRITABLE_VALUE: &str = "WritableGodotValue";
 /// The definition [`plain_value`] refers to.
 const PLAIN_VALUE: &str = "PlainGodotValue";
+/// The `$defs` name of one argument of a batch's `call_method`.
+pub(crate) const CALL_ARGUMENT: &str = "CallArgument";
 
 /// One segment of a normalized project path: not empty, not `.` or `..`,
 /// and without a slash or a backslash.
@@ -151,6 +153,36 @@ fn generated_definitions() -> Map<String, Value> {
                             is that variant's payload. A live object reference cannot be \
                             written; name a resource by its res:// path.",
             "oneOf": variants
+        }),
+    );
+    // Only a `call_method` argument may also be a new embedded resource.
+    definitions.insert(
+        CALL_ARGUMENT.to_owned(),
+        json!({
+            "description": "A tagged value, or {type: \"new_resource\", value: {class}}: a new \
+                            resource embedded in the edit, of one of the listed classes.",
+            "oneOf": [
+                { "$ref": format!("#/$defs/{WRITABLE_VALUE}") },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["type", "value"],
+                    "properties": {
+                        "type": { "const": "new_resource" },
+                        "value": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["class"],
+                            "properties": {
+                                "class": {
+                                    "type": "string",
+                                    "enum": godot_mcp_domain::editing_methods::NEW_RESOURCE_CLASSES
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
         }),
     );
     let mut definitions = Value::Object(definitions);

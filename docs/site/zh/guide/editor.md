@@ -49,6 +49,10 @@
 
 对编辑器里打开着的场景调用 `scene.batch.apply`，同样在编辑器里执行：编辑器里的副本必须与文件一致，成功后整批改动是一次撤销操作，场景随之保存。对编辑器占着的文件做无窗口写入会以 `conflict` 被拒绝，所以编辑器和服务器永远不会互相覆盖。
 
+## 图块、动画、曲线和主题
+
+画图块、给动画打关键帧、给曲线加点，都没有可以直接设置的属性，所以批处理用 `call_method` 操作来完成这类修改。它只能调用一张固定表里的方法：`TileMapLayer` 和 `GridMap` 的格子、`Line2D` 的点、曲线和渐变、`AnimationPlayer` 的动画库、动画、轨道和关键帧、`SpriteFrames` 的帧，以及 `Theme` 的条目。调用的对象是场景里的节点，或者场景内嵌的资源；单独保存成文件的资源用 `resource.batch.apply` 修改。参数会按你所用 Godot 版本里该方法的签名检查；像添加动画这类调用可以传入一个新资源；每次答复都列出每个调用的返回值。在编辑器里，这些调用和其他修改一样可以撤销。完整的表和规则见[编辑器桥参考](../../../operator/editor-bridge.md#editing-calls)。
+
 ## 项目文件归编辑器所有
 
 编辑器连接期间，`project.godot` 和导入缓存归它所有。`project.settings.patch` 改由编辑器执行，编辑器按自己的格式写这个文件，不保留注释。导入也经由编辑器：`project.import.run` 和 `project.uid.update` 会被拒绝，改用带 `reimport` 的 `editor.filesystem.scan` 导入你指定的资源。

@@ -1,4 +1,4 @@
-# godot-mcp bundled canonical-write helper, version 2.
+# godot-mcp bundled canonical-write helper, version 3.
 #
 # This file is SHIPPED WITH the server and pinned by SHA-256 in
 # `src/canonical/helper.rs`. It is never generated at runtime and never fetched
@@ -10,7 +10,7 @@
 # through the Todo 14 launch protocol:
 #
 #   godot --headless --path <project> \
-#         --script res://godot_mcp_helpers/2/canonical_write.gd \
+#         --script res://godot_mcp_helpers/3/canonical_write.gd \
 #         -- --request <res-relative request> --response <res-relative response>
 #
 # Everything after `--` reaches this script through
@@ -22,7 +22,7 @@
 #   * The helper is the ONLY thing that builds engine-canonical `.tscn`/`.tres`
 #     bytes and the ONLY thing that mints a `ResourceUID`. The Rust side never
 #     synthesises resource text and never implements UID hashing.
-#   * The helper writes ONLY inside `res://godot_mcp_helpers/2/staging/`. It
+#   * The helper writes ONLY inside `res://godot_mcp_helpers/3/staging/`. It
 #     never touches the caller's target path. Publishing the staged artifact
 #     onto the target is done by the Rust side, under the Todo 2 lease, as a
 #     compare-and-swap against the recorded preimage.
@@ -32,6 +32,12 @@
 #     scripts, instances, signal connections, groups and sub-resources. Every
 #     operation is validated against the engine's own class database; the first
 #     one that cannot be applied refuses the whole batch and nothing is staged.
+#   * A batch's `call_method` calls one editing method of the table below on a
+#     node the scene owns, on a resource the scene embeds, or on the resource a
+#     resource batch edits, after checking its arguments against the method's
+#     engine signature. A resource saved in its own file is never a receiver:
+#     the edit would change that file too. What each call returned is answered
+#     as `results`, a JSON array in batch order.
 #   * A batch may name nodes by handle. The Rust side resolves each handle to a
 #     node path of the target as it is now (`handles`); the helper binds every
 #     handle to that node OBJECT before the first operation, so a handle follows
@@ -45,12 +51,33 @@
 
 extends SceneTree
 
-const HELPER_VERSION := "2"
-const STAGING_PREFIX := "res://godot_mcp_helpers/2/staging/"
+const HELPER_VERSION := "3"
+const STAGING_PREFIX := "res://godot_mcp_helpers/3/staging/"
 const TEXT_EXTENSIONS := ["tscn", "tres"]
 const BINARY_EXTENSIONS := ["scn", "res"]
 
 const HANDLE_PREFIX := "nh1:"
+
+# The editing methods, as crates/godot-mcp-domain/src/editing_methods.rs lists
+# them; a test holds this copy to that table. Change the table, not this copy.
+const EDITING_METHODS := {
+	"TileMapLayer": ["set_cell", "erase_cell", "clear", "set_cells_terrain_connect", "set_cells_terrain_path"],
+	"GridMap": ["set_cell_item", "clear"],
+	"Line2D": ["add_point", "remove_point", "set_point_position", "clear_points"],
+	"AnimationMixer": ["add_animation_library", "remove_animation_library", "rename_animation_library"],
+	"AnimationLibrary": ["add_animation", "remove_animation", "rename_animation"],
+	"Animation": ["add_track", "remove_track", "track_set_path", "track_set_enabled", "track_set_interpolation_type", "track_set_interpolation_loop_wrap", "value_track_set_update_mode", "track_insert_key", "track_remove_key", "track_remove_key_at_time", "track_set_key_value", "track_set_key_time", "track_set_key_transition", "set_length", "set_loop_mode", "set_step"],
+	"SpriteFrames": ["add_animation", "remove_animation", "rename_animation", "add_frame", "remove_frame", "set_frame", "clear", "set_animation_speed", "set_animation_loop"],
+	"Curve": ["add_point", "remove_point", "set_point_value", "set_point_offset", "set_point_left_tangent", "set_point_right_tangent", "clear_points"],
+	"Curve2D": ["add_point", "remove_point", "set_point_position", "set_point_in", "set_point_out", "clear_points"],
+	"Curve3D": ["add_point", "remove_point", "set_point_position", "set_point_in", "set_point_out", "set_point_tilt", "clear_points"],
+	"Gradient": ["add_point", "remove_point", "set_offset", "set_color"],
+	"Theme": ["set_color", "set_constant", "set_font_size", "set_font", "set_icon", "set_stylebox", "clear_color", "clear_constant", "clear_font_size", "clear_font", "clear_icon", "clear_stylebox"],
+}
+const CLEARING := {"TileMapLayer": ["clear"], "AnimationMixer": ["get_animation_library_list", "remove_animation_library"], "Animation": ["clear"], "Theme": ["clear"]}
+const SETTLE := {"TileMapLayer": "update_internals"}
+const NEW_RESOURCE_CLASSES := ["Animation", "AnimationLibrary", "Curve", "Curve2D", "Curve3D", "Gradient", "SpriteFrames", "StyleBoxFlat", "Theme"]
+const MAX_CALL_ARGUMENTS := 16
 
 const EXIT_OK := 0
 const EXIT_USAGE := 64
@@ -59,6 +86,11 @@ const EXIT_FAILED := 70
 
 # Node handle -> the node object it was bound to before the batch ran.
 var _handles: Dictionary = {}
+# The `res://` path of the file the batch edits: a resource it embeds has this
+# path followed by `::`.
+var _owner_path := ""
+# What each `call_method` returned, in batch order.
+var _results: Array = []
 
 
 func _init() -> void:
@@ -78,6 +110,8 @@ func _init() -> void:
 		return
 
 	var response: Dictionary = _run(request)
+	if str(response.get("status", "")) == "ok" and not _results.is_empty():
+		response["results"] = JSON.stringify(_results)
 	var code: int = int(response.get("exit_code", EXIT_FAILED))
 	response.erase("exit_code")
 	response["helper_version"] = HELPER_VERSION
@@ -99,6 +133,8 @@ func _run(request: Dictionary) -> Dictionary:
 	if not artifact_res.begins_with(STAGING_PREFIX):
 		return {"status": "refused", "reason": "artifact_outside_staging", "exit_code": EXIT_REFUSED}
 
+	_owner_path = _res(target) if target != "" else ""
+	_results = []
 	if target != "":
 		var extension: String = target.get_extension().to_lower()
 		if BINARY_EXTENSIONS.has(extension):
@@ -474,6 +510,11 @@ func _apply_scene_op(root: Node, op: Dictionary, index: int) -> Dictionary:
 			if node == null or not _owned(root, node):
 				return _refuse("node_not_found", index, str(op.get("node", ".")))
 			return _set_subresource(node, op, index)
+		"call_method":
+			var node: Node = _node(root, op.get("node", "."))
+			if node == null or not _owned(root, node):
+				return _refuse("node_not_found", index, str(op.get("node", ".")))
+			return _call_method(node, op, index)
 		_:
 			return _refuse("unknown_operation", index, kind)
 	return {"status": "ok"}
@@ -498,6 +539,8 @@ func _apply_resource_ops(resource: Resource, ops: Array) -> Dictionary:
 				result = _set_property(resource, op, index, kind == "clear_property")
 			"set_subresource":
 				result = _set_subresource(resource, op, index)
+			"call_method":
+				result = _call_method(resource, op, index)
 			_:
 				result = _refuse("unknown_operation", index, kind)
 		if result["status"] != "ok":
@@ -559,6 +602,152 @@ func _set_subresource(object: Object, op: Dictionary, index: int) -> Dictionary:
 	if object.get(property) != resource:
 		return _refuse("value_type_mismatch", index, property)
 	return {"status": "ok"}
+
+
+# --- editing calls -------------------------------------------------------------
+
+
+# `call_method`: call a listed editing method on `base`, a node the scene owns
+# or the resource a resource batch edits, or on the resource of the node that
+# the `resource` selector names.
+func _call_method(base: Object, op: Dictionary, index: int) -> Dictionary:
+	var receiver: Object = base
+	if op.get("resource") != null:
+		if not (base is Node):
+			return _refuse("invalid_selector", index, "a resource batch calls the resource itself")
+		var found: Dictionary = _selected_resource(base, op.get("resource"))
+		if not found["ok"]:
+			return _refuse(found["reason"], index, found["detail"])
+		receiver = found["object"]
+	var method: String = str(op.get("method", ""))
+	var listed: String = _listed_class(receiver, method)
+	if listed == "":
+		return _refuse("method_not_listed", index, "%s cannot be called on a %s" % [method, receiver.get_class()])
+	var given = op.get("arguments", [])
+	if typeof(given) != TYPE_ARRAY or given.size() > MAX_CALL_ARGUMENTS:
+		return _refuse("invalid_arguments", index, "`arguments` lists at most %d values" % MAX_CALL_ARGUMENTS)
+	var arguments: Array = []
+	for argument in given:
+		var decoded: Dictionary = _decode_argument(argument)
+		if not decoded["ok"]:
+			return _refuse("invalid_value", index, decoded["reason"])
+		arguments.append(decoded["value"])
+	var problem: String = _signature_problem(receiver, method, arguments)
+	if problem != "":
+		return _refuse("invalid_arguments", index, problem)
+	var value = receiver.callv(method, arguments)
+	# A class in SETTLE brings its stored properties up to date, so the staged
+	# bytes hold no entry the receiver no longer shows.
+	if SETTLE.has(listed):
+		receiver.call(SETTLE[listed])
+	_results.append({"index": index, "method": method, "value": _encode_result(value)})
+	return {"status": "ok"}
+
+
+# The table's class `object` belongs to for `method`, or "" when none lists it.
+func _listed_class(object: Object, method: String) -> String:
+	for listed in EDITING_METHODS:
+		if ClassDB.is_parent_class(object.get_class(), listed) and EDITING_METHODS[listed].has(method):
+			return listed
+	return ""
+
+
+func _selector_refusal(reason: String, detail: String) -> Dictionary:
+	return {"ok": false, "reason": reason, "detail": detail}
+
+
+# The resource of `node` that `selector` names — a node property, an animation
+# or an animation library of an AnimationMixer — when the edited file embeds it.
+func _selected_resource(node: Node, selector) -> Dictionary:
+	if typeof(selector) != TYPE_DICTIONARY or selector.size() != 1:
+		return _selector_refusal("invalid_selector", "`resource` names one of property, animation, library")
+	var kind: String = str(selector.keys()[0])
+	var name: String = str(selector[kind])
+	var resource = null
+	match kind:
+		"property":
+			if not _has_property(node, name):
+				return _selector_refusal("unknown_property", name)
+			resource = node.get(name)
+		"animation":
+			if not (node is AnimationMixer) or not node.has_animation(name):
+				return _selector_refusal("unknown_animation", name)
+			resource = node.get_animation(name)
+		"library":
+			if not (node is AnimationMixer) or not node.has_animation_library(name):
+				return _selector_refusal("unknown_animation_library", name)
+			resource = node.get_animation_library(name)
+		_:
+			return _selector_refusal("invalid_selector", "`resource` names one of property, animation, library")
+	if not (resource is Resource):
+		return _selector_refusal("not_a_resource", "%s %s holds no resource" % [kind, name])
+	var path: String = resource.resource_path
+	if path != "" and not path.begins_with(_owner_path + "::"):
+		return _selector_refusal("external_resource", "%s is the file %s; edit it with resource.batch.apply" % [name, path])
+	return {"ok": true, "object": resource}
+
+
+# One argument: a new embedded resource of a listed class, or a tagged value.
+func _decode_argument(tagged) -> Dictionary:
+	if typeof(tagged) == TYPE_DICTIONARY and str(tagged.get("type", "")) == "new_resource":
+		var value = tagged.get("value")
+		if tagged.size() != 2 or typeof(value) != TYPE_DICTIONARY or value.size() != 1:
+			return _bad("a new resource is {type: new_resource, value: {class}}")
+		var resource_class: String = str(value.get("class", ""))
+		if not NEW_RESOURCE_CLASSES.has(resource_class) or not ClassDB.can_instantiate(resource_class):
+			return _bad("a new resource is one of " + ", ".join(NEW_RESOURCE_CLASSES))
+		return _good(ClassDB.instantiate(resource_class))
+	return _decode(tagged)
+
+
+# Why `arguments` do not fit `method`'s engine signature on `object`, or "".
+func _signature_problem(object: Object, method: String, arguments: Array) -> String:
+	for info in ClassDB.class_get_method_list(object.get_class()):
+		if str(info["name"]) != method:
+			continue
+		var parameters: Array = info.get("args", [])
+		var defaults: Array = info.get("default_args", [])
+		var least: int = parameters.size() - defaults.size()
+		if arguments.size() < least or arguments.size() > parameters.size():
+			return "%s.%s takes %d to %d arguments, not %d" % [object.get_class(), method, least, parameters.size(), arguments.size()]
+		for position in arguments.size():
+			var expected: int = int(parameters[position].get("type", TYPE_NIL))
+			var argument = arguments[position]
+			var actual: int = typeof(argument)
+			if expected == TYPE_NIL or actual == expected and expected != TYPE_OBJECT:
+				continue
+			if expected == TYPE_OBJECT:
+				var wanted: String = str(parameters[position].get("class_name", ""))
+				if actual == TYPE_NIL or actual == TYPE_OBJECT and (wanted == "" or argument.is_class(wanted)):
+					continue
+				return "argument %d of %s must be a %s" % [position, method, wanted if wanted != "" else "object"]
+			if expected == TYPE_FLOAT and actual == TYPE_INT:
+				continue
+			if expected == TYPE_INT and actual == TYPE_FLOAT and float(argument) == floor(float(argument)):
+				continue
+			if [TYPE_STRING, TYPE_STRING_NAME].has(expected) and [TYPE_STRING, TYPE_STRING_NAME].has(actual):
+				continue
+			if expected == TYPE_NODE_PATH and [TYPE_STRING, TYPE_STRING_NAME].has(actual):
+				continue
+			return "argument %d of %s must be %s, not %s" % [position, method, type_string(expected), type_string(actual)]
+		return ""
+	return "%s has no method %s" % [object.get_class(), method]
+
+
+# The tagged spelling of a call's result, null when it returned nothing. Every
+# listed method returns nothing or an integer.
+func _encode_result(value):
+	match typeof(value):
+		TYPE_NIL:
+			return null
+		TYPE_BOOL:
+			return {"type": "bool", "value": value}
+		TYPE_INT:
+			return {"type": "integer", "value": value}
+		TYPE_FLOAT:
+			if is_finite(value):
+				return {"type": "float", "value": value}
+	return {"type": "unrepresentable", "value": {"variant_type": type_string(typeof(value))}}
 
 
 # --- tagged values -----------------------------------------------------------

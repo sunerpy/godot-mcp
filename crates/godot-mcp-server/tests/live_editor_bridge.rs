@@ -3243,6 +3243,62 @@ fn the_editor_closes_only_a_scene_it_holds_saved_in(binary: &Path) {
     drop(editor);
 }
 
+/// A scene with one receiver of every class the editing-methods table lists:
+/// nodes the calls go to directly, and resources the scene embeds that a
+/// `resource` selector picks.
+const CALL_SCENE: &str = r#"[gd_scene format=3]
+
+[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_t"]
+size = Vector2(32, 16)
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_s"]
+texture = SubResource("PlaceholderTexture2D_t")
+0:0/0 = 0
+1:0/0 = 0
+
+[sub_resource type="TileSet" id="TileSet_s"]
+sources/0 = SubResource("TileSetAtlasSource_s")
+
+[sub_resource type="Curve" id="Curve_w"]
+
+[sub_resource type="Gradient" id="Gradient_g"]
+
+[sub_resource type="Curve2D" id="Curve2D_p"]
+
+[sub_resource type="Curve3D" id="Curve3D_p"]
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_f"]
+
+[sub_resource type="Theme" id="Theme_t"]
+
+[node name="Main" type="Node2D"]
+
+[node name="Layer" type="TileMapLayer" parent="."]
+tile_set = SubResource("TileSet_s")
+
+[node name="Line" type="Line2D" parent="."]
+width_curve = SubResource("Curve_w")
+gradient = SubResource("Gradient_g")
+
+[node name="Sprite" type="Node2D" parent="."]
+
+[node name="Player" type="AnimationPlayer" parent="."]
+
+[node name="Path" type="Path2D" parent="."]
+curve = SubResource("Curve2D_p")
+
+[node name="Path3" type="Path3D" parent="."]
+curve = SubResource("Curve3D_p")
+
+[node name="Grid" type="GridMap" parent="."]
+
+[node name="Frames" type="AnimatedSprite2D" parent="."]
+sprite_frames = SubResource("SpriteFrames_f")
+
+[node name="Panel" type="Control" parent="."]
+theme = SubResource("Theme_t")
+"#;
+
 fn tagged(kind: &str, value: Value) -> Value {
     json!({ "type": kind, "value": value })
 }
@@ -3251,8 +3307,777 @@ fn integer(value: i64) -> Value {
     tagged("integer", json!(value))
 }
 
+fn number(value: f64) -> Value {
+    tagged("float", json!(value))
+}
+
 fn text(value: &str) -> Value {
     tagged("string", json!(value))
+}
+
+fn vector2(x: f64, y: f64) -> Value {
+    tagged("vector2", json!({ "x": x, "y": y }))
+}
+
+fn vector2i(x: i64, y: i64) -> Value {
+    tagged("vector2i", json!({ "x": x, "y": y }))
+}
+
+fn red() -> Value {
+    tagged(
+        "color",
+        json!({ "red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0 }),
+    )
+}
+
+/// One `call_method` operation on `node`, or on the resource `resource`
+/// picks.
+fn call(node: &str, resource: Option<Value>, method: &str, arguments: Vec<Value>) -> Value {
+    let mut operation = json!({
+        "op": "call_method", "node": node, "method": method, "arguments": arguments
+    });
+    if let Some(resource) = resource {
+        operation["resource"] = resource;
+    }
+    operation
+}
+
+/// A call on every class of the table, with what each call returns.
+fn every_class_calls() -> (Vec<Value>, Vec<Value>) {
+    let walk = || Some(json!({ "animation": "walk" }));
+    let calls = vec![
+        (
+            call(
+                "Layer",
+                None,
+                "set_cell",
+                vec![vector2i(1, 2), integer(0), vector2i(0, 0), integer(0)],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Layer",
+                None,
+                "set_cell",
+                vec![vector2i(3, 4), integer(0), vector2i(1, 0)],
+            ),
+            Value::Null,
+        ),
+        (
+            call("Layer", None, "erase_cell", vec![vector2i(1, 2)]),
+            Value::Null,
+        ),
+        (
+            call("Line", None, "add_point", vec![vector2(1.0, 2.0)]),
+            Value::Null,
+        ),
+        (
+            call("Line", None, "add_point", vec![vector2(3.0, 4.0)]),
+            Value::Null,
+        ),
+        (
+            call(
+                "Line",
+                Some(json!({ "property": "width_curve" })),
+                "add_point",
+                vec![vector2(0.0, 1.0)],
+            ),
+            integer(0),
+        ),
+        (
+            call(
+                "Line",
+                Some(json!({ "property": "gradient" })),
+                "add_point",
+                vec![number(0.5), red()],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Player",
+                None,
+                "add_animation_library",
+                vec![
+                    text(""),
+                    tagged("new_resource", json!({ "class": "AnimationLibrary" })),
+                ],
+            ),
+            integer(0),
+        ),
+        (
+            call(
+                "Player",
+                Some(json!({ "library": "" })),
+                "add_animation",
+                vec![
+                    text("walk"),
+                    tagged("new_resource", json!({ "class": "Animation" })),
+                ],
+            ),
+            integer(0),
+        ),
+        (
+            call("Player", walk(), "add_track", vec![integer(0)]),
+            integer(0),
+        ),
+        (
+            call(
+                "Player",
+                walk(),
+                "track_set_path",
+                vec![integer(0), tagged("node_path", json!("Sprite:position"))],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Player",
+                walk(),
+                "track_insert_key",
+                vec![integer(0), number(0.0), vector2(1.0, 1.0)],
+            ),
+            integer(0),
+        ),
+        (
+            call("Player", walk(), "set_length", vec![number(2.0)]),
+            Value::Null,
+        ),
+        (
+            call(
+                "Path",
+                Some(json!({ "property": "curve" })),
+                "add_point",
+                vec![vector2(1.0, 1.0)],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Path3",
+                Some(json!({ "property": "curve" })),
+                "add_point",
+                vec![tagged("vector3", json!({ "x": 1.0, "y": 2.0, "z": 3.0 }))],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Path3",
+                Some(json!({ "property": "curve" })),
+                "set_point_tilt",
+                vec![integer(0), number(0.5)],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Grid",
+                None,
+                "set_cell_item",
+                vec![
+                    tagged("vector3i", json!({ "x": 1, "y": 2, "z": 3 })),
+                    integer(0),
+                ],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Frames",
+                Some(json!({ "property": "sprite_frames" })),
+                "add_animation",
+                vec![text("run")],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Frames",
+                Some(json!({ "property": "sprite_frames" })),
+                "set_animation_speed",
+                vec![text("run"), number(12.0)],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Panel",
+                Some(json!({ "property": "theme" })),
+                "set_color",
+                vec![text("font_color"), text("Label"), red()],
+            ),
+            Value::Null,
+        ),
+        (
+            call(
+                "Panel",
+                Some(json!({ "property": "theme" })),
+                "set_constant",
+                vec![text("margin"), text("Box"), integer(4)],
+            ),
+            Value::Null,
+        ),
+    ];
+    let results = calls
+        .iter()
+        .enumerate()
+        .map(|(index, (operation, value))| {
+            json!({ "index": index, "method": operation["method"], "value": value })
+        })
+        .collect();
+    (
+        calls.into_iter().map(|(operation, _)| operation).collect(),
+        results,
+    )
+}
+
+/// The bytes a `PackedByteArray(...)` property line holds, in either the
+/// base64 or the comma-separated spelling.
+fn packed_bytes(scene: &str, property: &str) -> Option<Vec<u8>> {
+    let line = scene
+        .lines()
+        .find(|line| line.starts_with(&format!("{property} = PackedByteArray(")))?;
+    let inner = line.split_once("PackedByteArray(")?.1.strip_suffix(')')?;
+    if let Some(encoded) = inner
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    {
+        return Some(decode_base64(encoded));
+    }
+    inner
+        .split(',')
+        .map(|byte| byte.trim().parse().ok())
+        .collect()
+}
+
+/// What the calls of [`every_class_calls`] leave in a saved scene.
+fn assert_calls_landed(scene: &str, context: &str) {
+    assert_eq!(
+        packed_bytes(scene, "tile_map_data"),
+        Some(vec![0, 0, 3, 0, 4, 0, 0, 0, 1, 0, 0, 0, 0, 0]),
+        "only the cell at (3, 4) is painted, from atlas tile (1, 0): {context}\n{scene}"
+    );
+    for marker in [
+        "points = PackedVector2Array(1, 2, 3, 4)",
+        "[sub_resource type=\"AnimationLibrary\"",
+        "tracks/0/path = NodePath(\"Sprite:position\")",
+        "length = 2.0",
+        "\"tilts\": PackedFloat32Array(0.5)",
+        "&\"run\"",
+        "Label/colors/font_color = Color(1, 0, 0, 1)",
+        "Box/constants/margin = 4",
+    ] {
+        assert!(
+            scene.contains(marker),
+            "the saved scene holds {marker:?}: {context}\n{scene}"
+        );
+    }
+    assert!(
+        scene
+            .lines()
+            .any(|line| line.starts_with("offsets = PackedFloat32Array(") && line.contains("0.5")),
+        "the gradient holds a point at 0.5: {context}\n{scene}"
+    );
+    assert!(
+        scene.matches("point_count = 1").count() >= 3,
+        "the width curve, the 2D and the 3D curve each hold one point: {context}\n{scene}"
+    );
+    assert!(
+        scene.contains("\"cells\": PackedInt32Array(")
+            && !scene.contains("\"cells\": PackedInt32Array()"),
+        "the grid holds a cell: {context}\n{scene}"
+    );
+}
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn editing_calls_reach_every_listed_class_in_the_editor_and_headless() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        editing_calls_reach_every_listed_class_in(binary);
+    }
+}
+
+fn editing_calls_reach_every_listed_class_in(binary: &Path) {
+    let (operations, expected) = every_class_calls();
+
+    // Headless: the batch is applied by the bundled helper and saved.
+    let headless = ProjectTree::new("live-calls-headless");
+    headless.write("main.tscn", CALL_SCENE);
+    let mut session = StdioSession::initialized(&Spawn {
+        project: &headless.root,
+        current_dir: None,
+        profile: "full",
+        godot: Some(binary),
+    });
+    let context = binary.display().to_string();
+    let applied = ok(
+        &session.call_tool(
+            2,
+            "scene.batch.apply",
+            json!({
+                "path": "main.tscn",
+                "expectedSha256": sha256_hex(CALL_SCENE.as_bytes()),
+                "operations": operations,
+                "idempotencyId": "calls-headless"
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(applied["backend"], "headless", "{applied}");
+    assert_eq!(applied["results"], json!(expected), "{context}: {applied}");
+    let saved = std::fs::read_to_string(headless.root.join("main.tscn")).expect("scene");
+    assert_calls_landed(&saved, &format!("{context}, headless"));
+    let _ = session.finish();
+
+    // In the editor: one undoable action on the scene it holds.
+    let (tree, mut session, mut ids) =
+        project_with_addon("live-calls", &[("main.tscn", CALL_SCENE)]);
+    let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
+    wait_connected(&mut session, &mut ids, &editor);
+    let mark = editor.mark();
+    let context = editor.context();
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": "main.tscn", "idempotencyId": "calls-open" }),
+        ),
+        &context,
+    );
+    let original = digest_of(&mut session, &mut ids, &context);
+    let edited = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.edit",
+            json!({
+                "expectedDigest": original,
+                "operations": operations,
+                "label": "every class",
+                "idempotencyId": "calls-edit"
+            }),
+        ),
+        &editor.context(),
+    );
+    assert_eq!(
+        edited["results"],
+        json!(expected),
+        "{}: {edited}",
+        editor.binary
+    );
+    let changed = edited["digest"].as_str().expect("digest").to_owned();
+    assert_ne!(changed, original, "{edited}");
+    let undone = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.undo",
+            json!({ "idempotencyId": "calls-undo" }),
+        ),
+        &editor.context(),
+    );
+    assert_eq!(
+        undone["digest"],
+        json!(original),
+        "{}: undoing the calls puts every receiver back",
+        editor.binary
+    );
+    let redone = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.redo",
+            json!({ "idempotencyId": "calls-redo" }),
+        ),
+        &editor.context(),
+    );
+    assert_eq!(
+        redone["digest"],
+        json!(changed),
+        "{}: redoing the calls makes them again",
+        editor.binary
+    );
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.save",
+            json!({ "idempotencyId": "calls-save" }),
+        ),
+        &editor.context(),
+    );
+    let saved = std::fs::read_to_string(tree.root.join("main.tscn")).expect("scene");
+    assert_calls_landed(&saved, &format!("{}, editor", editor.binary));
+    editor.assert_no_errors_since(
+        mark,
+        "calling every listed class, undoing, redoing and saving",
+    );
+    let _ = session.finish();
+    drop(editor);
+}
+
+const OWN_SCENE: &str = "[gd_scene format=3]\n\n[node name=\"Main\" type=\"Node2D\"]\n\n\
+    [node name=\"Player\" type=\"AnimationPlayer\" parent=\".\"]\n\n\
+    [node name=\"Line\" type=\"Line2D\" parent=\".\"]\n";
+const LIBRARY: &str = "[gd_resource type=\"AnimationLibrary\" format=3]\n\n[resource]\n";
+
+/// Calls the scene does not own, or that do not fit their method, each with
+/// the refusal reason both backends give.
+fn refused_calls() -> Vec<(Value, &'static str)> {
+    vec![
+        (
+            call(
+                "Player",
+                Some(json!({ "library": "shared" })),
+                "add_animation",
+                vec![
+                    text("x"),
+                    tagged("new_resource", json!({ "class": "Animation" })),
+                ],
+            ),
+            "external_resource",
+        ),
+        (
+            call("Line", None, "set_cell", vec![vector2i(0, 0), integer(0)]),
+            "method_not_listed",
+        ),
+        (
+            call("Line", None, "add_point", vec![text("not a point")]),
+            "invalid_arguments",
+        ),
+        (
+            call(
+                "Line",
+                None,
+                "add_point",
+                vec![vector2(1.0, 1.0), integer(0), integer(1)],
+            ),
+            "invalid_arguments",
+        ),
+        (
+            call(
+                "Line",
+                Some(json!({ "property": "texture" })),
+                "add_point",
+                vec![vector2(1.0, 1.0)],
+            ),
+            "not_a_resource",
+        ),
+        (
+            call(
+                "Player",
+                Some(json!({ "animation": "missing" })),
+                "add_track",
+                vec![integer(0)],
+            ),
+            "unknown_animation",
+        ),
+    ]
+}
+
+/// The call that hands the scene a library saved in its own file.
+fn shared_library_call() -> Value {
+    call(
+        "Player",
+        None,
+        "add_animation_library",
+        vec![
+            text("shared"),
+            tagged(
+                "resource",
+                json!({ "resource": "res://lib.tres", "resource_type": "AnimationLibrary" }),
+            ),
+        ],
+    )
+}
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn editing_calls_refuse_what_the_scene_does_not_own() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        editing_calls_refuse_what_the_scene_does_not_own_in(binary);
+    }
+}
+
+fn editing_calls_refuse_what_the_scene_does_not_own_in(binary: &Path) {
+    let library_sha = sha256_hex(LIBRARY.as_bytes());
+
+    // Headless.
+    let headless = ProjectTree::new("live-own-headless");
+    headless.write("main.tscn", OWN_SCENE);
+    headless.write("lib.tres", LIBRARY);
+    let mut session = StdioSession::initialized(&Spawn {
+        project: &headless.root,
+        current_dir: None,
+        profile: "full",
+        godot: Some(binary),
+    });
+    let context = binary.display().to_string();
+    let scene_sha = |tree: &ProjectTree| {
+        sha256_hex(&std::fs::read(tree.root.join("main.tscn")).expect("scene"))
+    };
+    let shared = ok(
+        &session.call_tool(
+            2,
+            "scene.batch.apply",
+            json!({
+                "path": "main.tscn",
+                "expectedSha256": scene_sha(&headless),
+                "operations": [shared_library_call()],
+                "idempotencyId": "own-shared"
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(shared["results"][0]["value"], integer(0), "{shared}");
+    let scene = std::fs::read_to_string(headless.root.join("main.tscn")).expect("scene");
+    assert!(
+        scene.contains("path=\"res://lib.tres\""),
+        "{context}: the scene refers to the library's file\n{scene}"
+    );
+    assert_eq!(
+        sha256_hex(&std::fs::read(headless.root.join("lib.tres")).expect("library")),
+        library_sha,
+        "{context}: handing a call a resource file leaves that file as it was"
+    );
+    let mut id = 2;
+    for (operation, reason) in refused_calls() {
+        id += 1;
+        let before = scene_sha(&headless);
+        let refused = session.call_tool(
+            id,
+            "scene.batch.apply",
+            json!({
+                "path": "main.tscn",
+                "expectedSha256": before,
+                "operations": [operation],
+                "idempotencyId": format!("own-{id}")
+            }),
+        );
+        assert!(
+            refused
+                .to_string()
+                .contains(&format!("{reason} at operation 0")),
+            "{context}, headless: {operation} is refused as {reason}: {refused}"
+        );
+        assert_eq!(
+            scene_sha(&headless),
+            before,
+            "{context}: a refusal writes nothing"
+        );
+    }
+    let _ = session.finish();
+
+    // In the editor.
+    let (tree, mut session, mut ids) = project_with_addon(
+        "live-own",
+        &[("main.tscn", OWN_SCENE), ("lib.tres", LIBRARY)],
+    );
+    let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
+    wait_connected(&mut session, &mut ids, &editor);
+    let mark = editor.mark();
+    let context = editor.context();
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": "main.tscn", "idempotencyId": "own-open" }),
+        ),
+        &context,
+    );
+    let original = digest_of(&mut session, &mut ids, &context);
+    let shared = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.edit",
+            json!({
+                "expectedDigest": original,
+                "operations": [shared_library_call()],
+                "idempotencyId": "own-edit-shared"
+            }),
+        ),
+        &editor.context(),
+    );
+    assert_eq!(shared["results"][0]["value"], integer(0), "{shared}");
+    let mut digest = shared["digest"].as_str().expect("digest").to_owned();
+    for (operation, reason) in refused_calls() {
+        let refused = session.call_tool(
+            ids.next(),
+            "editor.scene.edit",
+            json!({
+                "expectedDigest": digest,
+                "operations": [operation],
+                "idempotencyId": format!("own-edit-{reason}-{}", ids.0)
+            }),
+        );
+        assert!(
+            refused
+                .to_string()
+                .contains(&format!("{reason} at operation 0")),
+            "{}, editor: {operation} is refused as {reason}: {refused}",
+            editor.binary
+        );
+        assert_eq!(
+            digest_of(&mut session, &mut ids, &editor.context()),
+            digest,
+            "{}: a refused call changes nothing",
+            editor.binary
+        );
+        digest = digest_of(&mut session, &mut ids, &editor.context());
+    }
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.save",
+            json!({ "idempotencyId": "own-save" }),
+        ),
+        &editor.context(),
+    );
+    assert_eq!(
+        sha256_hex(&std::fs::read(tree.root.join("lib.tres")).expect("library")),
+        library_sha,
+        "{}: saving the scene leaves the library's file as it was",
+        editor.binary
+    );
+    editor.assert_no_errors_since(mark, "refusing calls the scene does not own");
+    let _ = session.finish();
+    drop(editor);
+}
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn created_and_edited_resources_call_their_own_methods() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        created_and_edited_resources_call_their_own_methods_in(binary);
+    }
+}
+
+fn created_and_edited_resources_call_their_own_methods_in(binary: &Path) {
+    let tree = ProjectTree::new("live-resource-calls");
+    tree.write(
+        "curve.tres",
+        "[gd_resource type=\"Curve\" format=3]\n\n[resource]\n",
+    );
+    let mut session = StdioSession::initialized(&Spawn {
+        project: &tree.root,
+        current_dir: None,
+        profile: "full",
+        godot: Some(binary),
+    });
+    let context = binary.display().to_string();
+    let read = |path: &str| std::fs::read_to_string(tree.root.join(path)).expect("written file");
+
+    let created = ok(
+        &session.call_tool(
+            2,
+            "resource.create",
+            json!({
+                "path": "grad.tres",
+                "class": "Gradient",
+                "operations": [{ "op": "call_method", "method": "add_point",
+                                 "arguments": [number(0.5), red()] }],
+                "idempotencyId": "create-gradient"
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(
+        created["results"],
+        json!([{ "index": 0, "method": "add_point", "value": null }]),
+        "{context}: {created}"
+    );
+    assert!(
+        read("grad.tres")
+            .lines()
+            .any(|line| line.starts_with("offsets = PackedFloat32Array(") && line.contains("0.5")),
+        "{context}: {}",
+        read("grad.tres")
+    );
+
+    let edited = ok(
+        &session.call_tool(
+            3,
+            "resource.batch.apply",
+            json!({
+                "path": "curve.tres",
+                "expectedSha256": sha256_hex(read("curve.tres").as_bytes()),
+                "operations": [
+                    { "op": "call_method", "method": "add_point", "arguments": [vector2(0.0, 1.0)] },
+                    { "op": "call_method", "method": "set_point_value", "arguments": [integer(0), number(0.5)] }
+                ],
+                "idempotencyId": "edit-curve"
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(
+        edited["results"],
+        json!([
+            { "index": 0, "method": "add_point", "value": integer(0) },
+            { "index": 1, "method": "set_point_value", "value": null }
+        ]),
+        "{context}: {edited}"
+    );
+    assert!(
+        read("curve.tres").contains("point_count = 1")
+            && read("curve.tres").contains("Vector2(0, 0.5)"),
+        "{context}: {}",
+        read("curve.tres")
+    );
+
+    let before = sha256_hex(read("curve.tres").as_bytes());
+    let unlisted = session.call_tool(
+        4,
+        "resource.batch.apply",
+        json!({
+            "path": "curve.tres",
+            "expectedSha256": before,
+            "operations": [{ "op": "call_method", "method": "add_track", "arguments": [integer(0)] }],
+            "idempotencyId": "curve-unlisted"
+        }),
+    );
+    assert!(
+        unlisted
+            .to_string()
+            .contains("method_not_listed at operation 0"),
+        "{context}: a Curve has no add_track: {unlisted}"
+    );
+    let selected = session.call_tool(
+        5,
+        "resource.batch.apply",
+        json!({
+            "path": "curve.tres",
+            "expectedSha256": before,
+            "operations": [{ "op": "call_method", "resource": { "property": "x" },
+                             "method": "add_point", "arguments": [vector2(0.0, 0.0)] }],
+            "idempotencyId": "curve-selector"
+        }),
+    );
+    assert_eq!(error_code(&selected), json!("invalid_input"), "{selected}");
+    assert_eq!(sha256_hex(read("curve.tres").as_bytes()), before);
+
+    let scene = ok(
+        &session.call_tool(
+            6,
+            "scene.create",
+            json!({
+                "path": "line.tscn",
+                "rootType": "Line2D",
+                "operations": [{ "op": "call_method", "node": ".", "method": "add_point",
+                                 "arguments": [vector2(5.0, 5.0)] }],
+                "idempotencyId": "create-line"
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(scene["results"][0]["method"], "add_point", "{scene}");
+    assert!(
+        read("line.tscn").contains("points = PackedVector2Array(5, 5)"),
+        "{context}: {}",
+        read("line.tscn")
+    );
+    let _ = session.finish();
 }
 
 const PLAY_MAIN: &str = "[gd_scene format=3]\n\n[node name=\"Main\" type=\"Node2D\"]\n";

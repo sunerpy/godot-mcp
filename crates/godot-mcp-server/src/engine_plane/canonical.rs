@@ -451,6 +451,7 @@ impl EngineRuntime {
             "tree".to_owned(),
             super::authored::semantic_tree(&author.target, &after_text, self.held.generation),
         );
+        result.insert("results".to_owned(), Value::Array(staged.results.clone()));
         result.insert("backend".to_owned(), Value::String("headless".to_owned()));
 
         if author.dry_run {
@@ -686,6 +687,13 @@ impl EngineRuntime {
             ),
         );
         result.insert("tree".to_owned(), tree);
+        result.insert(
+            "results".to_owned(),
+            answer
+                .get("results")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+        );
         result.insert("backend".to_owned(), Value::String("editor".to_owned()));
         for key in ["transaction_id", "workspace", "mutation_status"] {
             if let Some(value) = answer.get(key) {

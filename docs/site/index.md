@@ -91,7 +91,7 @@ home:
             status: no-engine
             link: /guide/editing#settings-and-assets
           - title: The editor
-            body: The godot_mcp add-on connects a running editor. Edit, save, capture, read its log and run the game; every change to an open scene is one undoable editor action.
+            body: The godot_mcp add-on connects a running editor. Edit, save, paint tiles, key animations, capture, read its log and run the game; every change to an open scene is one undoable editor action.
             status: engine
             link: /guide/editor
       - name: Run it
