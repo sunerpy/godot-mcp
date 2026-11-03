@@ -565,11 +565,46 @@ pub const SCENE_BATCH_APPLY_IN_EDITOR: ToolDescriptor = ToolDescriptor {
     ..SCENE_BATCH_APPLY
 };
 
+/// `project.settings.patch`. Its file boundary rewrites project.godot; while a
+/// live editor is connected the editor owns that file and applies the same
+/// request instead, which [`PROJECT_SETTINGS_PATCH_IN_EDITOR`] describes.
+const PROJECT_SETTINGS_PATCH: ToolDescriptor = file_write(
+    AuthoringOperation::SettingsPatch.key(),
+    "project.settings.patch",
+    "Change project settings",
+    "Apply typed `operations` — set or clear the main scene, set or remove an autoload or an \
+     input action, set an allowlisted value, enable or disable an installed plugin — to \
+     project.godot whose SHA-256 is `expectedSha256`, preserving unrelated keys and comments. \
+     While a live editor is connected it owns project.godot: the editor applies the change and \
+     saves the file with its own writer, which keeps every setting but not comments or \
+     layout, and the answer describes the bytes it saved. Journaled; requires `idempotencyId`.",
+    REWRITE,
+);
+
+/// `project.settings.patch` as executed by the connected live editor: the same
+/// public request and result, authorized and journaled at the editor boundary.
+/// Never listed on its own.
+pub const PROJECT_SETTINGS_PATCH_IN_EDITOR: ToolDescriptor = ToolDescriptor {
+    boundary: Some(ToolBoundary::Editor),
+    needs: ToolNeeds::LiveEditor,
+    ..PROJECT_SETTINGS_PATCH
+};
+
+/// Tools whose Godot process writes the editor's own import and UID caches
+/// under `.godot/`. None of them runs beside a connected editor, and no editor
+/// connects while one runs.
+pub const EDITOR_EXCLUSIVE_TOOLS: &[&str] = &["project.import.run", "project.uid.update"];
+
 /// The descriptor a tool executes under when the live editor carries it out,
 /// for a tool whose request the editor can serve unchanged.
 #[must_use]
 pub fn in_editor_descriptor(name: &str) -> Option<&'static ToolDescriptor> {
-    (name == SCENE_BATCH_APPLY_IN_EDITOR.name).then_some(&SCENE_BATCH_APPLY_IN_EDITOR)
+    [
+        &SCENE_BATCH_APPLY_IN_EDITOR,
+        &PROJECT_SETTINGS_PATCH_IN_EDITOR,
+    ]
+    .into_iter()
+    .find(|descriptor| descriptor.name == name)
 }
 
 /// Every implemented public method, in canonical name order.
@@ -1050,16 +1085,7 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          Godot process.",
         IdentityFamily::StaticDiscovery,
     ),
-    file_write(
-        AuthoringOperation::SettingsPatch.key(),
-        "project.settings.patch",
-        "Change project settings",
-        "Apply typed `operations` — set or clear the main scene, set or remove an autoload or an \
-         input action, set an allowlisted value, enable or disable an installed plugin — to \
-         project.godot whose SHA-256 is `expectedSha256`, preserving unrelated keys and \
-         comments. Journaled; requires `idempotencyId`.",
-        REWRITE,
-    ),
+    PROJECT_SETTINGS_PATCH,
     // --- contract 0.2.0: semantic scenes and resources ----------------------
     engine_write(
         EngineOperation::SceneCreate.key(),

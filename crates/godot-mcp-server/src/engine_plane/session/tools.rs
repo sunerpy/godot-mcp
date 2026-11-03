@@ -1403,6 +1403,9 @@ impl SessionHandler {
             session: Some(access.connection_session().to_owned()),
             arguments: canonical.clone(),
             files: Vec::new(),
+            project_wide: false,
+            observe_all: false,
+            expected_revision: None,
             opened_at_unix_ms: observed,
         };
         // Synthetic input in flight is withdrawn from the probe when the
@@ -1557,6 +1560,9 @@ impl SessionHandler {
             session: Some(access.connection_session().to_owned()),
             arguments: canonical.clone(),
             files: Vec::new(),
+            project_wide: false,
+            observe_all: false,
+            expected_revision: None,
             opened_at_unix_ms: observed,
         };
         let effect = RouteEffect::Debug {

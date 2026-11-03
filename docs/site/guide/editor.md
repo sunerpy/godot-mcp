@@ -52,6 +52,13 @@ applied to the scene the editor holds, and on success the whole batch is one und
 scene is saved. A headless write to a file the editor holds is refused with `conflict`, so the
 editor and the server never overwrite each other.
 
+## The project file belongs to the editor
+
+While an editor is connected it owns `project.godot` and the import caches. `project.settings.patch`
+is carried out by the editor, which writes the file in its own format, without comments.
+`project.import.run` and `project.uid.update` are refused while it is connected, since the editor
+imports on its own; close it first to run them.
+
 ## When an answer is lost
 
 Every editor change ends `committed`, `not_started` or `unresolved`. An unresolved change — the

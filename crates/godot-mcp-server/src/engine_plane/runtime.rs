@@ -91,6 +91,35 @@ impl EngineRuntime {
             .map_err(|error| outcome_error(ErrorKind::Internal, error.to_string()))
     }
 
+    /// Keep every editor out for as long as the returned guard lives, when
+    /// `tool` writes the editor's own caches: refused while an editor is
+    /// connected, and no editor connects while it runs. `None` for any other
+    /// tool, or when the profile serves no editor plane.
+    ///
+    /// # Errors
+    /// `conflict` while an editor is connected; nothing has started.
+    pub(super) fn exclusive_editor_guard(
+        &self,
+        tool: &str,
+    ) -> Result<Option<crate::editor::bridge::ConnectionExclusion>, OutcomeError> {
+        if !godot_mcp_domain::catalog::EDITOR_EXCLUSIVE_TOOLS.contains(&tool) {
+            return Ok(None);
+        }
+        let Some(bridge) = &self.editor else {
+            return Ok(None);
+        };
+        bridge.exclude_connections().map(Some).map_err(|_| {
+            outcome_error(
+                ErrorKind::Conflict,
+                format!(
+                    "{tool} writes the editor's import and UID caches, and a Godot editor is \
+                     connected that writes them too; let the editor import, or close the editor \
+                     first. Nothing was started."
+                ),
+            )
+        })
+    }
+
     pub(super) fn route_identity(access: &AccessContext) -> RouterIdentity {
         RouterIdentity {
             transport_mode: access.transport_mode(),

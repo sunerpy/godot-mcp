@@ -98,8 +98,9 @@ boundary has no bearing on it.
 own privileges, as every editor plug-in does. It listens on nothing: the server listens on
 loopback, and the add-on dials it and must present the per-launch secret from the private
 rendezvous file before one request is served. Any process running as your user can read that
-file, so the bridge is no stronger than your user account. Its mutations are the typed scene
-commands only; it exposes no arbitrary method call. See
+file, so the bridge is no stronger than your user account. Its mutations are typed: scene
+commands, and project settings changed as typed values, never as a resource to load or an
+object other than an input event. It exposes no arbitrary method call. See
 [Editor bridge](../operator/editor-bridge.md).
 
 ### 4. The HTTP boundary
