@@ -1,7 +1,10 @@
 @tool
 extends RefCounted
-## Editor mutations: selection, opening a scene, semantic scene batches as one
-## undoable action, undo/redo, project settings, and reloading this plugin.
+## Editor mutations: selection, opening and closing a scene, opening a
+## script, the main screen shown, semantic scene batches and live edits as one
+## undoable action, saving, undo/redo, project settings, the editor's own
+## settings and shortcuts, file-system scans, running the project, and
+## reloading this plugin.
 ##
 ## A scene batch is the same typed command model the headless helper applies
 ## (`add_node`, `set_property`, `connect_signal`, ...). It is applied to the
@@ -24,6 +27,10 @@ extends RefCounted
 
 const VariantCodec = preload("variant_codec.gd")
 const ProjectSettingsApply = preload("project_settings_apply.gd")
+const Filesystem = preload("filesystem.gd")
+const Play = preload("play.gd")
+const Preferences = preload("preferences.gd")
+const Shortcuts = preload("shortcuts.gd")
 
 const HANDLE_PREFIX := "nh1:"
 const MAX_OPERATIONS := 128
@@ -33,12 +40,22 @@ const MAX_SELECTION := 256
 const SETTLE_FRAMES := 3
 const METHODS := [
 	"editor.addon.reload",
+	"editor.filesystem.scan",
 	"editor.history.redo",
 	"editor.history.undo",
+	"editor.main_screen.set",
+	"editor.play.start",
+	"editor.play.stop",
+	"editor.preferences.set",
 	"editor.scene.batch",
+	"editor.scene.close",
+	"editor.scene.edit",
 	"editor.scene.open",
+	"editor.scene.save",
+	"editor.script.open",
 	"editor.selection.set",
 	"editor.settings.apply",
+	"editor.shortcuts.set",
 ]
 
 ## The owning handler set, held weakly: it owns this object, and a strong
@@ -46,6 +63,8 @@ const METHODS := [
 var _owner: WeakRef = null
 var _bound: Dictionary = {}
 var _steps: Array = []
+var _files = Filesystem.new()
+var _play = Play.new()
 
 
 func _init(owner = null) -> void:
@@ -68,14 +87,34 @@ static func refused(reason: String, index: int, detail: String) -> Dictionary:
 	return fail("invalid_input", "%s at operation %d (%s)" % [reason, index, detail.replace("\n", " ")])
 
 
-func dispatch(method: String, payload: Dictionary, _context: Dictionary) -> Dictionary:
+func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dictionary:
 	match method:
+		"editor.filesystem.scan":
+			return await _files.scan(_handlers(), payload, context)
+		"editor.script.open":
+			return _files.open_script(_handlers(), payload)
+		"editor.play.start":
+			return await _play.start(_handlers(), payload)
+		"editor.play.stop":
+			return await _play.stop(payload)
 		"editor.selection.set":
 			return _select(payload)
 		"editor.scene.open":
 			return await _open(payload)
+		"editor.main_screen.set":
+			return await _main_screen(payload)
 		"editor.scene.batch":
-			return _batch(payload)
+			return await _batch(payload)
+		"editor.scene.edit":
+			return _edit(payload)
+		"editor.scene.save":
+			return await _save(payload)
+		"editor.scene.close":
+			return await _close(payload)
+		"editor.preferences.set":
+			return await Preferences.change(payload)
+		"editor.shortcuts.set":
+			return await Shortcuts.change(payload)
 		"editor.history.undo":
 			return _history(payload, true)
 		"editor.history.redo":
@@ -85,6 +124,25 @@ func dispatch(method: String, payload: Dictionary, _context: Dictionary) -> Dict
 		"editor.settings.apply":
 			return ProjectSettingsApply.apply(payload)
 	return fail("unsupported", "the editor bridge does not implement %s" % method)
+
+
+## `editor.main_screen.set`: show the 2D, 3D or Script main screen, and
+## answer once it is shown.
+func _main_screen(payload: Dictionary) -> Dictionary:
+	var screen := str(payload.get("screen", ""))
+	if not ["2D", "3D", "Script"].has(screen):
+		return fail("invalid_input", "`screen` is 2D, 3D or Script")
+	var handlers = _handlers()
+	EditorInterface.set_main_screen_editor(screen)
+	var tree: SceneTree = EditorInterface.get_base_control().get_tree()
+	for frame in SETTLE_FRAMES:
+		if handlers.main_screen() == screen:
+			break
+		await tree.process_frame
+	var shown: String = handlers.main_screen()
+	if shown != screen:
+		return fail("unavailable", "the editor was asked for the %s main screen but shows %s" % [screen, shown], "committed")
+	return ok({"main_screen": shown, "action": "godot-mcp: editor.main_screen.set"})
 
 
 # --- node references ---------------------------------------------------------
@@ -224,7 +282,7 @@ func _open(payload: Dictionary) -> Dictionary:
 		# Reloading discards what the editor holds, so it is refused unless the
 		# editor holds exactly what the file does.
 		var disk: Dictionary = _handlers().file_snapshot(path)
-		if disk.is_empty() or _handlers().scene_snapshot(root)["digest"] != disk["digest"]:
+		if disk.is_empty() or _handlers().edit_digest(root) != disk["digest"]:
 			return fail("conflict", "the editor holds changes to %s that its file does not; save or revert them first" % path)
 		# Godot 4.6.1 crashes when a scene is reloaded while the editor
 		# selection holds its nodes, so the selection is released first and
@@ -253,6 +311,87 @@ func _open(payload: Dictionary) -> Dictionary:
 		"reloaded": reloaded,
 		"open_scenes": Array(EditorInterface.get_open_scenes()),
 	})
+
+
+## The open scenes, without the empty entry Godot 4.7 leaves once the last
+## scene is closed.
+static func _open_scenes() -> Array:
+	return Array(EditorInterface.get_open_scenes()).filter(func(path): return path != "")
+
+
+## `editor.scene.close`: close an open scene, as the editor's Close Scene does,
+## unless it may hold a change its file does not: Godot discards such a change
+## without asking, so the close is refused instead, before anything changes. A
+## scene that is open but not the edited one is shown, closed, and the scene
+## that was edited shown again.
+func _close(payload: Dictionary) -> Dictionary:
+	if not EditorInterface.has_method("close_scene"):
+		return fail("unsupported", "this editor cannot close a scene from a plugin; closing needs Godot 4.5 or later")
+	var handlers = _handlers()
+	var edited: Node = EditorInterface.get_edited_scene_root()
+	var edited_path: String = edited.scene_file_path if edited != null else ""
+	var path := str(payload.get("scene", ""))
+	if path == "":
+		if edited == null:
+			return fail("not_found", "no scene is being edited")
+		if edited_path == "":
+			return fail("conflict", "the scene being edited was never saved, and closing it would discard it; save it in the editor first")
+		path = edited_path
+	if not _open_scenes().has(path):
+		return fail("not_found", "%s is not open in the editor" % path)
+	var saved = _saved(handlers, path, handlers.held_root(path))
+	if saved == false:
+		return fail("conflict", "%s holds changes its file does not, which closing would discard; save them with editor.scene.save, or undo them, then close it. Nothing was closed" % path)
+	if saved == null:
+		return fail("conflict", "this editor cannot tell that %s holds no change its file does not; save it with editor.scene.save, then close it. Nothing was closed" % path)
+	if path != edited_path:
+		if edited != null and edited_path == "":
+			return fail("conflict", "the scene being edited was never saved, so the editor could not show it again after closing %s; save it, or make %s the edited scene, then close it. Nothing was closed" % [path, path])
+		if await handlers.show_scene(path) == null:
+			return await _shown_again(handlers, edited_path, "the editor did not show %s, so it was not closed" % path)
+	var closed = EditorInterface.call("close_scene")
+	if _open_scenes().has(path):
+		return await _shown_again(handlers, edited_path, "the editor did not close %s (%s)" % [path, error_string(closed)])
+	if path != edited_path and _open_scenes().has(edited_path):
+		await handlers.show_scene(edited_path)
+	var now: Node = EditorInterface.get_edited_scene_root()
+	return ok({
+		"closed": path,
+		"open_scenes": _open_scenes(),
+		"edited_scene": now.scene_file_path if now != null else null,
+		"action": "godot-mcp: editor.scene.close",
+		"transaction_id": str(payload.get("transaction_id", "")),
+	})
+
+
+## Whether the open scene at `path`, whose root is `root`, holds no change its
+## file does not: what Godot 4.7 reports for every open scene, or the edited
+## scene's undo history; otherwise true when its file holds the scene as the
+## editor does, and null when nothing tells. Before Godot 4.7 the editor names
+## a scene's undo history only while that scene is the edited one.
+func _saved(handlers, path: String, root: Node):
+	if EditorInterface.has_method("get_unsaved_scenes"):
+		return not Array(EditorInterface.call("get_unsaved_scenes")).has(path)
+	if root != null and root == EditorInterface.get_edited_scene_root():
+		var unsaved = handlers.unsaved(root)
+		if unsaved != null:
+			return not unsaved
+	return true if handlers.holds(path, root) else null
+
+
+## The answer to a close that did not happen: `why`, with nothing changed once
+## the editor shows the scene it showed before, and unresolved when it cannot
+## be brought back to it.
+func _shown_again(handlers, edited_path: String, why: String) -> Dictionary:
+	var now: Node = EditorInterface.get_edited_scene_root()
+	var current: String = now.scene_file_path if now != null else ""
+	if current != edited_path and edited_path != "":
+		var shown: Node = await handlers.show_scene(edited_path)
+		if shown != null:
+			current = shown.scene_file_path
+	if current == edited_path:
+		return fail("unavailable", "%s; nothing was changed" % why)
+	return fail("unavailable", "%s, and the editor now shows %s instead of %s" % [why, current if current != "" else "no scene", edited_path if edited_path != "" else "no scene"], "unresolved")
 
 
 ## The selected nodes of the scene `root`, as paths relative to it.
@@ -300,7 +439,7 @@ func _history(payload: Dictionary, undo: bool) -> Dictionary:
 		"version": history.get_version(),
 		"has_undo": history.has_undo(),
 		"has_redo": history.has_redo(),
-		"digest": _handlers().scene_snapshot(root)["digest"],
+		"digest": _handlers().edit_digest(root),
 		"saved": false,
 		"sha256": null,
 	}
@@ -432,8 +571,8 @@ func _batch(payload: Dictionary) -> Dictionary:
 	var disk: Dictionary = _handlers().file_snapshot(path)
 	if disk.is_empty():
 		return fail("unavailable", "%s cannot be loaded from its file" % path)
-	if _handlers().scene_snapshot(root)["digest"] != disk["digest"]:
-		return fail("conflict", "the editor holds changes to %s that its file does not; save or revert them in the editor first" % path)
+	if _handlers().edit_digest(root) != disk["digest"]:
+		return fail("conflict", "the editor holds changes to %s that its file does not; change the scene the editor holds with editor.scene.edit, or save it with editor.scene.save first" % path)
 
 	_bound = {}
 	for handle in handles.keys():
@@ -442,6 +581,35 @@ func _batch(payload: Dictionary) -> Dictionary:
 			return fail("conflict", "the node handle %s names no node of %s as the editor holds it" % [handle, path])
 		_bound[str(handle)] = node
 
+	var applied: Dictionary = _apply_all(root, operations)
+	if not applied.get("ok", false):
+		return applied
+	_commit(root, label)
+	var history: UndoRedo = _handlers().history_of(root)
+	var version: int = history.get_version()
+	# EditorInterface.save_scene() answers OK even when the file could not be
+	# written, so the save is proven by what the editor reports and the file.
+	if EditorInterface.save_scene() != OK or not (await _handlers().not_saved([path])).is_empty():
+		# The action just committed is the newest step of every history, so
+		# the editor's own undo takes exactly it; the file must then still
+		# hold the scene as it was.
+		if _step_history(history, true, false).get("ok", false) and _handlers().holds(path, root):
+			return fail("unavailable", "%s could not be saved; the change was undone, and the file holds the scene as before" % path)
+		return fail("unavailable", "%s could not be saved, and whether its file still holds the scene as before is not known" % path, "unresolved")
+	return ok({
+		"path": path,
+		"saved": true,
+		"sha256": FileAccess.get_sha256(path),
+		"action": label,
+		"version": version,
+		"digest": _handlers().edit_digest(root),
+		"transaction_id": str(payload.get("transaction_id", "")),
+	})
+
+
+## Apply every operation to `root`, recording each step; the first that cannot
+## be applied undoes everything recorded so far and is returned.
+func _apply_all(root: Node, operations: Array) -> Dictionary:
 	_steps = []
 	for index in operations.size():
 		var operation = operations[index]
@@ -454,24 +622,133 @@ func _batch(payload: Dictionary) -> Dictionary:
 			return applied
 	if _steps.is_empty():
 		return fail("invalid_input", "the batch changes nothing")
+	return {"ok": true}
 
+
+# --- live edits and saves ------------------------------------------------------
+
+
+## `editor.scene.edit`: apply operations to the scene the editor holds, unsaved
+## changes included, when it is still the scene the caller read. The whole edit
+## is one undoable action and nothing is saved.
+func _edit(payload: Dictionary) -> Dictionary:
+	var scene: String = str(payload.get("scene", ""))
+	var operations = payload.get("operations")
+	var expected: String = str(payload.get("expected_digest", ""))
+	var label: String = str(payload.get("label", "godot-mcp: editor.scene.edit"))
+	if typeof(operations) != TYPE_ARRAY or operations.is_empty() or operations.size() > MAX_OPERATIONS:
+		return fail("invalid_input", "`operations` must hold between 1 and %d operations" % MAX_OPERATIONS)
+	for index in operations.size():
+		var operation = operations[index]
+		if typeof(operation) == TYPE_DICTIONARY:
+			for field in ["parent", "node", "from", "to"]:
+				if str(operation.get(field, "")).begins_with(HANDLE_PREFIX):
+					return refused("node_handle", index, "a live edit names nodes by path")
+	var root: Node = EditorInterface.get_edited_scene_root()
+	if scene != "":
+		if not scene.begins_with("res://") or not scene.ends_with(".tscn"):
+			return fail("invalid_input", "`scene` must name a res:// text scene")
+		if not EditorInterface.get_open_scenes().has(scene):
+			return fail("not_found", "%s is not open in the editor" % scene)
+		if root == null or root.scene_file_path != scene:
+			EditorInterface.open_scene_from_path(scene)
+			root = EditorInterface.get_edited_scene_root()
+			if root == null or root.scene_file_path != scene:
+				return fail("unavailable", "the editor did not make %s the current scene" % scene)
+	elif root == null:
+		return fail("not_found", "no scene is being edited")
+	if _handlers().edit_digest(root) != expected:
+		return fail("conflict", "%s as the editor holds it is no longer the scene whose digest was read; read it again" % root.scene_file_path)
+	_bound = {}
+	var applied: Dictionary = _apply_all(root, operations)
+	if not applied.get("ok", false):
+		return applied
 	_commit(root, label)
 	var history: UndoRedo = _handlers().history_of(root)
-	var version: int = history.get_version()
-	if EditorInterface.save_scene() != OK:
-		# The action just committed is the newest step of every history, so
-		# the editor's own undo takes exactly it.
-		if _step_history(history, true, false).get("ok", false):
-			return fail("unavailable", "%s could not be saved; the change was undone" % path)
-		return fail("unavailable", "%s could not be saved and the change could not be undone" % path, "unresolved")
-	_handlers().mark_saved(root)
 	return ok({
-		"path": path,
-		"saved": true,
-		"sha256": FileAccess.get_sha256(path),
+		"scene": root.scene_file_path,
 		"action": label,
-		"version": version,
-		"digest": _handlers().scene_snapshot(root)["digest"],
+		"history_version": history.get_version(),
+		"digest": _handlers().edit_digest(root),
+		"unsaved": _handlers().unsaved(root),
+		"transaction_id": str(payload.get("transaction_id", "")),
+	})
+
+
+## `editor.scene.save`: save the declared open scenes when each file still
+## holds the bytes the server checked, and report every file the editor wrote,
+## including resources it saved with them.
+func _save(payload: Dictionary) -> Dictionary:
+	var scenes = payload.get("scenes")
+	var all: bool = bool(payload.get("all", false))
+	if typeof(scenes) != TYPE_ARRAY or scenes.is_empty():
+		return fail("invalid_input", "`scenes` must name the scenes to save")
+	var open: Array = Array(EditorInterface.get_open_scenes())
+	var declared: Array = []
+	for entry in scenes:
+		if typeof(entry) != TYPE_DICTIONARY:
+			return fail("invalid_input", "every scene to save must be an object")
+		var path: String = str(entry.get("path", ""))
+		if not path.begins_with("res://"):
+			return fail("invalid_input", "a scene that was never saved has no file; save it in the editor first")
+		if not open.has(path):
+			return fail("not_found", "%s is not open in the editor" % path)
+		var sha = entry.get("sha256")
+		if sha == null:
+			if FileAccess.file_exists(path):
+				return fail("conflict", "%s was created on disk after the server checked it" % path)
+		elif not FileAccess.file_exists(path) or FileAccess.get_sha256(path) != str(sha):
+			return fail("conflict", "%s changed on disk after the server checked it" % path)
+		declared.append(path)
+	if all:
+		var listed: Array = open.duplicate()
+		listed.sort()
+		var named: Array = declared.duplicate()
+		named.sort()
+		if listed != named:
+			return fail("conflict", "the open scenes changed after the server listed them")
+	elif declared.size() != 1:
+		return fail("invalid_input", "one scene is saved unless `all` is set")
+
+	var root: Node = EditorInterface.get_edited_scene_root()
+	if not all and (root == null or root.scene_file_path != declared[0]):
+		EditorInterface.open_scene_from_path(declared[0])
+		root = EditorInterface.get_edited_scene_root()
+		if root == null or root.scene_file_path != declared[0]:
+			return fail("unavailable", "the editor did not make %s the current scene" % declared[0])
+	# The editor announces every scene it tried to save, written or not; only
+	# a resource it reports saved was written.
+	var written: Array = []
+	var plugin: EditorPlugin = _handlers().plugin
+	var on_resource := func(resource: Resource) -> void:
+		if resource != null and resource.resource_path.begins_with("res://"):
+			written.append(resource.resource_path)
+	plugin.resource_saved.connect(on_resource)
+	var error: int = OK
+	if all:
+		EditorInterface.save_all_scenes()
+	else:
+		error = EditorInterface.save_scene()
+	plugin.resource_saved.disconnect(on_resource)
+	if error != OK:
+		return fail("unavailable", "%s could not be saved (%s); whether it was written is not known" % [declared[0], error_string(error)], "unresolved")
+	var unproven: Array = await _handlers().not_saved(declared)
+	if not unproven.is_empty():
+		return fail("unavailable", "%s may not have been saved: the editor does not report it saved and its file does not hold it as the editor does, so whether it was written is not known" % ", ".join(unproven), "unresolved")
+	root = EditorInterface.get_edited_scene_root()
+
+	var saved: Array = []
+	for path in declared:
+		saved.append({"path": path, "sha256": FileAccess.get_sha256(path)})
+	var also: Array = []
+	for path in written:
+		if not declared.has(path) and not also.any(func(entry): return entry["path"] == path):
+			also.append({"path": path})
+	return ok({
+		"saved": saved,
+		"also_saved": also,
+		"action": "godot-mcp: editor.scene.save",
+		"digest": _handlers().edit_digest(root) if root != null else "saved",
 		"transaction_id": str(payload.get("transaction_id", "")),
 	})
 

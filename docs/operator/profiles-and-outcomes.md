@@ -9,7 +9,7 @@ project. It is not a convenience setting, and the safe choice is the default.
 | --- | --- | --- |
 | `core` | Read-only discovery and analysis | You want answers about the project and nothing changed |
 | `editor` | Project authoring — files, GDScript, project settings and assets — plus the engine-backed import and canonical re-saves | You want the project changed |
-| `runtime` | Running, testing and engine-checking the project, plus the authoring reads | You want the project executed and observed |
+| `runtime` | Running, testing and engine-checking the project, in managed sessions or in a connected editor, plus the authoring reads | You want the project executed and observed |
 | `full` | The union of the three | You want all of the above |
 
 `full` is exactly `core` ∪ `editor` ∪ `runtime`, computed from the same canonical
@@ -46,10 +46,12 @@ A method enters discovery only together with its production handler, so a plane
 with no implementation contributes no listed method. The live-editor methods are
 listed in the `editor` and `full` profiles and answer `unavailable`, naming the editor
 plane, while no editor running the `godot_mcp` add-on is connected; `scene.save`, which
-must consult a live editor before it may write, answers the same way. The managed
-session methods are listed in the `runtime` and `full` profiles: a runtime read, input
-or capture answers for a running game session, and a debug command for a running
-editor session. See [Editor bridge](editor-bridge.md),
+must consult a live editor before it may write, answers the same way. The two that run
+the project in the editor, `editor.play.start` and `editor.play.stop`, are listed in the
+`runtime` and `full` profiles instead, so a `runtime` server serves the editor bridge for
+them alone. The managed session methods are listed in the `runtime` and `full` profiles:
+a runtime read, input or capture answers for a running game session, and a debug command
+for a running editor session. See [Editor bridge](editor-bridge.md),
 [Managed sessions](managed-sessions.md) and
 [ADR 0010](../contributor/adr/0010-complete-development-bridge-strategy.md).
 
@@ -76,7 +78,7 @@ The table describes what each plane would require. What this release actually bi
 | `file` | the real safe-root file boundary | project writes execute |
 | `process` | the real supervised-process boundary | Godot launches inside a containment boundary; verified against a real Godot 4.7.1 build |
 | `lsp_dap` | a managed editor session's language server and debug adapter, dialled only through that editor's launch receipt (`runtime`, `full`) | debug commands answer `unavailable` until an editor session runs |
-| `editor` | the editor bridge the `godot_mcp` add-on connects to (`editor`, `full`) | editor tools answer `unavailable` until an add-on is connected; `scene.save`, which must consult a live editor first, answers the same way |
+| `editor` | the editor bridge the `godot_mcp` add-on connects to (`editor`, `full`, and `runtime` for `editor.play.start` and `editor.play.stop`) | editor tools answer `unavailable` until an add-on is connected; `scene.save`, which must consult a live editor first, answers the same way |
 | `runtime` | a managed game session's runtime probe (`runtime`, `full`) | runtime reads, input and captures answer `unavailable` while no game session runs |
 
 Every boundary is real in the profiles that serve it; a profile that does not serve a

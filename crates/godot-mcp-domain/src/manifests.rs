@@ -5,9 +5,10 @@
 //! descriptors that name it. Because the catalog contains implemented methods
 //! only, a manifest can never advertise a method without a production handler.
 //!
-//! The version 0.1 manifests are retained verbatim by
-//! [`historical_manifest_v0_1`]. They are the frozen first-release contract, are
-//! not rewritten, and are no longer what discovery serves.
+//! The version 0.1 and 0.2 manifests are retained verbatim by
+//! [`historical_manifest_v0_1`] and [`historical_manifest_v0_2`]. They are the
+//! frozen contracts of earlier releases, are not rewritten, and are no longer
+//! what discovery serves.
 
 use std::collections::BTreeSet;
 
@@ -41,7 +42,7 @@ const CORE_RESOURCES: &[&str] = &[
     "godot-mcp://resources/scheduler",
 ];
 
-const RUNTIME_RESOURCES: &[&str] = &["godot-mcp://artifacts/{artifact_id}"];
+const ARTIFACT_RESOURCES: &[&str] = &["godot-mcp://artifacts/{artifact_id}"];
 
 fn strings(values: &[&str]) -> BTreeSet<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
@@ -73,13 +74,27 @@ pub fn profile_capabilities(profile: CapabilityProfile) -> BTreeSet<Capability> 
     granted.iter().copied().collect()
 }
 
+/// The resources a contract 0.3 profile lists.
 fn profile_resources(profile: CapabilityProfile) -> BTreeSet<String> {
+    let mut resources = resources_v0_1_v0_2(profile);
+    // Contract 0.3.0: the live editor's screenshots are artifacts too.
+    if profile == CapabilityProfile::Editor {
+        resources.extend(strings(ARTIFACT_RESOURCES));
+    }
+    resources
+}
+
+/// The resources the frozen 0.1 and 0.2 profiles list: artifacts belong to the
+/// profiles that run the project. Kept apart from [`profile_resources`] so a
+/// later contract can change its resources without rewriting a released
+/// manifest.
+fn resources_v0_1_v0_2(profile: CapabilityProfile) -> BTreeSet<String> {
     let mut resources = strings(CORE_RESOURCES);
     if matches!(
         profile,
         CapabilityProfile::Runtime | CapabilityProfile::Full
     ) {
-        resources.extend(strings(RUNTIME_RESOURCES));
+        resources.extend(strings(ARTIFACT_RESOURCES));
     }
     resources
 }
@@ -187,6 +202,120 @@ pub fn historical_manifest_v0_1(profile: CapabilityProfile) -> ProfileManifest {
         capabilities: profile_capabilities(profile),
         tools,
         bootstrap_tools: BTreeSet::new(),
-        resources: profile_resources(profile),
+        resources: resources_v0_1_v0_2(profile),
+    }
+}
+
+/// Contract 0.2 authoring reads, listed by every profile except `core`.
+const V0_2_AUTHORING_READ_TOOLS: &[&str] = &[
+    "asset.status",
+    "file.get",
+    "project.files.list",
+    "project.settings.get",
+];
+
+/// Contract 0.2 tools listed by `editor` and `full` only.
+const V0_2_EDITOR_TOOLS: &[&str] = &[
+    "asset.delete",
+    "asset.put",
+    "editor.addon.install",
+    "editor.addon.reload",
+    "editor.addon.remove",
+    "editor.addon.status",
+    "editor.addon.update",
+    "editor.redo",
+    "editor.scene.open",
+    "editor.scene.tree.get",
+    "editor.selection.set",
+    "editor.status.get",
+    "editor.types.get",
+    "editor.undo",
+    "file.create",
+    "file.delete",
+    "file.move",
+    "file.patch",
+    "project.import.run",
+    "project.settings.patch",
+    "project.uid.update",
+    "resource.batch.apply",
+    "resource.create",
+    "resource.update",
+    "scene.batch.apply",
+    "scene.create",
+    "scene.save",
+    "script.create",
+    "script.patch",
+];
+
+/// Contract 0.2 tools listed by `runtime` and `full` only.
+const V0_2_RUNTIME_TOOLS: &[&str] = &[
+    "debug.command",
+    "debug.session.get",
+    "editor.session.start",
+    "editor.session.stop",
+    "export.presets.list",
+    "input.action.send",
+    "input.key.send",
+    "input.mouse.send",
+    "input.sequence.send",
+    "project.export",
+    "project.export.cancel",
+    "project.export.status",
+    "project.run",
+    "project.run.logs",
+    "project.run.start",
+    "project.run.status",
+    "project.run.stop",
+    "project.test",
+    "runtime.properties.get",
+    "runtime.recording.capture",
+    "runtime.screenshot.capture",
+    "runtime.signals.get",
+    "runtime.tree.get",
+    "runtime.ui.get",
+    "script.check",
+];
+
+/// Contract 0.2 tools listed by every profile before a project is bound.
+const V0_2_BOOTSTRAP_TOOLS: &[&str] = &[
+    "capabilities.get",
+    "health.get",
+    "project.bind",
+    "workspace.projects.list",
+];
+
+/// Contract 0.2 bootstrap tools listed by `editor` and `full` only.
+const V0_2_EDITOR_BOOTSTRAP_TOOLS: &[&str] = &["project.create"];
+
+/// The frozen version 0.2 manifest for a profile, exactly as released in
+/// godot-mcp 0.1.0 through 0.1.2.
+///
+/// Contract 0.2 introduced implementation-backed discovery. Its manifests are
+/// kept verbatim so their committed artifacts remain verifiable; discovery now
+/// serves [`canonical_manifest`].
+#[must_use]
+pub fn historical_manifest_v0_2(profile: CapabilityProfile) -> ProfileManifest {
+    let mut tools = strings(V0_1_CORE_TOOLS);
+    let mut bootstrap_tools = strings(V0_2_BOOTSTRAP_TOOLS);
+    if profile != CapabilityProfile::Core {
+        tools.extend(strings(V0_2_AUTHORING_READ_TOOLS));
+    }
+    if matches!(profile, CapabilityProfile::Editor | CapabilityProfile::Full) {
+        tools.extend(strings(V0_2_EDITOR_TOOLS));
+        bootstrap_tools.extend(strings(V0_2_EDITOR_BOOTSTRAP_TOOLS));
+    }
+    if matches!(
+        profile,
+        CapabilityProfile::Runtime | CapabilityProfile::Full
+    ) {
+        tools.extend(strings(V0_2_RUNTIME_TOOLS));
+    }
+    ProfileManifest {
+        schema_version: ContractVersion::V0_2_0,
+        profile,
+        capabilities: profile_capabilities(profile),
+        tools,
+        bootstrap_tools,
+        resources: resources_v0_1_v0_2(profile),
     }
 }

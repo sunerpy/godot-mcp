@@ -1,13 +1,14 @@
-//! Acceptance at the MCP surface: while a live editor is connected,
-//! `project.godot` belongs to it.
+//! Contract 0.3 acceptance at the MCP surface: while a live editor is
+//! connected, `project.godot` belongs to it.
 //!
 //! A running Godot editor keeps the project settings in memory and writes them
 //! back whenever it saves them, so a headless write underneath it is silently
 //! lost. These cases pin what the server owns against a scripted plugin that
 //! speaks the shipped bridge protocol: a settings patch is carried out by the
 //! editor, its answer is computed from the bytes the editor saved, and no
-//! headless writer touches `project.godot` while an editor is connected. No
-//! real editor runs here.
+//! headless writer touches `project.godot` while an editor is connected. What
+//! a real editor does is exercised against exact Godot builds by the live
+//! editor suite.
 
 #![cfg(target_os = "linux")]
 

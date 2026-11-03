@@ -1,21 +1,28 @@
 @tool
 extends EditorPlugin
-## godot-mcp editor plugin: owns the bridge client and its status dock, and
-## removes both when disabled, so enabling, reloading and disabling leave
-## nothing behind in the editor.
+## godot-mcp editor plugin: owns the bridge client, its status dock and the
+## log capture, and removes all three when disabled, so enabling, reloading
+## and disabling leave nothing behind in the editor.
 
 const BridgeClient = preload("bridge_client.gd")
+const EditorLog = preload("editor_log.gd")
 const Handlers = preload("editor_handlers.gd")
 const StatusDock = preload("status_dock.gd")
 
 var _client: Node = null
 var _dock: Control = null
+var _log = null
 
 
 func _enter_tree() -> void:
+	# Capture starts before the bridge dials, so the session it describes
+	# already says whether the log can be read.
+	_log = EditorLog.new()
+	_log.start()
 	_client = BridgeClient.new()
 	_client.name = "GodotMcpBridge"
 	_client.handlers = Handlers.new(self)
+	_client.handlers.editor_log = _log
 	_client.client_version = Handlers.PLUGIN_VERSION
 	add_child(_client)
 	scene_saved.connect(_on_scene_saved)
@@ -45,3 +52,6 @@ func _exit_tree() -> void:
 		remove_control_from_docks(_dock)
 		_dock.free()
 		_dock = null
+	if _log != null:
+		_log.stop()
+		_log = null

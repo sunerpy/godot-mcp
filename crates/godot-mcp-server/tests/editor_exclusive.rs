@@ -1,5 +1,5 @@
-//! Acceptance at the MCP surface: a headless writer of the editor's import and
-//! UID caches never runs beside a connected editor.
+//! Contract 0.3 acceptance at the MCP surface: a headless writer of the
+//! editor's import and UID caches never runs beside a connected editor.
 //!
 //! `project.import.run` and `project.uid.update` start Godot against the
 //! project, and a running editor rewrites the same `.godot/` caches. While an
@@ -176,8 +176,8 @@ fn headless_cache_writers_refuse_while_an_editor_is_connected() {
         let refused = session.call_tool(id, tool, arguments);
         assert_eq!(error_code(&refused), json!("conflict"), "{tool}: {refused}");
         assert!(
-            refused.to_string().contains("close the editor first"),
-            "{tool}: the refusal says how to run it: {refused}"
+            refused.to_string().contains("editor.filesystem.scan"),
+            "{tool}: the refusal names the tool the editor imports with: {refused}"
         );
     }
     assert_eq!(launches(&argv_log), 0, "no Godot was started");

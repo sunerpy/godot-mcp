@@ -40,6 +40,11 @@ visibility, a node's properties as tagged values, a node's signals and connectio
 a count of every later emission), and the visible controls with their rectangles, text and focus.
 Every answer names the probe's scene revision and the frame it was taken on.
 
+`runtime.performance.get` reads the game's performance monitors — frame rate and frame times,
+object and node counts, memory, rendering, physics, audio and navigation figures — by the names
+your Godot build gives them, such as `TIME_FPS` and `OBJECT_NODE_COUNT`, with the project's own
+custom monitors. Name `monitors` to read only those; a name the build does not have is refused.
+
 ## Capture
 
 `runtime.screenshot.capture` captures the root viewport as a PNG; `runtime.recording.capture`

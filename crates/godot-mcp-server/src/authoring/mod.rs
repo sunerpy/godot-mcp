@@ -18,7 +18,7 @@
 //! static parser before publication; an engine verdict is `script.check`.
 
 mod addon;
-mod assets;
+pub(crate) mod assets;
 mod base64;
 mod diff;
 mod files;

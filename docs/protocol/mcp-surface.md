@@ -67,9 +67,10 @@ Four resources are always present:
 * `godot-mcp://resources/project`
 * `godot-mcp://resources/scheduler`
 
-Profiles that can produce binary results add `godot-mcp://artifacts/{artifact_id}`, whose
-identifier is opaque and whose every read is bound to project generation, principal,
-session, retention and size limits. See [Artifacts](../operator/artifacts.md).
+Profiles that can produce binary results — `editor`, `runtime` and `full` — add
+`godot-mcp://artifacts/{artifact_id}`, whose identifier is opaque and whose every read is
+bound to project generation, principal, session, retention and size limits. See
+[Artifacts](../operator/artifacts.md).
 
 ## Progress and cancellation
 

@@ -28,7 +28,7 @@ extends Node
 const BridgeClient = preload("bridge_client.gd")
 const VariantCodec = preload("variant_codec.gd")
 
-const PROBE_VERSION := "0.2.0"
+const PROBE_VERSION := "0.3.0"
 const RENDEZVOUS_ENV := "GODOT_MCP_RUNTIME_RENDEZVOUS"
 const ORPHAN_SECONDS := 15.0
 const MAX_NODES := 2000
@@ -55,6 +55,7 @@ const READS := [
 	"runtime.capture.recording",
 	"runtime.capture.screenshot",
 	"runtime.input.state",
+	"runtime.performance",
 	"runtime.properties",
 	"runtime.signals",
 	"runtime.tree",
@@ -193,6 +194,8 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return _signals(payload)
 		"runtime.ui":
 			return _ui(payload)
+		"runtime.performance":
+			return _performance(payload)
 		"runtime.input.state":
 			return ok(_observed({"held": _held_snapshot()}))
 		"runtime.input.send":
@@ -398,6 +401,39 @@ func _signals(payload: Dictionary) -> Dictionary:
 			"emissions": _emissions.get(key, null),
 		})
 	return ok(_observed({"node": str(node.get_path()), "signals": signals}))
+
+
+## `runtime.performance`: every monitor of this build's Performance.Monitor
+## enum by its name there, and the project's custom monitors, or only the
+## named `monitors`. A value that is not a finite number is answered as null.
+func _performance(payload: Dictionary) -> Dictionary:
+	var builtin := {}
+	for name in ClassDB.class_get_enum_constants("Performance", "Monitor"):
+		if name != "MONITOR_MAX":
+			builtin[name] = ClassDB.class_get_integer_constant("Performance", name)
+	var custom_names: Array = []
+	for name in Performance.get_custom_monitor_names():
+		custom_names.append(str(name))
+	var wanted = payload.get("monitors")
+	if wanted != null:
+		for name in wanted:
+			if not builtin.has(str(name)) and not custom_names.has(str(name)):
+				return fail("invalid_input", "%s is not a performance monitor of this build or project" % str(name))
+	var monitors := {}
+	for name in builtin:
+		if wanted == null or wanted.has(name):
+			monitors[name] = _finite(Performance.get_monitor(builtin[name]))
+	var custom := {}
+	for name in custom_names:
+		if wanted == null or wanted.has(name):
+			custom[name] = _finite(Performance.get_custom_monitor(StringName(name)))
+	return ok(_observed({"monitors": monitors, "custom": custom}))
+
+
+static func _finite(value):
+	if (value is float or value is int) and is_finite(float(value)):
+		return value
+	return null
 
 
 func _ui(payload: Dictionary) -> Dictionary:

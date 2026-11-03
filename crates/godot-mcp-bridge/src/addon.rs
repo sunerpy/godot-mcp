@@ -35,16 +35,40 @@ pub const FILES: &[AddonFile] = &[
         bytes: include_bytes!("../addon/godot_mcp/bridge_codec.gd"),
     },
     AddonFile {
+        name: "capture.gd",
+        bytes: include_bytes!("../addon/godot_mcp/capture.gd"),
+    },
+    AddonFile {
         name: "command_queue.gd",
         bytes: include_bytes!("../addon/godot_mcp/command_queue.gd"),
+    },
+    AddonFile {
+        name: "editor_config.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editor_config.gd"),
     },
     AddonFile {
         name: "editor_handlers.gd",
         bytes: include_bytes!("../addon/godot_mcp/editor_handlers.gd"),
     },
     AddonFile {
+        name: "editor_log.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editor_log.gd"),
+    },
+    AddonFile {
+        name: "filesystem.gd",
+        bytes: include_bytes!("../addon/godot_mcp/filesystem.gd"),
+    },
+    AddonFile {
         name: "mutation_handlers.gd",
         bytes: include_bytes!("../addon/godot_mcp/mutation_handlers.gd"),
+    },
+    AddonFile {
+        name: "node_reader.gd",
+        bytes: include_bytes!("../addon/godot_mcp/node_reader.gd"),
+    },
+    AddonFile {
+        name: "play.gd",
+        bytes: include_bytes!("../addon/godot_mcp/play.gd"),
     },
     AddonFile {
         name: "plugin.cfg",
@@ -55,12 +79,20 @@ pub const FILES: &[AddonFile] = &[
         bytes: include_bytes!("../addon/godot_mcp/plugin.gd"),
     },
     AddonFile {
+        name: "preferences.gd",
+        bytes: include_bytes!("../addon/godot_mcp/preferences.gd"),
+    },
+    AddonFile {
         name: "project_settings_apply.gd",
         bytes: include_bytes!("../addon/godot_mcp/project_settings_apply.gd"),
     },
     AddonFile {
         name: "reloader.gd",
         bytes: include_bytes!("../addon/godot_mcp/reloader.gd"),
+    },
+    AddonFile {
+        name: "shortcuts.gd",
+        bytes: include_bytes!("../addon/godot_mcp/shortcuts.gd"),
     },
     AddonFile {
         name: "status_dock.gd",
@@ -79,6 +111,32 @@ pub const FILES: &[AddonFile] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_plugin_carries_the_protected_settings_verbatim() {
+        let shipped = FILES
+            .iter()
+            .find(|file| file.name == "preferences.gd")
+            .expect("preferences.gd ships");
+        let text = std::str::from_utf8(shipped.bytes).expect("GDScript is UTF-8");
+        assert!(
+            text.contains(&godot_mcp_domain::editor_preferences::gdscript_table()),
+            "preferences.gd must carry the lists godot-mcp-domain renders, unchanged"
+        );
+    }
+
+    #[test]
+    fn the_plugin_holds_shortcut_changes_to_the_server_bounds() {
+        let shipped = FILES
+            .iter()
+            .find(|file| file.name == "shortcuts.gd")
+            .expect("shortcuts.gd ships");
+        let text = std::str::from_utf8(shipped.bytes).expect("GDScript is UTF-8");
+        assert!(
+            text.contains(&godot_mcp_domain::editor_shortcuts::gdscript_bounds()),
+            "shortcuts.gd must carry the bounds godot-mcp-domain renders, unchanged"
+        );
+    }
 
     #[test]
     fn every_add_on_file_ships_and_nothing_else_does() {

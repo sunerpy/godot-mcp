@@ -480,7 +480,9 @@ remove deletes only owned bytes.
 
 ### 8.2 Main-thread dispatcher
 
-Networking only parses bounded frames and queues validated envelopes. A deferred main-thread drain:
+Networking only parses bounded frames and queues validated envelopes. A main-thread drain, run
+from `_process` right after the poll that received them and never while deferred calls are
+flushed:
 
 1. rechecks deadline, cancellation and project identity;
 2. validates method capability and typed arguments;

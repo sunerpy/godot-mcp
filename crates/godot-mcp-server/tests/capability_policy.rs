@@ -616,7 +616,7 @@ fn capability_policy_failure_paths() {
         "an unreadable survivor state must never reach any boundary"
     );
 
-    // 11. The editor plane is handled honestly. Under contract 0.2 the matrix is
+    // 11. The editor plane is handled honestly. Since contract 0.2 the matrix is
     //     the catalog: the live-editor methods sit on the editor boundary, which
     //     the shipped `serve` assembly backs with the editor bridge. This
     //     harness compiles no editor boundary in, so every editor-boundary row —
@@ -644,11 +644,27 @@ fn capability_policy_failure_paths() {
         editor_rows,
         BTreeSet::from([
             "editor.addon.reload",
+            "editor.filesystem.scan",
+            "editor.log.get",
+            "editor.main_screen.set",
+            "editor.node.get",
+            "editor.play.start",
+            "editor.play.stop",
+            "editor.preferences.get",
+            "editor.preferences.set",
             "editor.redo",
+            "editor.scene.close",
+            "editor.scene.edit",
             "editor.scene.open",
+            "editor.scene.save",
             "editor.scene.tree.get",
+            "editor.screenshot.capture",
+            "editor.script.open",
             "editor.selection.set",
+            "editor.shortcuts.get",
+            "editor.shortcuts.set",
             "editor.types.get",
+            "editor.types.search",
             "editor.undo",
         ]),
         "exactly the live-editor methods sit on the editor boundary"

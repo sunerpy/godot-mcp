@@ -3,8 +3,8 @@ extends RefCounted
 ## The main-thread dispatcher.
 ##
 ## The network side only parses bounded frames and enqueues validated request
-## envelopes here. `drain()` runs from a deferred main-thread call and, for each
-## queued request in order:
+## envelopes here. `drain()` runs from the client's `_process`, right after the
+## poll that received the requests, and, for each queued request in order:
 ##
 ## 1. rechecks that it runs on the main thread, that the request's deadline has
 ##    not passed and that it was not cancelled;

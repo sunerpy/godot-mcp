@@ -70,6 +70,10 @@ pub enum FakeAnswer {
         within: Duration,
         marker: Option<PathBuf>,
     },
+    /// Answer with this payload after `delay`, reading nothing meanwhile: a
+    /// plugin whose main thread is busy with the request, so it answers no
+    /// heartbeat until the request is done.
+    PayloadAfter { delay: Duration, payload: Value },
     /// Never answer.
     Ignore,
 }
@@ -83,6 +87,12 @@ pub struct FakePluginScript {
     pub answers: BTreeMap<String, FakeAnswer>,
     /// Whether heartbeats are answered.
     pub answer_heartbeats: bool,
+    /// The plugin version the plugin reports.
+    pub plugin_version: String,
+    /// The Godot version the plugin reports.
+    pub godot_version: String,
+    /// Further fields of the plugin's `bridge.describe_session` answer.
+    pub description: serde_json::Map<String, Value>,
 }
 
 impl FakePluginScript {
@@ -93,7 +103,25 @@ impl FakePluginScript {
             methods: methods.iter().map(|method| (*method).to_owned()).collect(),
             answers: BTreeMap::new(),
             answer_heartbeats: true,
+            plugin_version: "0.2.0".to_owned(),
+            godot_version: "4.7.1.stable.fake".to_owned(),
+            description: serde_json::Map::new(),
         }
+    }
+
+    /// Report `plugin` as the plugin's version and `godot` as the editor's.
+    #[must_use]
+    pub fn versions(mut self, plugin: &str, godot: &str) -> Self {
+        plugin.clone_into(&mut self.plugin_version);
+        godot.clone_into(&mut self.godot_version);
+        self
+    }
+
+    /// Add `key` to the plugin's session description.
+    #[must_use]
+    pub fn describing(mut self, key: &str, value: Value) -> Self {
+        self.description.insert(key.to_owned(), value);
+        self
     }
 
     /// Script `method`'s answer.
@@ -146,11 +174,11 @@ impl FakeEditorPlugin {
     }
 }
 
-fn identity() -> PluginIdentity {
+fn identity(script: &FakePluginScript) -> PluginIdentity {
     PluginIdentity {
-        plugin_version: "0.2.0".to_owned(),
+        plugin_version: script.plugin_version.clone(),
         protocol_version: PROTOCOL_VERSION.to_owned(),
-        godot_version: "4.7.1.stable.fake".to_owned(),
+        godot_version: script.godot_version.clone(),
     }
 }
 
@@ -186,7 +214,7 @@ fn serve(
     let head = read_head(&mut stream, &mut buffer)?;
     parse_server_handshake(&head, key).map_err(|error| format!("upgrade answer: {error}"))?;
 
-    let plugin = identity();
+    let plugin = identity(script);
     // A nonce is single-use per server launch, so every dial presents a new one.
     static DIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = format!(
@@ -214,11 +242,16 @@ fn serve(
         };
         match message.kind() {
             MessageKind::Heartbeat => {
-                if script.answer_heartbeats {
-                    send(
+                // A reply that meets a closed socket ends the session: the
+                // server closed it while heartbeats were still queued.
+                if script.answer_heartbeats
+                    && send(
                         &mut stream,
                         &Envelope::heartbeat_reply(&plugin, message.message_id()),
-                    )?;
+                    )
+                    .is_err()
+                {
+                    return Ok(());
                 }
             }
             MessageKind::Request => {
@@ -236,7 +269,15 @@ fn serve(
                             &plugin,
                             message.message_id(),
                             MutationStatus::NotStarted,
-                            &json!({ "methods": script.methods, "plugin_version": "0.2.0" }),
+                            &Value::Object({
+                                let mut description = script.description.clone();
+                                description.insert("methods".to_owned(), json!(script.methods));
+                                description.insert(
+                                    "plugin_version".to_owned(),
+                                    json!(script.plugin_version),
+                                );
+                                description
+                            }),
                         ),
                     )?;
                     continue;
@@ -386,6 +427,22 @@ fn serve(
                                 ),
                             )?;
                         }
+                    }
+                    FakeAnswer::PayloadAfter { delay, payload } => {
+                        std::thread::sleep(delay);
+                        send(
+                            &mut stream,
+                            &Envelope::result(
+                                &plugin,
+                                message.message_id(),
+                                if mutation {
+                                    MutationStatus::Committed
+                                } else {
+                                    MutationStatus::NotStarted
+                                },
+                                &payload,
+                            ),
+                        )?;
                     }
                     FakeAnswer::Ignore => {}
                 }

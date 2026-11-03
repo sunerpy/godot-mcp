@@ -51,16 +51,19 @@ pub enum ContractVersion {
     #[serde(rename = "0.1.0")]
     V0_1_0,
     /// Implementation-backed discovery: a profile lists only implemented methods.
-    #[default]
     #[serde(rename = "0.2.0")]
     V0_2_0,
+    /// Live editor operability: editor-owned saves, captures, scans, play and settings.
+    #[default]
+    #[serde(rename = "0.3.0")]
+    V0_3_0,
 }
 
 impl ContractVersion {
     /// Current version marker.
     #[must_use]
     pub const fn current() -> Self {
-        Self::V0_2_0
+        Self::V0_3_0
     }
 
     /// Stable textual representation.
@@ -68,7 +71,8 @@ impl ContractVersion {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::V0_1_0 => "0.1.0",
-            Self::V0_2_0 => CONTRACT_VERSION,
+            Self::V0_2_0 => "0.2.0",
+            Self::V0_3_0 => CONTRACT_VERSION,
         }
     }
 }
