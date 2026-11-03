@@ -28,6 +28,7 @@ use rmcp::ServiceExt;
 use crate::artifacts::ArtifactStore;
 use crate::audit::{AuditFailurePolicy, AuditLog, AuditSinkConfig};
 use crate::authoring::{AuthoringRuntime, AuthoringRuntimeConfig, register_authoring_tools};
+use crate::capture::CaptureSink;
 use crate::core::{CoreLimits, CoreSession, register_core_tools};
 use crate::diagnostics::DiagnosticsContext;
 use crate::editor::boundary::BridgeEditorBoundary;
@@ -308,12 +309,15 @@ impl ProjectRuntime {
 
         let held_for_router = held.clone();
         let held_for_engine = held.clone();
-        // A profile with editor tools serves the live editor: the bridge
-        // listens on loopback and writes its private rendezvous file now, so a
-        // plugin can connect as soon as the server is up.
+        // A profile that lists any tool the live editor answers serves the
+        // editor: the bridge listens on loopback and writes its private
+        // rendezvous file now, so a plugin can connect as soon as the server is
+        // up. The `runtime` profile serves it for the editor.play tools alone.
         let editor_bridge = if canonical_manifest(options.profile)
-            .capabilities
-            .contains(&godot_mcp_domain::contracts::Capability::EditorMutate)
+            .tools
+            .iter()
+            .filter_map(|tool| godot_mcp_domain::catalog::descriptor(tool))
+            .any(|descriptor| descriptor.needs == godot_mcp_domain::catalog::ToolNeeds::LiveEditor)
         {
             Some(
                 EditorBridge::start(
@@ -330,16 +334,23 @@ impl ProjectRuntime {
         } else {
             None
         };
-        let editor_boundary: Box<dyn crate::effect::boundary::EditorEffectBoundary> =
-            match &editor_bridge {
-                Some(bridge) => Box::new(BridgeEditorBoundary::new(Arc::clone(bridge))),
-                None => Box::new(UnavailableBoundaries),
-            };
         let limit_policy = LimitPolicy::from_config(&options.limits);
         let artifacts = Arc::new(
             ArtifactStore::open(&state_dir.join("artifacts"), options.observed_at_unix_ms)
                 .map_err(StdioError::Analysis)?,
         );
+        let editor_boundary: Box<dyn crate::effect::boundary::EditorEffectBoundary> =
+            match &editor_bridge {
+                Some(bridge) => Box::new(
+                    BridgeEditorBoundary::new(Arc::clone(bridge)).with_captures(CaptureSink {
+                        store: Arc::clone(&artifacts),
+                        project: project.clone(),
+                        retention_ms: limit_policy.artifact_retention_ms,
+                        max_range_bytes: limit_policy.max_range_bytes,
+                    }),
+                ),
+                None => Box::new(UnavailableBoundaries),
+            };
         if let Some(sessions) = &sessions {
             sessions.attach_export_artifacts(ExportArtifacts {
                 store: Arc::clone(&artifacts),
@@ -498,6 +509,7 @@ impl ProjectRuntime {
             workspace: Arc::clone(&workspace),
             uploads_dir: state_dir.join("uploads"),
             generation: INITIAL_PROJECT_GENERATION,
+            editor: editor_bridge.clone(),
         }));
         register_authoring_tools(&mut kernel, authoring)
             .map_err(|error| StdioError::Analysis(error.to_string()))?;
@@ -509,6 +521,7 @@ impl ProjectRuntime {
                     router: Arc::clone(&router),
                     workspace: Arc::clone(&workspace),
                     root: lease.safe_root(),
+                    trust: options.process.trust,
                 }),
             )
             .map_err(|error| StdioError::Analysis(error.to_string()))?;

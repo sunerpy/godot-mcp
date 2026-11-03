@@ -16,3 +16,4 @@ than only what was decided.
 | [0008](0008-one-strong-isolation-release-gate.md) | One strong Docker isolation check satisfies the release plan |
 | [0009](0009-aws-lc-rs-jwt-backend.md) | JWT uses aws-lc-rs and removes the vulnerable rsa dependency |
 | [0010](0010-complete-development-bridge-strategy.md) | Complete development restores editor/runtime with a default GDScript bridge and optional gdext backend |
+| [0011](0011-live-editor-operability.md) | The live editor is operated through typed tools and one fixed table of editing calls |

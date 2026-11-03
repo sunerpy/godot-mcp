@@ -47,6 +47,10 @@ pub(crate) fn one_of(variants: Vec<Value>) -> Value {
 
 /// The `$defs` name of a value a tool may write.
 const WRITABLE_VALUE: &str = "WritableGodotValue";
+/// The definition [`plain_value`] refers to.
+const PLAIN_VALUE: &str = "PlainGodotValue";
+/// The `$defs` name of one argument of a batch's `call_method`.
+pub(crate) const CALL_ARGUMENT: &str = "CallArgument";
 
 /// One segment of a normalized project path: not empty, not `.` or `..`,
 /// and without a slash or a backslash.
@@ -71,7 +75,14 @@ pub(crate) fn writable_value() -> Value {
     json!({ "$ref": format!("#/$defs/{WRITABLE_VALUE}") })
 }
 
-/// The definitions [`writable_value`] refers to.
+/// A tagged contract value that refers to nothing: any variant but a resource
+/// or a live object reference, at any depth, as an editor setting holds. The
+/// tool schema that uses it carries [`value_definitions`] as its `$defs`.
+pub(crate) fn plain_value() -> Value {
+    json!({ "$ref": format!("#/$defs/{PLAIN_VALUE}") })
+}
+
+/// The definitions [`writable_value`] and [`plain_value`] refer to.
 ///
 /// They are generated from the [`GodotValue`] type the handler parses, so
 /// each variant name and payload shape is the one the handler accepts. The
@@ -118,6 +129,23 @@ fn generated_definitions() -> Map<String, Value> {
             variant
         })
         .collect();
+    let mut plain: Vec<Value> = variants
+        .iter()
+        .filter(|variant| variant["properties"]["type"]["const"] != json!("resource"))
+        .cloned()
+        .collect();
+    plain
+        .iter_mut()
+        .for_each(|variant| refer_root_to(variant, PLAIN_VALUE));
+    definitions.insert(
+        PLAIN_VALUE.to_owned(),
+        json!({
+            "description": "A tagged value {type, value} that refers to nothing: `type` names \
+                            the variant and `value` is that variant's payload. Neither a \
+                            resource nor a live object reference.",
+            "oneOf": plain
+        }),
+    );
     definitions.insert(
         WRITABLE_VALUE.to_owned(),
         json!({
@@ -125,6 +153,36 @@ fn generated_definitions() -> Map<String, Value> {
                             is that variant's payload. A live object reference cannot be \
                             written; name a resource by its res:// path.",
             "oneOf": variants
+        }),
+    );
+    // Only a `call_method` argument may also be a new embedded resource.
+    definitions.insert(
+        CALL_ARGUMENT.to_owned(),
+        json!({
+            "description": "A tagged value, or {type: \"new_resource\", value: {class}}: a new \
+                            resource embedded in the edit, of one of the listed classes.",
+            "oneOf": [
+                { "$ref": format!("#/$defs/{WRITABLE_VALUE}") },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["type", "value"],
+                    "properties": {
+                        "type": { "const": "new_resource" },
+                        "value": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["class"],
+                            "properties": {
+                                "class": {
+                                    "type": "string",
+                                    "enum": godot_mcp_domain::editing_methods::NEW_RESOURCE_CLASSES
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
         }),
     );
     let mut definitions = Value::Object(definitions);
@@ -135,8 +193,25 @@ fn generated_definitions() -> Map<String, Value> {
     }
 }
 
-/// Point the generated schema's references to its root at the writable value
-/// definition, and bound every 32-bit integer.
+/// Point the generated schema's references to its root at `definition`.
+fn refer_root_to(schema: &mut Value, definition: &str) {
+    match schema {
+        Value::Object(map) => {
+            if map.get("$ref") == Some(&json!("#")) {
+                map.insert("$ref".to_owned(), json!(format!("#/$defs/{definition}")));
+            }
+            map.values_mut()
+                .for_each(|value| refer_root_to(value, definition));
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| refer_root_to(item, definition)),
+        _ => {}
+    }
+}
+
+/// Point the generated schema's remaining references to its root at the
+/// writable value definition, and bound every 32-bit integer.
 fn retarget(schema: &mut Value) {
     match schema {
         Value::Object(map) => {

@@ -18,7 +18,7 @@
 //! static parser before publication; an engine verdict is `script.check`.
 
 mod addon;
-mod assets;
+pub(crate) mod assets;
 mod base64;
 mod diff;
 mod files;
@@ -43,6 +43,7 @@ use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::audit::RequestAudit;
+use crate::editor::bridge::EditorBridge;
 use crate::effect::{FileEffectIntent, PlannedWrite};
 use crate::idempotency::TransportAuthMode;
 use crate::idempotency::replay::replay_outcome;
@@ -132,6 +133,9 @@ pub(crate) struct AuthoringRuntimeConfig {
     pub(crate) workspace: Arc<WorkspaceCoordinator>,
     pub(crate) uploads_dir: PathBuf,
     pub(crate) generation: u64,
+    /// The live-editor bridge, when the profile serves the editor plane. A
+    /// connected editor owns `project.godot` and applies settings changes.
+    pub(crate) editor: Option<Arc<EditorBridge>>,
 }
 
 /// The shared runtime behind every authoring handler.
@@ -141,6 +145,7 @@ pub(crate) struct AuthoringRuntime {
     workspace: Arc<WorkspaceCoordinator>,
     uploads: assets::Uploads,
     generation: u64,
+    editor: Option<Arc<EditorBridge>>,
 }
 
 impl AuthoringRuntime {
@@ -151,6 +156,7 @@ impl AuthoringRuntime {
             workspace: config.workspace,
             uploads: assets::Uploads::new(config.uploads_dir),
             generation: config.generation,
+            editor: config.editor,
         }
     }
 

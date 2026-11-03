@@ -733,14 +733,31 @@ impl OutcomeRouter {
                     "unsaved".to_owned(),
                     open.unsaved.map_or(GodotValue::Null, GodotValue::Bool),
                 );
-                return Err(RouteRefusal::Precondition(OutcomeError::new(
-                    ErrorKind::Conflict,
+                let message = if write.path == crate::editor::boundary::PROJECT_SETTINGS {
+                    "project.godot belongs to the connected editor, which writes its settings \
+                     back whenever it saves them; change settings through \
+                     project.settings.patch, which the editor carries out, or disable the \
+                     godot_mcp plugin in the editor first. Nothing was written."
+                        .to_owned()
+                } else if write.path.ends_with(".gd") {
+                    format!(
+                        "{} is open in the connected editor, whose copy may hold edits the \
+                         file does not; if the file was changed outside the editor, run \
+                         editor.filesystem.scan to reload it there, otherwise save or close it \
+                         in the editor first. Nothing was written.",
+                        write.path
+                    )
+                } else {
                     format!(
                         "{} is open in the connected editor; change a scene through \
                          scene.batch.apply, which edits it there, or close it in the editor \
                          first. Nothing was written.",
                         write.path
-                    ),
+                    )
+                };
+                return Err(RouteRefusal::Precondition(OutcomeError::new(
+                    ErrorKind::Conflict,
+                    message,
                     false,
                     details,
                 )));
@@ -1122,8 +1139,12 @@ impl OutcomeRouter {
         // A request built against a named workspace revision is refused here,
         // inside the serialized effect lane, unless the workspace is still at
         // exactly that revision. A stale snapshot proves no revision at all.
-        if let RouteEffect::File(intent) = &effect
-            && let Some(expected) = intent.expected_revision
+        let expected_revision = match &effect {
+            RouteEffect::File(intent) => intent.expected_revision,
+            RouteEffect::Editor { intent, .. } => intent.expected_revision,
+            _ => None,
+        };
+        if let Some(expected) = expected_revision
             && let Some(coordinator) = self.workspace.get()
         {
             let snapshot = coordinator.snapshot();
@@ -1244,6 +1265,7 @@ impl OutcomeRouter {
             | RouteEffect::Runtime { .. }
             | RouteEffect::Debug { .. }
             | RouteEffect::SessionStop { .. } => None,
+            RouteEffect::Editor { intent, .. } if intent.observe_all => Some(CommitScope::Unknown),
             RouteEffect::Editor { intent, .. } if !intent.files.is_empty() => Some(
                 CommitScope::Paths(intent.files.iter().map(|(path, _)| path.clone()).collect()),
             ),

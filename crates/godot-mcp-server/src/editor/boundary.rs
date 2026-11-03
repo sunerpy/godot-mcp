@@ -9,16 +9,24 @@
 //! state probe. A request that never reached the editor is
 //! [`BoundaryUnavailable`]; one that reached it without an answer is
 //! `unresolved`, with an unreachable bridge in the proof.
+//!
+//! A screenshot's effect is its artifact, as a managed game's is: the plugin
+//! captures, the boundary reads the PNG back in bounded chunks, checks it and
+//! registers it, owned by the caller, and the capture commits only once it is
+//! registered.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use godot_mcp_bridge::protocol::envelope::OperationClass;
 use godot_mcp_bridge::protocol::mutation::MutationStatus;
 use godot_mcp_domain::ErrorKind;
-use serde_json::{Value, json};
+use godot_mcp_domain::contracts::{ArtifactKind, OutcomeError};
+use serde_json::{Map, Value, json};
 
-use super::bridge::{BridgeAnswer, BridgeFailure, EditorBridge};
+use super::bridge::{BridgeAnswer, BridgeFailure, EditorBridge, now_unix_ms};
+use crate::capture::CaptureSink;
 use crate::effect::boundary::{
     BoundaryUnavailable, EditorEffectBoundary, EditorEffectOutcome, EditorMutation, EffectTicket,
 };
@@ -27,15 +35,41 @@ use crate::router::{HeldPath, LiveEditorView};
 
 /// How long the live-editor view waits for the editor to say what it holds.
 const VIEW_TIMEOUT: Duration = Duration::from_secs(5);
+/// The bridge method that captures what the editor shows.
+pub(crate) const CAPTURE_VIEWPORT: &str = "editor.capture.viewport";
+/// The bridge method that reads a capture back.
+const CAPTURE_CHUNK: &str = "editor.capture.chunk";
+/// How long one chunk read may take.
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The bridge, seen as the editor effect boundary and the live-editor view.
 pub(crate) struct BridgeEditorBoundary {
     bridge: Arc<EditorBridge>,
+    captures: Option<CaptureSink>,
 }
 
 impl BridgeEditorBoundary {
     pub(crate) const fn new(bridge: Arc<EditorBridge>) -> Self {
-        Self { bridge }
+        Self {
+            bridge,
+            captures: None,
+        }
+    }
+
+    /// This boundary, keeping the editor's captures in `sink`.
+    pub(crate) fn with_captures(mut self, sink: CaptureSink) -> Self {
+        self.captures = Some(sink);
+        self
+    }
+}
+
+/// Nothing happened, and why.
+fn not_started(kind: ErrorKind, message: impl Into<String>) -> EditorEffectOutcome {
+    EditorEffectOutcome {
+        status: MutationStatus::NotStarted,
+        payload: json!({}),
+        error: Some((kind, message.into())),
+        proof: unbound_proof(),
     }
 }
 
@@ -91,6 +125,9 @@ impl EditorEffectBoundary for BridgeEditorBoundary {
         ticket: &EffectTicket,
         mutation: &EditorMutation,
     ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
+        if mutation.action == CAPTURE_VIEWPORT {
+            return self.capture(ticket, mutation);
+        }
         let payload: Value = serde_json::from_str(&mutation.payload).unwrap_or_else(|_| json!({}));
         let answer = self.bridge.call(
             &mutation.action,
@@ -100,6 +137,118 @@ impl EditorEffectBoundary for BridgeEditorBoundary {
             mutation.timeout,
         );
         bridge_outcome(ticket, &mutation.action, answer, "editor")
+    }
+}
+
+impl BridgeEditorBoundary {
+    /// Capture what the editor shows and keep it as the caller's artifact.
+    /// The capture changes nothing in the editor, so every failure before the
+    /// artifact is registered is `not_started`.
+    fn capture(
+        &self,
+        ticket: &EffectTicket,
+        mutation: &EditorMutation,
+    ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
+        let Some(sink) = &self.captures else {
+            return Ok(not_started(
+                ErrorKind::Unavailable,
+                "this server keeps no editor captures",
+            ));
+        };
+        let mut payload: Map<String, Value> = match serde_json::from_str(&mutation.payload) {
+            Ok(Value::Object(object)) => object,
+            _ => return Ok(not_started(ErrorKind::Internal, "a capture is an object")),
+        };
+        // The owner is the server's to record; the editor never sees it.
+        let Some(owner) = payload.remove("owner") else {
+            return Ok(not_started(
+                ErrorKind::Internal,
+                "a capture names the caller who owns it",
+            ));
+        };
+        let described = match self.bridge.call(
+            CAPTURE_VIEWPORT,
+            OperationClass::Read,
+            &Value::Object(payload),
+            &mutation.idempotency_id,
+            mutation.timeout,
+        ) {
+            Ok(BridgeAnswer::Result { payload, .. }) => payload,
+            Ok(BridgeAnswer::Error { kind, message, .. }) => return Ok(not_started(kind, message)),
+            Err(failure) if failure.dispatched() => {
+                return Ok(not_started(ErrorKind::Unavailable, failure.message()));
+            }
+            Err(_) => return Err(BoundaryUnavailable { boundary: "editor" }),
+        };
+        let frames = crate::capture::fetch_frames(&described, |chunk| {
+            read(&self.bridge, CAPTURE_CHUNK, chunk, &mutation.idempotency_id)
+        });
+        let bytes = match frames.map(|frames| frames.into_iter().next()) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Ok(not_started(ErrorKind::Internal, "the capture had no frame")),
+            Err(error) => return Ok(not_started(error.kind(), error.message())),
+        };
+        let contract = match crate::capture::contract(
+            sink,
+            ticket,
+            ArtifactKind::Screenshot,
+            "image/png",
+            &bytes,
+            Some(&owner),
+            now_unix_ms(),
+        ) {
+            Ok(contract) => contract,
+            Err(error) => return Ok(not_started(error.kind(), error.message())),
+        };
+        let artifact = json!({
+            "uri": contract.resource_uri().as_str(),
+            "media_type": contract.metadata().media_type,
+            "byte_length": contract.metadata().byte_length,
+            "sha256": contract.metadata().sha256,
+            "width": described.get("width"),
+            "height": described.get("height"),
+            "expires_at_unix_ms": contract.expires_at_unix_ms(),
+        });
+        if let Err(error) = sink.store.register(contract, bytes) {
+            return Ok(not_started(error.kind(), error.message()));
+        }
+        let digest = artifact["sha256"].clone();
+        Ok(EditorEffectOutcome {
+            status: MutationStatus::Committed,
+            proof: receipt(ticket, &mutation.action, &json!({ "digest": digest })),
+            payload: json!({
+                "artifact": artifact,
+                "view": described.get("view").cloned().unwrap_or(Value::Null),
+            }),
+            error: None,
+        })
+    }
+}
+
+/// One read the editor answers, as a payload or the classified failure.
+fn read(
+    bridge: &EditorBridge,
+    method: &str,
+    payload: &Value,
+    idempotency_id: &str,
+) -> Result<Value, OutcomeError> {
+    match bridge.call(
+        method,
+        OperationClass::Read,
+        payload,
+        idempotency_id,
+        CHUNK_TIMEOUT,
+    ) {
+        Ok(BridgeAnswer::Result { payload, .. }) => Ok(payload),
+        Ok(BridgeAnswer::Error { kind, message, .. }) => {
+            Err(OutcomeError::new(kind, message, false, BTreeMap::new()))
+        }
+        Err(failure) => Err(OutcomeError::new(
+            ErrorKind::Unavailable,
+            failure.message(),
+            false,
+            BTreeMap::new(),
+        )),
     }
 }
 
@@ -179,9 +328,10 @@ impl LiveEditorView for BridgeEditorBoundary {
 
 /// The paths an `editor.state` answer says the editor holds, project-relative:
 /// every open scene, whose live tree a file write would silently diverge
-/// from, and every open script whose editor buffer differs from its file or
-/// cannot be compared. A script open with no edits is reloaded by the editor
-/// and is not held.
+/// from, every open script whose editor buffer differs from its file or
+/// cannot be compared, and `project.godot`, whose settings a running editor
+/// keeps in memory and writes back whenever it saves them. A script open with
+/// no edits is reloaded by the editor and is not held.
 pub(crate) fn held_paths(state: &Value) -> Vec<HeldPath> {
     let mut held = Vec::new();
     for (key, always) in [("open_scenes", true), ("open_scripts", false)] {
@@ -207,8 +357,15 @@ pub(crate) fn held_paths(state: &Value) -> Vec<HeldPath> {
             }
         }
     }
+    held.push(HeldPath {
+        path: PROJECT_SETTINGS.to_owned(),
+        unsaved: None,
+    });
     held
 }
+
+/// The project settings file a connected editor owns.
+pub(crate) const PROJECT_SETTINGS: &str = "project.godot";
 
 #[cfg(test)]
 mod tests {
@@ -239,7 +396,23 @@ mod tests {
                 ("levels/one.tscn".to_owned(), None),
                 ("enemy.gd".to_owned(), Some(true)),
                 ("hud.gd".to_owned(), None),
+                ("project.godot".to_owned(), None),
             ]
+        );
+    }
+
+    /// A running editor writes its in-memory project settings back whenever it
+    /// saves them, so a connected editor holds `project.godot` even with
+    /// nothing open.
+    #[test]
+    fn a_connected_editor_always_holds_project_godot() {
+        let held = held_paths(&json!({ "open_scenes": [], "open_scripts": [] }));
+        assert_eq!(
+            held,
+            vec![HeldPath {
+                path: "project.godot".to_owned(),
+                unsaved: None,
+            }]
         );
     }
 }

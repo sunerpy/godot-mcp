@@ -93,6 +93,11 @@ impl Checker<'_> {
                     })
                     .all(|(_, value)| self.check(argument, value))
             }),
+            "propertyNames" => instance.as_object().is_none_or(|object| {
+                object
+                    .keys()
+                    .all(|name| self.check(argument, &Value::String(name.clone())))
+            }),
             "items" => instance
                 .as_array()
                 .is_none_or(|items| items.iter().all(|item| self.check(argument, item))),
@@ -592,5 +597,20 @@ mod tests {
         let map = json!({ "type": "object", "additionalProperties": { "type": "integer" } });
         assert!(conforms(&map, &json!({ "any": 1 })));
         assert!(!conforms(&map, &json!({ "any": 1.5 })));
+    }
+
+    #[test]
+    fn property_names_hold_every_key_of_an_object() {
+        let schema = json!({
+            "type": "object",
+            "propertyNames": { "minLength": 1, "pattern": "^[a-z/]+$" }
+        });
+        assert!(conforms(&schema, &json!({ "a/b": 1, "c": 2 })));
+        assert!(conforms(&schema, &json!({})));
+        assert!(!conforms(&schema, &json!({ "": 1 })));
+        assert!(!conforms(&schema, &json!({ "a": 1, "B": 2 })));
+        let names_only = json!({ "propertyNames": { "minLength": 1 } });
+        assert!(conforms(&names_only, &json!("not an object")));
+        assert!(!conforms(&names_only, &json!({ "": 1 })));
     }
 }

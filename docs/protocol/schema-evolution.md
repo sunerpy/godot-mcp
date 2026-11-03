@@ -49,6 +49,28 @@ What is compatible:
 * adding an error code, provided existing codes keep their meaning. Clients must treat an
   unknown code as a failure they do not specifically handle rather than as success.
 
+### Contract 0.3.0
+
+Contract 0.3.0 adds seventeen tools — `editor.node.get`, `editor.types.search`,
+`editor.log.get`, `editor.preferences.get`, `editor.shortcuts.get`, `editor.scene.edit`,
+`editor.scene.save`, `editor.scene.close`, `editor.main_screen.set`,
+`editor.screenshot.capture`, `editor.filesystem.scan`, `editor.script.open`,
+`editor.preferences.set`, `editor.shortcuts.set`, `editor.play.start`, `editor.play.stop` and
+`runtime.performance.get` — the artifacts
+resource in the `editor` profile, the batch operation `call_method`, and the `results` field
+of every batch answer. The 0.2.0 manifests stay frozen in `schemas/domain/profiles/v0.2/`.
+
+Three behaviours narrow while a live editor is connected, so they are listed with the
+release rather than hidden in it:
+
+* `project.settings.patch` is carried out by the editor, which writes `project.godot` with
+  Godot's own writer and keeps no comments;
+* every other headless write to `project.godot` is refused with `conflict`;
+* `project.import.run` and `project.uid.update` are refused with `conflict`.
+
+An artifact a 0.2.0 server recorded is unreadable to a 0.3.0 server and is discarded when
+it starts; an artifact stays readable for 15 minutes in any case.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an
@@ -66,6 +88,10 @@ Breaking, in this family:
 Because every field is present on every message, there is no "add an optional field"
 change here: adding a field changes the key set, and therefore the envelope shape
 version.
+
+Adding a request method is compatible. Methods travel inside the envelope, a peer lists the
+methods it implements when the session opens, and the server never sends one the peer did
+not list: a tool whose method an older add-on lacks answers `unsupported`.
 
 ## Operational documents
 

@@ -107,7 +107,7 @@ for /f "tokens=1,* delims==" %%A in ('type "%request_file%"') do (
   if /I "%%A"=="root_name" set "root_name=%%B"
 )
 
-echo !artifact! | findstr /b /c:"godot_mcp_helpers/2/staging/" >nul
+echo !artifact! | findstr /b /c:"godot_mcp_helpers/3/staging/" >nul
 if errorlevel 1 (
   call :refuse artifact_outside_staging
   exit /b 65
@@ -126,7 +126,7 @@ exit /b 65
 
 :binary
 > "%response_file%" (
-  echo helper_version=2
+  echo helper_version=3
   echo reason=binary_resource
   echo status=refused
   echo target=res://!target!
@@ -148,7 +148,7 @@ if /I "!operation!"=="create_resource" (
 
 if /I "!mode!"=="save-failed" (
   > "%response_file%" (
-    echo helper_version=2
+    echo helper_version=3
     echo reason=save_failed
     echo status=failed
   )
@@ -160,7 +160,7 @@ if not errorlevel 1 (
   set "existing=!mode:uid-conflict:=!"
   > "%response_file%" (
     echo existing_path=res://!existing!
-    echo helper_version=2
+    echo helper_version=3
     echo reason=uid_conflict
     echo requested_path=res://!target!
     echo status=refused
@@ -193,7 +193,7 @@ if /I "!mode!"=="no-response" exit /b 0
 
 > "%response_file%" (
   echo artifact=res://!artifact!
-  echo helper_version=2
+  echo helper_version=3
   echo status=ok
   echo target=res://!target!
   echo uid=!uid!
@@ -202,7 +202,7 @@ exit /b 0
 
 :refuse
 > "%response_file%" (
-  echo helper_version=2
+  echo helper_version=3
   echo reason=%~1
   echo status=refused
 )

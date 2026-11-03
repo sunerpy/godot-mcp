@@ -274,6 +274,52 @@ fn a_headless_write_to_a_file_the_editor_holds_is_refused() {
 }
 
 #[test]
+fn a_script_the_editor_holds_is_refused_with_how_to_reload_it() {
+    let tree = ProjectTree::new("m8-editor-held-script");
+    tree.write("scripts/player.gd", "extends Node\n");
+    let mut session = open(&tree);
+    let plugin = FakeEditorPlugin::spawn(
+        &rendezvous(&tree),
+        FakePluginScript::implementing(&["editor.state"]).answering(
+            "editor.state",
+            FakeAnswer::Payload(json!({
+                "open_scenes": [],
+                "open_scripts": [{ "path": "res://scripts/player.gd", "unsaved": true }],
+                "edited_scene": null,
+                "selection": [],
+                "history": null,
+                "playing": false
+            })),
+        ),
+    );
+    let mut id = 1;
+    wait_connected(&mut session, &mut id);
+    id += 1;
+    let held = session.call_tool(
+        id,
+        "file.patch",
+        json!({
+            "path": "scripts/player.gd",
+            "expectedSha256": sha256_hex(b"extends Node\n"),
+            "change": { "content": "extends Node2D\n" },
+            "idempotencyId": "held-script"
+        }),
+    );
+    assert_eq!(error_code(&held), json!("conflict"), "{held}");
+    let text = held.to_string();
+    assert!(
+        text.contains("editor.filesystem.scan") && text.contains("save or close it"),
+        "the refusal says how to reload the script or release it: {held}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tree.root.join("scripts/player.gd")).expect("script"),
+        "extends Node\n"
+    );
+    let _ = session.finish();
+    plugin.join().expect("the plugin ended");
+}
+
+#[test]
 fn an_unanswered_editor_state_change_is_uncertain_but_blocks_no_write() {
     let tree = ProjectTree::new("m4-editor-state");
     tree.write("scenes/main.tscn", SCENE);

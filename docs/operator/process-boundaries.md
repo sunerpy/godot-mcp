@@ -83,6 +83,12 @@ to the editor bridge (see [Editor bridge](editor-bridge.md)); the runtime plane 
 managed game session's probe. A listed tool whose plane has nothing to serve — no add-on
 connected, no game running — answers `unavailable` and names the plane.
 
+A game the connected editor runs for `editor.play.start` is not a supervised launch. The
+editor starts it as its own child process, as its Play button does, so this server holds no
+boundary around it and records none; `editor.play.stop` asks the editor to stop it. That is
+why `editor.play.start` is refused with `permission_denied` when `process.trust` is
+`untrusted`: run an untrusted project's game in a managed session instead.
+
 There are two strengths of boundary, and which one is required depends on whether the
 project's code is trusted.
 
@@ -218,7 +224,9 @@ instance:
 
 If none is available, **the launch fails**. It does not fall back to the weak path.
 That is the whole point: the untrusted case is exactly where a weak boundary would be
-worthless, so there is no configuration in which it is used there.
+worthless, so there is no configuration in which it is used there. For the same reason an
+untrusted project is never run in a connected editor: `editor.play.start` would start the
+game outside every boundary, and is refused.
 
 ## What a boundary guarantees, precisely
 

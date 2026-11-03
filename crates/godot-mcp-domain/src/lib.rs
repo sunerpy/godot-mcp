@@ -24,6 +24,9 @@
 pub mod catalog;
 pub mod config;
 pub mod contracts;
+pub mod editing_methods;
+pub mod editor_preferences;
+pub mod editor_shortcuts;
 pub mod jsonschema;
 pub mod lease;
 pub mod manifests;
@@ -37,9 +40,11 @@ pub mod workspace_root;
 /// Semantic version of the domain contract surface.
 ///
 /// Bumped whenever a DTO, error variant, or capability manifest changes shape.
-/// Version 0.2.0 makes tool discovery implementation-backed: a profile lists
-/// only methods the running build implements.
-pub const CONTRACT_VERSION: &str = "0.2.0";
+/// Version 0.2.0 made tool discovery implementation-backed: a profile lists
+/// only methods the running build implements. Version 0.3.0 adds the live
+/// editor's node, save, capture, scan, log and play methods, and routes a
+/// `project.godot` change through a connected editor that owns the file.
+pub const CONTRACT_VERSION: &str = "0.3.0";
 
 /// Capability profiles exposed by the public contract. Selection is explicit
 /// and independent of how an outcome is requested.

@@ -87,7 +87,9 @@ godot-mcp serve: startup failed: project ownership could not be established: no 
 | `runtime` | 44 | 4 | 1 |
 | `full` | 73 | 4 | 1 |
 
-后两列相加，正好等于 [工具与资源清单](../protocol/tool-inventory.md) 里生成的 Resources 列（`core` 与 `editor` 为 4，`runtime` 与 `full` 为 5）：生成清单把资源模板计入总数，而 `resources/list` 不返回模板。那一个模板是 `godot-mcp://artifacts/{artifact_id}`，导出产物与截图都从这里读，见 [Artifacts](artifacts.md)。一个 artifact 只对产生它的那个调用方列出、可读，过期后从列表和读取里一起消失。
+这张表和下面几节的计数都测自 0.1.0；契约 0.3.0 新增了 17 个工具，并给 `editor` profile 加上 artifact 资源，当前各 profile 的工具与资源以生成的 [工具与资源清单](../protocol/tool-inventory.md) 为准，契约 0.3.0 的新增工具见 [编辑器桥](editor-bridge.md) 与 [托管会话](managed-sessions.md)，尚未用本页的方法重新测量。
+
+在 0.1.0 上，后两列相加，正好等于 [工具与资源清单](../protocol/tool-inventory.md) 里生成的 Resources 列（`core` 与 `editor` 为 4，`runtime` 与 `full` 为 5）：生成清单把资源模板计入总数，而 `resources/list` 不返回模板。那一个模板是 `godot-mcp://artifacts/{artifact_id}`，导出产物与截图都从这里读，见 [Artifacts](artifacts.md)。一个 artifact 只对产生它的那个调用方列出、可读，过期后从列表和读取里一起消失。
 
 **73 个名字，在没有任何参数时分成四档。** 在一台配了真实 Godot 4.7.1、supervisor 就位的主机上，把 `full` 的 73 个工具按名字顺序、逐个只带内核自己拥有的 `idempotencyId` 串行调一遍（`limits.deadline_ms` 为 30000），实测 20 个给出答案，37 个因为缺参数被拒，15 个拒绝执行，1 个撞上执行超时。顺序有影响：排在前面的调用会改变后面调用看到的状态，下面会点出来。
 
@@ -225,6 +227,8 @@ python3 -I -B scripts/real_client/e2e_complete.py --binary target/debug/godot-mc
 ```
 
 `m0_smoke.py` 到 `m6_smoke.py` 各对应一个里程碑。窗口化的游戏需要显示：Linux 上设 `DISPLAY` 指向一个 Xvfb 即可；macOS 上服务器要跑在已登录用户的图形会话（Aqua）里；Windows 上要跑在已登录用户的桌面会话里，服务和容器会话都不行。导出需要该构建的确切模板，放在 Godot 自己找的位置（Linux 的 `XDG_DATA_HOME`、macOS 的 `~/Library/Application Support/Godot`、Windows 的 `%APPDATA%\Godot`）；`m6_smoke.py` 带 `--require-templates` 时，没有模板直接判失败，而不是只验证拒绝分支。设 `GODOT_MCP_SMOKE_BOUNDARY=cgroup` 时，服务器在一个委派的 user scope 里启动，每次启动都进入它自己的 cgroup。
+
+`m8_smoke.py` 在一个装好 `godot_mcp` 插件的真实编辑器里，按代理的做法走完整条流程：读节点、编辑、撤销、用 `call_method` 铺图块和打关键帧、保存、扫描、读类、打开脚本、改项目设置、改编辑器设置并核对它写进的设置文件、改绑一个快捷键再恢复默认（Godot 4.4.1 和 4.5.1 上检查答复 `unsupported`）、读日志、截图、运行与停止、在托管会话里读性能监视器，最后关闭场景（Godot 4.4.1 上检查关闭被答复 `unsupported`）。编辑器默认带窗口运行，需要显示（Xvfb 即可）；加 `--headless` 时编辑器不开窗口，截图和运行两步改为检查它们被拒绝。
 
 要对本机平台的每个确切版本一次跑完全部检查，用 `platform_matrix.py`：
 

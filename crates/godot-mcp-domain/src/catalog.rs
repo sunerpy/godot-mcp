@@ -410,6 +410,35 @@ const fn editor_mutation(
     }
 }
 
+/// Running the project in the connected live editor, introduced by contract
+/// 0.3.0. The editor starts the game as its own child process, so running it
+/// is the runtime capability, served by the editor bridge.
+const fn editor_execute(
+    handler: HandlerKey,
+    name: &'static str,
+    title: &'static str,
+    description: &'static str,
+    annotations: ToolAnnotations,
+) -> ToolDescriptor {
+    ToolDescriptor {
+        capability: Capability::RuntimeExecute,
+        family: Some(ToolFamily::RuntimeExecution),
+        identity_family: IdentityFamily::RuntimeExecution,
+        annotations,
+        profiles: RUNTIME_PROFILES,
+        introduced_in: ContractVersion::V0_3_0,
+        ..editor_read(handler, name, title, description)
+    }
+}
+
+/// `descriptor`, first offered by contract 0.3.0.
+const fn since_0_3(descriptor: ToolDescriptor) -> ToolDescriptor {
+    ToolDescriptor {
+        introduced_in: ContractVersion::V0_3_0,
+        ..descriptor
+    }
+}
+
 const EDITOR_STATE: ToolAnnotations = ToolAnnotations {
     read_only: false,
     destructive: false,
@@ -565,11 +594,46 @@ pub const SCENE_BATCH_APPLY_IN_EDITOR: ToolDescriptor = ToolDescriptor {
     ..SCENE_BATCH_APPLY
 };
 
+/// `project.settings.patch`. Its file boundary rewrites project.godot; while a
+/// live editor is connected the editor owns that file and applies the same
+/// request instead, which [`PROJECT_SETTINGS_PATCH_IN_EDITOR`] describes.
+const PROJECT_SETTINGS_PATCH: ToolDescriptor = file_write(
+    AuthoringOperation::SettingsPatch.key(),
+    "project.settings.patch",
+    "Change project settings",
+    "Apply typed `operations` — set or clear the main scene, set or remove an autoload or an \
+     input action, set an allowlisted value, enable or disable an installed plugin — to \
+     project.godot whose SHA-256 is `expectedSha256`, preserving unrelated keys and comments. \
+     While a live editor is connected it owns project.godot: the editor applies the change and \
+     saves the file with its own writer, which keeps every setting but not comments or \
+     layout, and the answer describes the bytes it saved. Journaled; requires `idempotencyId`.",
+    REWRITE,
+);
+
+/// `project.settings.patch` as executed by the connected live editor: the same
+/// public request and result, authorized and journaled at the editor boundary.
+/// Never listed on its own.
+pub const PROJECT_SETTINGS_PATCH_IN_EDITOR: ToolDescriptor = ToolDescriptor {
+    boundary: Some(ToolBoundary::Editor),
+    needs: ToolNeeds::LiveEditor,
+    ..PROJECT_SETTINGS_PATCH
+};
+
+/// Tools whose Godot process writes the editor's own import and UID caches
+/// under `.godot/`. None of them runs beside a connected editor, and no editor
+/// connects while one runs.
+pub const EDITOR_EXCLUSIVE_TOOLS: &[&str] = &["project.import.run", "project.uid.update"];
+
 /// The descriptor a tool executes under when the live editor carries it out,
 /// for a tool whose request the editor can serve unchanged.
 #[must_use]
 pub fn in_editor_descriptor(name: &str) -> Option<&'static ToolDescriptor> {
-    (name == SCENE_BATCH_APPLY_IN_EDITOR.name).then_some(&SCENE_BATCH_APPLY_IN_EDITOR)
+    [
+        &SCENE_BATCH_APPLY_IN_EDITOR,
+        &PROJECT_SETTINGS_PATCH_IN_EDITOR,
+    ]
+    .into_iter()
+    .find(|descriptor| descriptor.name == name)
 }
 
 /// Every implemented public method, in canonical name order.
@@ -1050,16 +1114,7 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          Godot process.",
         IdentityFamily::StaticDiscovery,
     ),
-    file_write(
-        AuthoringOperation::SettingsPatch.key(),
-        "project.settings.patch",
-        "Change project settings",
-        "Apply typed `operations` — set or clear the main scene, set or remove an autoload or an \
-         input action, set an allowlisted value, enable or disable an installed plugin — to \
-         project.godot whose SHA-256 is `expectedSha256`, preserving unrelated keys and \
-         comments. Journaled; requires `idempotencyId`.",
-        REWRITE,
-    ),
+    PROJECT_SETTINGS_PATCH,
     // --- contract 0.2.0: semantic scenes and resources ----------------------
     engine_write(
         EngineOperation::SceneCreate.key(),
@@ -1173,8 +1228,11 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
             "Live editor status",
             "Report whether a Godot editor running the godot_mcp plugin is connected, with its \
              Godot and plugin versions, and, when it is, the open scenes and which one is being \
-             edited, the selection, unsaved state and the edited scene's undo history. Changes \
-             nothing in the editor.",
+             edited, the selection, unsaved state, the edited scene's undo history, whether the \
+             file system is being scanned, the main screen shown, the scene being played, \
+             whether its log can be read, whether it can close scenes, whether it hands its \
+             shortcuts to a plugin and whether the plugin differs from the one this server \
+             bundles. Changes nothing in the editor.",
         )
     },
     editor_read(
@@ -1194,6 +1252,187 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          Godot build, or a project script class by its `class_name` — inheritance, its own \
          properties with types, hints and defaults, signals, methods and enums. Inherited \
          members are listed under the parent class.",
+    ),
+    // --- contract 0.3.0: the live editor --------------------------------------
+    since_0_3(editor_read(
+        EditorOperation::NodeGet.key(),
+        "editor.node.get",
+        "Live node detail",
+        "Return one `node` — a path relative to the scene root, the root by default — of the \
+         scene the connected editor is editing (or the open `scene`, when current) as the editor \
+         holds it: class, script, instanced scene, ownership, groups and children; every \
+         property, or the named `properties`, with its type, hint, usage, tagged value and \
+         whether it differs from its default; and its signals with their connections. Carries \
+         the scene's semantic digest. Reading adds no undo history and marks nothing unsaved.",
+    )),
+    since_0_3(editor_read(
+        EditorOperation::TypesSearch.key(),
+        "editor.types.search",
+        "Find classes",
+        "Find the classes the connected editor knows — the engine classes of its exact Godot \
+         build and the project's script classes — whose name contains `query` in any case, \
+         optionally only those inheriting `base` or only instantiable ones, up to `limit` (100 \
+         by default). Each names its kind, parent class, whether it can be instantiated and, \
+         for a script class, its script. editor.types.get describes one class. Changes nothing.",
+    )),
+    since_0_3(editor_read(
+        EditorOperation::LogGet.key(),
+        "editor.log.get",
+        "Read the editor log",
+        "Return what the connected editor logged since its godot_mcp plugin started — prints, \
+         errors, warnings and script and shader errors, each with its source location and \
+         script backtrace — after the `after` cursor, oldest first, up to `limit` (100 by \
+         default), optionally only some `kinds`. `next` is the cursor for the next read; a \
+         different `epoch` means the plugin restarted and the read starts again from the \
+         oldest entry kept. Godot 4.4.1 cannot hand its log to a plugin; 4.5.1 and later \
+         can. Changes nothing.",
+    )),
+    since_0_3(editor_read(
+        EditorOperation::PreferencesGet.key(),
+        "editor.preferences.get",
+        "Read the editor's settings",
+        "Read the connected editor's own settings, the ones its Editor Settings dialog shows: \
+         the named `settings`, or those whose names start with `prefix`, `limit` at a time (100 \
+         by default) from `offset`. Each names its type, tagged value, default, whether it \
+         differs from the default, its hint, whether a change needs the editor restarted and \
+         whether editor.preferences.set may change it. The value of a setting that holds a \
+         path, a host or a credential is withheld. Changes nothing.",
+    )),
+    since_0_3(editor_read(
+        EditorOperation::ShortcutsGet.key(),
+        "editor.shortcuts.get",
+        "Read the editor's shortcuts",
+        "Read the connected editor's shortcuts, the ones its Editor Settings dialog lists on \
+         its Shortcuts tab: every editor shortcut and every built-in input action of its Common \
+         section. Answers the named `shortcuts`, or those whose names start with `prefix`, \
+         only the changed ones with `changedOnly`, `limit` at a time (100 by default) from \
+         `offset`. Each names its kind, label, key events and default events, and whether it \
+         differs from them. Needs Godot 4.6.1 or later. Changes nothing.",
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::SceneEdit.key(),
+        "editor.scene.edit",
+        "Edit the scene in the editor",
+        "Apply typed `operations` — the scene.batch.apply model, nodes named by path — to the \
+         scene the connected editor is editing (or the open `scene`) as the editor holds it, \
+         unsaved changes included, when its semantic digest is still `expectedDigest`. The \
+         whole batch is one undoable action, named after `label`; a refused operation changes \
+         nothing. Nothing is saved: save with editor.scene.save. Returns the new digest.",
+        HISTORY,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::SceneSave.key(),
+        "editor.scene.save",
+        "Save scenes in the editor",
+        "Save the scene the connected editor is editing, the open `scene`, or with `all` every \
+         open scene, when each file still holds the bytes it held when the call was checked. \
+         Succeeds only when every file then holds its scene as the editor does; otherwise the \
+         answer is uncertain. Lists every file saved, including the scripts and resources the \
+         editor wrote with them. An uncertain or lost answer leaves every project file in doubt \
+         and blocks writes until it is resolved.",
+        REWRITE,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::SceneClose.key(),
+        "editor.scene.close",
+        "Close a scene in the editor",
+        "Close the scene the connected editor is editing, or the open `scene`, as its Close \
+         Scene does, and answer the scenes left open and the one the editor then shows. \
+         Refused while the scene holds a change its file does not, which closing would \
+         discard: save it with editor.scene.save first. Needs Godot 4.5.1 or later. Changes \
+         editor state only; no project file is written.",
+        EDITOR_STATE,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::MainScreenSet.key(),
+        "editor.main_screen.set",
+        "Switch the editor's main screen",
+        "Show the `screen` — 2D, 3D or Script — as the connected editor's main screen, as its \
+         own screen buttons do, and answer once it is shown. Changes editor state only.",
+        EDITOR_STATE,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::ScreenshotCapture.key(),
+        "editor.screenshot.capture",
+        "Capture the editor",
+        "Capture what the connected editor shows — its whole window, or the 2D or one 3D \
+         viewport (`viewport` 0 to 3) of the main screen shown, which editor.main_screen.set \
+         switches — after its next drawn frame, optionally scaled to `maxWidth`, as a PNG \
+         artifact read back from the editor and checked against its digest, and answer its \
+         opaque artifact URI, size and SHA-256. Needs an editor with a window; a headless \
+         editor draws nothing. Changes nothing in the project.",
+        INPUT,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::FilesystemScan.key(),
+        "editor.filesystem.scan",
+        "Rescan the project in the editor",
+        "Have the connected editor rescan the project's files, import what changed and \
+         register new script classes, as it does when it regains focus; `reimport` also \
+         reimports those assets. Then reload every open script tab whose file changed and \
+         that holds no unsaved edit, and list the tabs left as they were. Refused when an \
+         import could start an external program (Blender, FBX2glTF). Waits up to `timeoutMs` \
+         (300000 by default). The editor may write any project file meanwhile, so a lost \
+         answer blocks writes until it is resolved.",
+        REWRITE,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::ScriptOpen.key(),
+        "editor.script.open",
+        "Open a script in the editor",
+        "Open the GDScript file at `path` in the connected editor's built-in script editor \
+         with the caret at `line` and `column` (both from 1, the start by default). Refused \
+         when the editor is set to open scripts in an external program. Changes editor state \
+         only.",
+        EDITOR_STATE,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::PreferencesSet.key(),
+        "editor.preferences.set",
+        "Change the editor's settings",
+        "Change the connected editor's own settings: `settings` maps setting names to tagged \
+         values of their types. The editor applies them as its Editor Settings dialog does and \
+         writes them to the user's editor settings file, which every project shares. All or \
+         nothing: a value of another type or outside its range or choices, or a setting that \
+         names a program, a path, a host or a credential, refuses the whole change, and so does \
+         a value the editor puts back, such as a color its theme preset sets while that preset \
+         is not Custom. Answers each setting before and after, anything the editor changed with \
+         them, and whether the editor must restart for one to take effect. No project file is \
+         written.",
+        EDITOR_STATE,
+    )),
+    since_0_3(editor_mutation(
+        EditorOperation::ShortcutsSet.key(),
+        "editor.shortcuts.set",
+        "Change the editor's shortcuts",
+        "Change the connected editor's shortcuts and built-in actions, as editor.shortcuts.get \
+         names them: `shortcuts` maps each to the key events it is triggered by, an empty list \
+         for none, or `default` for its default events. The editor applies them as its \
+         Shortcuts tab does and writes them to the user's editor settings file, which every \
+         project shares. All or nothing: an unknown shortcut or key refuses the whole change. \
+         Answers each before and after, and anything the editor changed with them. Needs Godot \
+         4.6.1 or later. No project file is written.",
+        EDITOR_STATE,
+    )),
+    editor_execute(
+        EditorOperation::PlayStart.key(),
+        "editor.play.start",
+        "Run the project in the editor",
+        "Run the project in the connected editor as its Play buttons do: the main scene by \
+         default, the scene being edited for `current`, or the scene at `scene`. The editor \
+         first saves the open scenes, which are listed in `saved`, and runs the game as its own \
+         child process, outside every boundary this server holds, so an untrusted project is \
+         refused; a managed session (project.run.start) runs the game inside one. Needs an \
+         editor with a window. Refused while a game runs: stop it with editor.play.stop.",
+        EXECUTE,
+    ),
+    editor_execute(
+        EditorOperation::PlayStop.key(),
+        "editor.play.stop",
+        "Stop the game the editor runs",
+        "Stop the game the connected editor runs, as its Stop button does, and answer once it \
+         ended, with `was_playing`. Changes nothing when no game runs.",
+        STOP,
     ),
     editor_mutation(
         EditorOperation::SceneOpen.key(),
@@ -1275,6 +1514,17 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          disabled and pressed state, and which one has focus, with the probe's revision and \
          frame. Changes nothing in the game.",
     ),
+    since_0_3(runtime_read(
+        SessionOperation::PerformanceGet.key(),
+        "runtime.performance.get",
+        "Live performance monitors",
+        "Read the running game's performance monitors — frame rate and times, object, node and \
+         resource counts, memory, rendering, physics, audio and navigation figures — by the \
+         names its Godot build gives them (TIME_FPS, OBJECT_NODE_COUNT, ...), with the \
+         project's own custom monitors, or only the named `monitors`. The set differs between \
+         builds, so every value carries its name; an unknown name is refused. Answers the \
+         probe's revision and frame. Changes nothing in the game.",
+    )),
     runtime_command(
         SessionOperation::ActionSend.key(),
         "input.action.send",
@@ -1824,6 +2074,28 @@ mod tests {
             .chain(IMPLEMENTED_V0_1_PLANNED)
         {
             assert_eq!(frozen.handler, None, "{}", frozen.name);
+        }
+    }
+
+    /// A tool the frozen contract 0.2 lists was introduced by 0.2 or earlier;
+    /// every other tool was introduced by contract 0.3.
+    #[test]
+    fn every_tool_says_which_contract_introduced_it() {
+        use crate::manifests::historical_manifest_v0_2;
+
+        let v0_2: BTreeSet<String> = historical_manifest_v0_2(CapabilityProfile::Full)
+            .tools
+            .into_iter()
+            .chain(historical_manifest_v0_2(CapabilityProfile::Full).bootstrap_tools)
+            .collect();
+        for tool in TOOL_CATALOG {
+            assert_eq!(
+                tool.introduced_in == ContractVersion::V0_3_0,
+                !v0_2.contains(tool.name),
+                "{} says it was introduced by {:?}",
+                tool.name,
+                tool.introduced_in
+            );
         }
     }
 

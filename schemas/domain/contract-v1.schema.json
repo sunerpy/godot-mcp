@@ -385,6 +385,11 @@
           "description": "Implementation-backed discovery: a profile lists only implemented methods.",
           "type": "string",
           "const": "0.2.0"
+        },
+        {
+          "description": "Live editor operability: editor-owned saves, captures, scans, play and settings.",
+          "type": "string",
+          "const": "0.3.0"
         }
       ]
     },

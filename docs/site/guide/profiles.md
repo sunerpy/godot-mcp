@@ -9,7 +9,7 @@ convenience setting, and the safe choice is the default.
 | --- | --- | --- |
 | `core` | Read-only discovery and analysis | You want answers about the project and nothing changed |
 | `editor` | Project authoring — files, GDScript, scenes, resources, project settings and assets — the engine-backed import, and the editor add-on | You want the project changed |
-| `runtime` | Running, testing, exporting and engine-checking the project, managed game and editor sessions, and the authoring reads | You want the project executed and observed |
+| `runtime` | Running, testing, exporting and engine-checking the project, managed game and editor sessions, running the game in a connected editor, and the authoring reads | You want the project executed and observed |
 | `full` | The union of the three | You want all of the above |
 
 `full` is exactly `core`, `editor` and `runtime` together. Every tool and the profiles that list it

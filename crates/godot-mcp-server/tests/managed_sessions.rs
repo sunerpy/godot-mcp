@@ -251,6 +251,54 @@ fn a_started_game_answers_reads_commands_and_captures_until_it_is_stopped() {
     let _ = session.finish();
 }
 
+/// Contract 0.3: the running game's performance monitors, as its probe reads
+/// them. What a real build reports is checked by the live-editor suite.
+#[test]
+fn performance_monitors_are_read_from_the_running_game() {
+    let tree = ProjectTree::new("m9-performance");
+    let mut session = server(&tree);
+    let started = structured(&session.call_tool(
+        2,
+        "project.run.start",
+        json!({ "idempotencyId": "perf-start", "display": "headless" }),
+    ));
+    let id = started["session"]["session"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+    let read =
+        structured(&session.call_tool(3, "runtime.performance.get", json!({ "session": id })));
+    assert_eq!(read["session"], json!(id), "{read}");
+    assert_eq!(read["monitors"]["TIME_FPS"], json!(60.0), "{read}");
+    assert_eq!(read["custom"], json!({}), "{read}");
+    let mut request = 3;
+    for (monitors, what) in [
+        (json!("TIME_FPS"), "a string"),
+        (json!([""]), "an empty name"),
+        (json!([1]), "a number"),
+        (json!(vec!["TIME_FPS"; 257]), "too many names"),
+    ] {
+        request += 1;
+        let refused = session.call_tool(
+            request,
+            "runtime.performance.get",
+            json!({ "session": id, "monitors": monitors }),
+        );
+        assert!(
+            refused.get("error").is_some() || refused["result"]["isError"] == json!(true),
+            "{what} is refused: {refused}"
+        );
+    }
+    request += 1;
+    let stopped = structured(&session.call_tool(
+        request,
+        "project.run.stop",
+        json!({ "session": id, "idempotencyId": "perf-stop" }),
+    ));
+    assert_eq!(stopped["state"], json!("exited"), "{stopped}");
+    let _ = session.finish();
+}
+
 #[test]
 fn a_game_that_ignores_the_stop_is_terminated_inside_its_boundary() {
     let tree = ProjectTree::new("m5-stubborn");

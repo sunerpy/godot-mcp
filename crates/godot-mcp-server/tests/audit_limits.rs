@@ -73,14 +73,15 @@ const PROFILES: [CapabilityProfile; 4] = [
 
 /// Frozen Todo 3 profile capacities. A drift here means the enumeration below
 /// silently stopped covering the real surface.
-/// Exact contract 0.2 profile sizes. Version 0.1 listed planned editor and
+/// Exact contract 0.3 profile sizes. Version 0.1 listed planned editor and
 /// runtime methods without handlers (25/39/49); contract 0.2 lists only the
-/// implemented catalog, so a planned method cannot inflate a profile.
+/// implemented catalog, so a planned method cannot inflate a profile, and
+/// contract 0.3 adds the live editor's tools to it.
 const PROFILE_TOOL_COUNTS: [(CapabilityProfile, usize); 4] = [
     (CapabilityProfile::Core, 15),
-    (CapabilityProfile::Editor, 48),
-    (CapabilityProfile::Runtime, 44),
-    (CapabilityProfile::Full, 73),
+    (CapabilityProfile::Editor, 62),
+    (CapabilityProfile::Runtime, 47),
+    (CapabilityProfile::Full, 90),
 ];
 
 /// Every shape that would denote an arbitrary-code-execution outcome. The

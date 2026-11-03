@@ -27,6 +27,7 @@ pub mod binding;
 #[cfg(feature = "stdio")]
 pub mod bootstrap;
 pub(crate) mod bootstrap_schema;
+pub(crate) mod capture;
 pub mod core;
 pub mod diagnostics;
 pub(crate) mod editor;

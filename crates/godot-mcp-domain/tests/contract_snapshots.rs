@@ -11,7 +11,9 @@ use godot_mcp_domain::contracts::{
     SessionId, StaticResult, Transform2D, Transform3D, Vector2, Vector2i, Vector3, Vector3i,
     Vector4, Vector4i, canonical_contract_schema,
 };
-use godot_mcp_domain::manifests::{ProfileManifest, canonical_manifest, historical_manifest_v0_1};
+use godot_mcp_domain::manifests::{
+    ProfileManifest, canonical_manifest, historical_manifest_v0_1, historical_manifest_v0_2,
+};
 use godot_mcp_domain::objid::{LeaseKey, StableObjectId};
 use godot_mcp_domain::{CONTRACT_VERSION, CapabilityProfile};
 use serde::Serialize;
@@ -53,6 +55,22 @@ const RUNTIME_MANIFEST_V0_2: &str = include_str!(concat!(
 const FULL_MANIFEST_V0_2: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../schemas/domain/profiles/v0.2/full.json"
+));
+const CORE_MANIFEST_V0_3: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.3/core.json"
+));
+const EDITOR_MANIFEST_V0_3: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.3/editor.json"
+));
+const RUNTIME_MANIFEST_V0_3: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.3/runtime.json"
+));
+const FULL_MANIFEST_V0_3: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.3/full.json"
 ));
 
 fn roundtrip<T>(value: &T)
@@ -226,7 +244,7 @@ fn union<T: Ord + Clone>(sets: impl IntoIterator<Item = BTreeSet<T>>) -> BTreeSe
 
 #[test]
 fn profile_algebra_and_dto_roundtrip() {
-    assert_eq!(CONTRACT_VERSION, "0.2.0");
+    assert_eq!(CONTRACT_VERSION, "0.3.0");
 
     let project = project();
     let provenance = provenance();
@@ -384,28 +402,34 @@ fn profile_algebra_and_dto_roundtrip() {
         json!("https://json-schema.org/draft/2020-12/schema")
     );
 
-    // The frozen version 0.1 artifacts stay byte-verifiable against the frozen
-    // first-release manifests; contract 0.2 discovery is pinned to its own
-    // committed artifacts, derived from the implemented catalog.
-    for (profile, committed) in [
-        (CapabilityProfile::Core, CORE_MANIFEST),
-        (CapabilityProfile::Editor, EDITOR_MANIFEST),
-        (CapabilityProfile::Runtime, RUNTIME_MANIFEST),
-        (CapabilityProfile::Full, FULL_MANIFEST),
+    // The frozen version 0.1 and 0.2 artifacts stay byte-verifiable against
+    // the frozen manifests of those releases; contract 0.3 discovery is pinned
+    // to its own committed artifacts, derived from the implemented catalog.
+    for (profile, v0_1, v0_2) in [
+        (CapabilityProfile::Core, CORE_MANIFEST, CORE_MANIFEST_V0_2),
+        (
+            CapabilityProfile::Editor,
+            EDITOR_MANIFEST,
+            EDITOR_MANIFEST_V0_2,
+        ),
+        (
+            CapabilityProfile::Runtime,
+            RUNTIME_MANIFEST,
+            RUNTIME_MANIFEST_V0_2,
+        ),
+        (CapabilityProfile::Full, FULL_MANIFEST, FULL_MANIFEST_V0_2),
     ] {
-        assert_eq!(
-            historical_manifest_v0_1(profile),
-            committed_manifest(committed)
-        );
+        assert_eq!(historical_manifest_v0_1(profile), committed_manifest(v0_1));
+        assert_eq!(historical_manifest_v0_2(profile), committed_manifest(v0_2));
     }
     let core = canonical_manifest(CapabilityProfile::Core);
     let editor = canonical_manifest(CapabilityProfile::Editor);
     let runtime = canonical_manifest(CapabilityProfile::Runtime);
     let full = canonical_manifest(CapabilityProfile::Full);
-    assert_eq!(core, committed_manifest(CORE_MANIFEST_V0_2));
-    assert_eq!(editor, committed_manifest(EDITOR_MANIFEST_V0_2));
-    assert_eq!(runtime, committed_manifest(RUNTIME_MANIFEST_V0_2));
-    assert_eq!(full, committed_manifest(FULL_MANIFEST_V0_2));
+    assert_eq!(core, committed_manifest(CORE_MANIFEST_V0_3));
+    assert_eq!(editor, committed_manifest(EDITOR_MANIFEST_V0_3));
+    assert_eq!(runtime, committed_manifest(RUNTIME_MANIFEST_V0_3));
+    assert_eq!(full, committed_manifest(FULL_MANIFEST_V0_3));
     assert_eq!(
         full.capabilities,
         union([
@@ -444,6 +468,10 @@ fn profile_algebra_and_dto_roundtrip() {
         EDITOR_MANIFEST_V0_2.to_owned(),
         RUNTIME_MANIFEST_V0_2.to_owned(),
         FULL_MANIFEST_V0_2.to_owned(),
+        CORE_MANIFEST_V0_3.to_owned(),
+        EDITOR_MANIFEST_V0_3.to_owned(),
+        RUNTIME_MANIFEST_V0_3.to_owned(),
+        FULL_MANIFEST_V0_3.to_owned(),
     ] {
         assert!(!document.contains("unsafe_script"));
         assert!(!document.contains("storage_path"));

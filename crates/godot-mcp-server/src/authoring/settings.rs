@@ -1409,10 +1409,25 @@ pub(super) async fn patch(
         unified(Some(MANIFEST), Some(MANIFEST), &before, &after).to_value(),
     );
     result.insert("settings".to_owned(), typed_view(&document, &settings));
+    let editor = runtime
+        .editor
+        .as_ref()
+        .filter(|bridge| bridge.status().connected);
+    result.insert(
+        "backend".to_owned(),
+        Value::String(if editor.is_some() { "editor" } else { "file" }.to_owned()),
+    );
     if envelope.dry_run || after == before {
         result.insert("dry_run".to_owned(), Value::Bool(envelope.dry_run));
         result.insert("workspace".to_owned(), snapshot.to_value());
         return Ok(Value::Object(result));
+    }
+    if let Some(bridge) = editor {
+        let change = EditorChange::between(&Document::parse(&before), &document);
+        return in_editor(
+            runtime, bridge, &change, &before, &expected, result, envelope, canonical, context,
+        )
+        .await;
     }
     let committed = runtime
         .commit(
@@ -1432,6 +1447,263 @@ pub(super) async fn patch(
         )
         .await?;
     Ok(committed.into_value(result))
+}
+
+// ---------------------------------------------------------------------------
+// The live-editor path
+// ---------------------------------------------------------------------------
+
+/// The bridge method a connected editor applies settings with.
+const SETTINGS_APPLY: &str = "editor.settings.apply";
+/// How long the editor may take to apply and save the settings.
+const SETTINGS_APPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Every sectioned assignment of a document, by its Godot setting name
+/// (`section/key`), with its raw literal. A repeated key keeps its last
+/// assignment, as Godot reads it.
+fn literals(document: &Document) -> std::collections::BTreeMap<String, String> {
+    document
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .section
+                .as_ref()
+                .map(|section| (format!("{section}/{}", entry.key), entry.value.clone()))
+        })
+        .collect()
+}
+
+/// The enabled-plugin list of a document.
+fn enabled_plugins(document: &Document) -> std::collections::BTreeSet<String> {
+    document
+        .find("editor_plugins", "enabled")
+        .map(|entry| packed_strings(&entry.value).into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// The setting under which Godot keeps the enabled plugins. A connected editor
+/// switches plugins itself, so this list is never sent as a raw value.
+const ENABLED_PLUGINS: &str = "editor_plugins/enabled";
+
+/// One patch as the connected editor applies it: each changed setting with
+/// the literal the file holds before and after it (`None` for an absent key),
+/// and each plugin switched on or off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorChange {
+    settings: Vec<(String, Option<String>, Option<String>)>,
+    plugins: Vec<(String, bool)>,
+}
+
+impl EditorChange {
+    fn between(before: &Document, after: &Document) -> Self {
+        let old = literals(before);
+        let new = literals(after);
+        let names: std::collections::BTreeSet<&String> = old.keys().chain(new.keys()).collect();
+        let settings = names
+            .into_iter()
+            .filter(|name| name.as_str() != ENABLED_PLUGINS)
+            .filter(|name| old.get(*name) != new.get(*name))
+            .map(|name| (name.clone(), old.get(name).cloned(), new.get(name).cloned()))
+            .collect();
+        let was = enabled_plugins(before);
+        let now = enabled_plugins(after);
+        let plugins = was
+            .symmetric_difference(&now)
+            .map(|plugin| (plugin.clone(), now.contains(plugin)))
+            .collect();
+        Self { settings, plugins }
+    }
+
+    /// The setting names this change asks for, as `changed_keys` names them.
+    fn requested(&self) -> std::collections::BTreeSet<String> {
+        let mut requested: std::collections::BTreeSet<String> = self
+            .settings
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        if !self.plugins.is_empty() {
+            requested.insert(ENABLED_PLUGINS.to_owned());
+        }
+        requested
+    }
+
+    fn payload(&self, expected_sha256: &str) -> Value {
+        json!({
+            "expected_sha256": expected_sha256,
+            "changes": self.settings.iter().map(|(key, old, new)| json!({
+                "key": key,
+                "old": old,
+                "new": new,
+            })).collect::<Vec<_>>(),
+            "plugins": self.plugins.iter().map(|(path, enabled)| json!({
+                "path": path,
+                "enabled": enabled,
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// Every setting whose literal differs between two documents, by name.
+fn changed_settings(before: &Document, after: &Document) -> Vec<String> {
+    let old = literals(before);
+    let new = literals(after);
+    let names: std::collections::BTreeSet<&String> = old.keys().chain(new.keys()).collect();
+    names
+        .into_iter()
+        .filter(|name| old.get(*name) != new.get(*name))
+        .cloned()
+        .collect()
+}
+
+/// The refusal while the connected plugin predates `editor.settings.apply`.
+fn plugin_too_old(status: &crate::editor::bridge::BridgeStatus) -> OutcomeError {
+    outcome_error(
+        ErrorKind::Unsupported,
+        format!(
+            "the connected godot_mcp plugin ({}) cannot apply project settings, and \
+             project.godot belongs to the running editor; update it with \
+             editor.addon.update, then editor.addon.reload, and retry. Nothing was written.",
+            status
+                .plugin_version
+                .as_deref()
+                .unwrap_or("unknown version")
+        ),
+    )
+}
+
+/// Apply one settings patch in the connected editor, which owns
+/// `project.godot` while it runs, and answer from the bytes it saved.
+#[allow(clippy::too_many_arguments)]
+async fn in_editor(
+    runtime: &AuthoringRuntime,
+    bridge: &std::sync::Arc<crate::editor::bridge::EditorBridge>,
+    change: &EditorChange,
+    before: &str,
+    expected: &str,
+    mut result: Map<String, Value>,
+    envelope: &Envelope,
+    canonical: &Value,
+    context: &CallContext<'_>,
+) -> Result<Value, OutcomeError> {
+    use crate::effect::boundary::{CancelSignal, EditorMutation};
+    use crate::effect::gateway::EditorEffectIntent;
+    use crate::journal::OperationFamily;
+    use crate::router::{RouteEffect, RouteRequest};
+
+    let status = bridge.status();
+    if !status.methods.iter().any(|method| method == SETTINGS_APPLY) {
+        return Err(plugin_too_old(&status));
+    }
+    let tool = AuthoringOperation::SettingsPatch.tool_name();
+    let access = context.access;
+    let transaction_id = runtime
+        .router
+        .next_transaction_id(tool, access.observed_at_unix_ms());
+    let mut payload = change.payload(expected);
+    payload["transaction_id"] = Value::String(transaction_id.clone());
+    payload["label"] = Value::String(format!("godot-mcp: {tool}"));
+    // Switching a plugin runs that plugin's own code in the editor, which may
+    // write any project file.
+    let project_wide = !change.plugins.is_empty();
+    let intent = EditorEffectIntent {
+        transaction_id: transaction_id.clone(),
+        tool_name: tool.to_owned(),
+        operation_family: OperationFamily::ProjectMutation,
+        idempotency_id: context.idempotency_id.to_owned(),
+        transport_mode: super::journal_transport(access.transport_mode()),
+        principal: Some(access.mode_principal().to_journal_string()),
+        session: Some(access.connection_session().to_owned()),
+        arguments: canonical.clone(),
+        files: vec![(
+            MANIFEST.to_owned(),
+            WritePrecondition::Sha256(expected.to_owned()),
+        )],
+        project_wide,
+        observe_all: project_wide,
+        expected_revision: envelope.expected_revision,
+        opened_at_unix_ms: access.observed_at_unix_ms(),
+    };
+    let request = RouteRequest {
+        tool: tool.to_owned(),
+        idempotency_id: context.idempotency_id.to_owned(),
+        transaction_id: Some(transaction_id),
+        path: MANIFEST.to_owned(),
+        bytes: Vec::new(),
+        arguments: canonical.clone(),
+        observation: runtime.observation(),
+        cancellation: context.cancellation.clone(),
+        queued_at_unix_ms: access.observed_at_unix_ms(),
+        identity: Some(AuthoringRuntime::route_identity(access)),
+        effect: Some(RouteEffect::Editor {
+            intent,
+            mutation: Box::new(EditorMutation {
+                action: SETTINGS_APPLY.to_owned(),
+                payload: payload.to_string(),
+                idempotency_id: context.idempotency_id.to_owned(),
+                timeout: SETTINGS_APPLY_TIMEOUT,
+                cancellation: CancelSignal::default(),
+            }),
+        }),
+        audit: Some(context.audit.clone()),
+    };
+    let report = runtime
+        .router
+        .route(&request)
+        .await
+        .map_err(|refusal| refusal.to_outcome())?;
+    let answer = crate::editor::tools::editor_answer(&report)?;
+    if answer.get("replayed") == Some(&Value::Bool(true)) {
+        return Ok(answer);
+    }
+
+    // The file the editor saved is the published result.
+    let saved = runtime
+        .read(MANIFEST)?
+        .ok_or_else(|| outcome_error(ErrorKind::Internal, "the editor removed project.godot"))?;
+    let after = utf8_text(&saved, MANIFEST)?;
+    let after_document = Document::parse(&after);
+    let settings = ProjectSettings::parse(&after, runtime.generation)
+        .map_err(|error| outcome_error(error.kind(), error.to_string()))?;
+    let changed = changed_settings(&Document::parse(before), &after_document);
+    let requested = change.requested();
+    let unrequested: Vec<String> = changed
+        .iter()
+        .filter(|name| !requested.contains(*name))
+        .cloned()
+        .collect();
+    result.insert("after_sha256".to_owned(), Value::String(sha256_hex(&saved)));
+    result.insert("changed".to_owned(), Value::Bool(after != before));
+    result.insert(
+        "diff".to_owned(),
+        unified(Some(MANIFEST), Some(MANIFEST), before, &after).to_value(),
+    );
+    result.insert(
+        "settings".to_owned(),
+        typed_view(&after_document, &settings),
+    );
+    result.insert("changed_keys".to_owned(), json!(changed));
+    result.insert("unrequested_keys".to_owned(), json!(unrequested));
+    for key in ["transaction_id", "workspace", "mutation_status"] {
+        if let Some(value) = answer.get(key) {
+            result.insert(key.to_owned(), value.clone());
+        }
+    }
+    result.insert(
+        "editor".to_owned(),
+        json!({ "action": answer.get("action"), "saved_sha256": answer.get("sha256") }),
+    );
+    result.insert(
+        "phase".to_owned(),
+        Value::String("committed_fsynced".to_owned()),
+    );
+    result.insert(
+        "conclusion".to_owned(),
+        Value::String("proven_post_state".to_owned()),
+    );
+    result.insert("dry_run".to_owned(), Value::Bool(false));
+    result.insert("replayed".to_owned(), Value::Bool(false));
+    Ok(Value::Object(result))
 }
 
 #[cfg(test)]

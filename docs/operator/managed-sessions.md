@@ -71,6 +71,14 @@ tagged-value codec the editor bridge uses; a value it cannot represent is report
 such rather than approximated. `runtime.signals.get` with `watch` also counts every later
 emission of the node's signals, and later reads report the counts.
 
+`runtime.performance.get` reads the game's performance monitors: every monitor of its Godot
+build's Performance monitor list, by the name the build gives it (`TIME_FPS`,
+`OBJECT_NODE_COUNT`, `MEMORY_STATIC`, ...), and every custom monitor the project added, or only
+the named `monitors`. The list differs between builds, so every value carries its name and an
+unknown name is refused with `invalid_input`; a value that is not a finite number is `null`.
+Measured on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds, by the live
+suite: frame rate, process time, object, node and static memory figures are numbers.
+
 The probe answers one request at a time. While an input sequence runs, reads to the same
 session wait for it.
 
