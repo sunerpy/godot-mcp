@@ -311,12 +311,11 @@ struct Inner {
     counters: Mutex<Counters>,
 }
 
-/// One request awaiting its answer.
+/// One request awaiting its answer. Its caller removes it when it stops
+/// waiting, at its deadline at the latest.
 struct Pending {
     /// The session generation the request was sent on.
     generation: u64,
-    /// When its caller stops waiting for the answer.
-    answer_by: Instant,
     sender: AnswerSender,
 }
 
@@ -626,14 +625,7 @@ fn send_request(
     );
     let (sender, receiver) = mpsc::sync_channel(1);
     let deadline = Instant::now() + timeout + ANSWER_GRACE;
-    lock(&inner.pending).insert(
-        message_id.clone(),
-        Pending {
-            generation,
-            answer_by: deadline,
-            sender,
-        },
-    );
+    lock(&inner.pending).insert(message_id.clone(), Pending { generation, sender });
     if writer.send(&envelope).is_err() {
         // A write that failed delivered no complete frame: nothing can run.
         lock(&inner.pending).remove(&message_id);
@@ -863,12 +855,13 @@ fn read_loop(
 /// Whether the peer of session `generation` holds a request whose caller still
 /// waits for it. A peer runs requests on its main thread, which answers no
 /// heartbeat until the request is done, so its silence then is not its absence;
-/// once every such caller has given up, the silence limit applies again.
+/// once every such caller has given up, the silence limit applies again. A
+/// caller gives up by removing its request, so the request's own timeout is
+/// always what it reports, even when it wakes after its deadline.
 fn running_a_request(inner: &Inner, generation: u64) -> bool {
-    let now = Instant::now();
     lock(&inner.pending)
         .values()
-        .any(|waiting| waiting.generation == generation && waiting.answer_by > now)
+        .any(|waiting| waiting.generation == generation)
 }
 
 /// Hand one plugin message to whoever waits for it. Returns a reason to close
@@ -1407,6 +1400,31 @@ mod tests {
         bridge.stop();
         // The plugin's late answer finds the connection closed.
         let _ = plugin.join();
+    }
+
+    /// A caller's deadline and the reader's silence check fall on the same
+    /// instant, so the silence rule must not apply again until the caller
+    /// itself has given up on its request: otherwise a caller woken late
+    /// receives the closed session's `Lost` instead of its own timeout.
+    #[test]
+    fn a_request_holds_the_silence_rule_until_its_caller_gives_up() {
+        let scratch = Scratch::new("give-up");
+        let bridge = impatient(&scratch);
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        lock(&bridge.inner.pending).insert(
+            "request-late".to_owned(),
+            Pending {
+                generation: 7,
+                sender,
+            },
+        );
+        assert!(
+            running_a_request(&bridge.inner, 7),
+            "the caller still waits, past the instant its deadline names"
+        );
+        lock(&bridge.inner.pending).remove("request-late");
+        assert!(!running_a_request(&bridge.inner, 7), "the caller gave up");
+        bridge.stop();
     }
 
     #[test]
