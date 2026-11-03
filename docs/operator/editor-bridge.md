@@ -7,8 +7,8 @@ the project, while the server keeps its journal, policy and recovery rules.
 
 The editor bridge plug-in is not shipped with the first release: version 0.1 shipped only the
 frozen bridge protocol and its codec. Contract 0.2 ships the add-on, and contract 0.3 adds the
-live edits, saves, captures, log, scans, script navigation and running the project that this
-page describes. The protocol it speaks is still the frozen one; see
+live edits, saves, captures, log, scans, script navigation, editing calls and running the
+project that this page describes. The protocol it speaks is still the frozen one; see
 [Editor bridge protocol](../protocol/bridge-protocol.md).
 
 ## Install and enable the add-on
@@ -96,7 +96,8 @@ by its path, to the scene the editor holds, unsaved changes included:
 - the first operation that cannot be applied undoes everything before it, and nothing is
   committed;
 - the whole edit, up to 128 operations, is one undo action named `godot-mcp: <label>`;
-- nothing is saved; `editor.scene.save` saves. The answer carries the new digest.
+- nothing is saved; `editor.scene.save` saves. The answer carries the new digest and, for every
+  `call_method`, what it returned.
 
 The digest covers the whole scene: every node the scene owns, every stored property, every
 sub-resource the scene embeds, however deep, and every persistent signal connection. The node
@@ -154,6 +155,69 @@ close it. A scene that is open but not the edited one is shown, closed, and the 
 edited is shown again; that needs the edited scene to have a file. Godot 4.4.1 cannot close a
 scene from a plugin, so there the tool answers `unsupported`, and `editor.status.get` says
 `scene_close: false`.
+
+## Editing calls
+
+Some edits have no property to set: painting a `TileMapLayer`, keying an `Animation`, adding
+points to a curve. A batch makes them with a `call_method` operation, in `scene.batch.apply`,
+`editor.scene.edit`, `resource.batch.apply` and the operations of `scene.create` and
+`resource.create`:
+
+```json
+{ "op": "call_method", "node": "Ground", "method": "set_cell",
+  "arguments": [{ "type": "vector2i", "value": { "x": 3, "y": 4 } },
+                { "type": "integer", "value": 0 },
+                { "type": "vector2i", "value": { "x": 1, "y": 0 } }] }
+```
+
+**The receiver** is the node, `.` by default. A `resource` selector calls a resource of that
+node instead: `{ "property": "curve" }` a resource property, `{ "animation": "walk" }` an
+animation of an AnimationPlayer or AnimationTree, `{ "library": "" }` one of its animation
+libraries. The resource must be one the scene embeds. A resource saved in its own file is
+refused as `external_resource`, because the call would change that file too; edit it with
+`resource.batch.apply`, whose calls go to the resource itself.
+
+**The methods** are this table, matched by class and inheritance. Nothing else can be called.
+Every method changes only its receiver's own stored state, so the saved file holds the whole
+change.
+
+| Class | Methods |
+| --- | --- |
+| TileMapLayer | set_cell, erase_cell, clear, set_cells_terrain_connect, set_cells_terrain_path |
+| GridMap | set_cell_item, clear |
+| Line2D | add_point, remove_point, set_point_position, clear_points |
+| AnimationMixer | add_animation_library, remove_animation_library, rename_animation_library |
+| AnimationLibrary | add_animation, remove_animation, rename_animation |
+| Animation | add_track, remove_track, track_set_path, track_set_enabled, track_set_interpolation_type, track_set_interpolation_loop_wrap, value_track_set_update_mode, track_insert_key, track_remove_key, track_remove_key_at_time, track_set_key_value, track_set_key_time, track_set_key_transition, set_length, set_loop_mode, set_step |
+| SpriteFrames | add_animation, remove_animation, rename_animation, add_frame, remove_frame, set_frame, clear, set_animation_speed, set_animation_loop |
+| Curve | add_point, remove_point, set_point_value, set_point_offset, set_point_left_tangent, set_point_right_tangent, clear_points |
+| Curve2D | add_point, remove_point, set_point_position, set_point_in, set_point_out, clear_points |
+| Curve3D | add_point, remove_point, set_point_position, set_point_in, set_point_out, set_point_tilt, clear_points |
+| Gradient | add_point, remove_point, set_offset, set_color |
+| Theme | set_color, set_constant, set_font_size, set_font, set_icon, set_stylebox, clear_color, clear_constant, clear_font_size, clear_font, clear_icon, clear_stylebox |
+
+The table's one source is `crates/godot-mcp-domain/src/editing_methods.rs`; the server's
+schema, the plugin and the headless helper all follow it, and a test holds this page to it.
+
+**Arguments** are tagged values, at most 16, checked against the method's signature in the
+running Godot build — their number and their types — before the call. `{ "type":
+"new_resource", "value": { "class": "Animation" } }` passes a new resource the scene then
+embeds, of one of Animation, AnimationLibrary, Curve, Curve2D, Curve3D, Gradient,
+SpriteFrames, StyleBoxFlat and Theme; later operations reach it through a `resource` selector.
+A `resource` value refers to a resource file, which the call does not change.
+
+**The answer** carries `results`: one `{index, method, value}` per call, in batch order, with
+the call's return value as a tagged value, or `null` for a method that returns nothing.
+
+**Undo.** In the editor a call is undone by putting its receiver's stored properties back: the
+ones the call changed are written back, or, for Animation, Theme, AnimationMixer and
+TileMapLayer, the receiver is emptied and every stored property written back in order. Those
+four are the classes whose calls add or remove stored properties, or whose stored order a plain
+write does not restore: an animation's tracks, a theme's items, an AnimationMixer's libraries
+from Godot 4.6.1 on, and a layer's cells. A TileMapLayer keeps an erased cell in its stored
+data until its next update, so it is brought up to date after each call, undo and redo. A
+call that changes which properties a written-back receiver stores is refused as
+`not_undoable` before anything is committed.
 
 ## The project file and caches belong to the editor
 
@@ -371,7 +435,7 @@ project file, so it blocks nothing.
   plugin saw opened or saved, and for an open script only when its source differs from its file
   or the plugin last loaded that tab itself; otherwise it is `null`, and a headless write to
   that path is refused. Godot 4.7.1 reports both directly.
-- No tool calls arbitrary editor methods or runs arbitrary scripts.
+- No tool runs a script or calls an editor method outside the table above.
 
 ## What the add-on does not do
 
@@ -390,7 +454,7 @@ Each of these has another way to it, or is left to you on purpose.
 | Closing a scene on Godot 4.4.1 | Close it in the editor; Godot 4.4.1 cannot close a scene from a plugin. |
 | Discarding a scene's unsaved changes | Undo them with `editor.undo`, then close the scene; a close never discards. |
 | More than one editor | One editor connects to a server; run one server for each project. |
-| Running a script or calling an arbitrary editor method | Refused by design; see [ADR 0003](../contributor/adr/0003-no-arbitrary-script-execution.md). |
+| Running a script or any other editor method | Refused by design; see [ADR 0003](../contributor/adr/0003-no-arbitrary-script-execution.md). |
 
 ## Verified on
 

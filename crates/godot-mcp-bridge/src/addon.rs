@@ -43,6 +43,10 @@ pub const FILES: &[AddonFile] = &[
         bytes: include_bytes!("../addon/godot_mcp/command_queue.gd"),
     },
     AddonFile {
+        name: "editing_methods.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editing_methods.gd"),
+    },
+    AddonFile {
         name: "editor_config.gd",
         bytes: include_bytes!("../addon/godot_mcp/editor_config.gd"),
     },
@@ -111,6 +115,19 @@ pub const FILES: &[AddonFile] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_plugin_carries_the_editing_methods_table_verbatim() {
+        let shipped = FILES
+            .iter()
+            .find(|file| file.name == "editing_methods.gd")
+            .expect("editing_methods.gd ships");
+        let text = std::str::from_utf8(shipped.bytes).expect("GDScript is UTF-8");
+        assert!(
+            text.contains(&godot_mcp_domain::editing_methods::gdscript_table()),
+            "editing_methods.gd must carry the table godot-mcp-domain renders, unchanged"
+        );
+    }
 
     #[test]
     fn the_plugin_carries_the_protected_settings_verbatim() {

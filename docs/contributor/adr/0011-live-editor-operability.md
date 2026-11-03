@@ -1,4 +1,4 @@
-# 0011 — The live editor is operated through typed tools
+# 0011 — The live editor is operated through typed tools and one fixed table of editing calls
 
 **Status:** accepted for contract 0.3.0. It builds on
 [ADR 0010](0010-complete-development-bridge-strategy.md) and keeps
@@ -9,9 +9,9 @@
 Contract 0.2 connected a running editor: an agent could read the scene the editor holds, apply
 a scene batch to it, undo, redo, select and open scenes. It still could not do most of the
 editor's everyday work: edit without saving and save later, see what the editor shows, read
-what it logged, make it notice files changed on disk, open a script at a line, or press Play.
-Each of those sent a person back to the editor, which is the hand-off this project exists to
-remove.
+what it logged, make it notice files changed on disk, open a script at a line, paint a tile
+map, key an animation, shape a curve, or press Play. Each of those sent a person back to the
+editor, which is the hand-off this project exists to remove.
 
 The editor plugins this was compared with reach the same ground with one general entry
 point: call any method, or evaluate any GDScript, inside the editor. That is the shape ADR
@@ -30,6 +30,38 @@ Every new capability is its own tool with a strict schema: `editor.node.get`,
 for managed sessions, `runtime.performance.get`. Tools keep the dotted naming; there is no operation-multiplexing
 tool. The bridge protocol does not change: the add-on lists its methods when it connects, and
 a tool whose method an older add-on lacks answers `unsupported` with the way to update it.
+
+### Editing calls come from one fixed table
+
+Edits that have no property to set are made by a batch operation, `call_method`, that may call
+only the methods one table lists, by class. The table lives in
+`crates/godot-mcp-domain/src/editing_methods.rs`; the server's schema lists its methods, and the
+editor plugin and the headless helper each carry a generated copy that their crates' tests hold
+to it, as a test holds the operator page's table to it. A method is added only there, through
+this record:
+
+- every listed method changes only its receiver's own stored state, so the saved file holds
+  the whole change and the call can be undone by putting that state back;
+- the receiver is a node the scene owns, a resource the scene embeds, or the resource a
+  resource batch edits; a resource saved in its own file is refused, because the call would
+  change that file too;
+- arguments are typed values checked against the method's signature in the running build,
+  and a new embedded resource of a listed class is the only object a caller can construct.
+
+Undo in the editor puts the receiver's stored properties back: the ones the call changed are
+written back, or the receiver is emptied and every stored property written back in order. The
+table names the second strategy, how to empty the class, and a method that brings a class's
+stored properties up to date. On Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1 a probe and the live suite
+measured why each is needed:
+
+- an `AnimationMixer` stores its libraries as one dictionary on 4.4.1 and 4.5.1 and as one
+  property per library on 4.6.1 and 4.7.1, so a library call changes which properties it stores;
+  it has no `clear()`, so it is emptied by removing every library;
+- a `TileMapLayer` keeps an erased cell in its stored data until its next update, and writing
+  its cells back over the old ones does not restore their stored order, so it is emptied,
+  updated, written back and updated again;
+- on 4.4.1 and 4.5.1 setting an animation track's path to an empty one raises an engine error,
+  so a write-back skips empty node paths, which emptying recreates as empty anyway.
 
 ### A save is proven by the editor's report or by the file
 
@@ -160,7 +192,9 @@ the optional backend of ADR 0010 stays optional.
 
 ## Consequences
 
-- The domain contract is 0.3.0, the add-on 0.3.0 and the runtime probe 0.3.0.
+- The domain contract is 0.3.0, the add-on 0.3.0, the headless helper version 3 and the runtime
+  probe 0.3.0. A helper of version 2 already in a project stays where it is; version 3 installs
+  beside it.
 - `editor.scene.save`, `editor.filesystem.scan` and `editor.play.start` may write files nobody can
   list, so their journal entries cover the whole project and a lost answer blocks writes until it
   is resolved.

@@ -100,7 +100,8 @@ loopback, and the add-on dials it and must present the per-launch secret from th
 rendezvous file before one request is served. Any process running as your user can read that
 file, so the bridge is no stronger than your user account. The `editor`, `full` and `runtime`
 profiles serve it; `runtime` lists only the two tools that run the project in the editor. Its
-mutations are typed: scene commands, project settings, the editor's own settings and
+mutations are typed: scene commands, editing calls drawn from one fixed table of class methods
+that change only their receiver's stored state, project settings, the editor's own settings and
 shortcuts, saves, closing scenes, captures, navigation, rescans, and starting and stopping the
 project. It exposes no arbitrary method call and evaluates no expression; the only code it
 compiles at runtime is its own logger, from a source constant it carries. A capture contains

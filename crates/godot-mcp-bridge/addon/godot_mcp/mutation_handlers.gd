@@ -28,6 +28,7 @@ extends RefCounted
 const VariantCodec = preload("variant_codec.gd")
 const ProjectSettingsApply = preload("project_settings_apply.gd")
 const Filesystem = preload("filesystem.gd")
+const EditingMethods = preload("editing_methods.gd")
 const Play = preload("play.gd")
 const Preferences = preload("preferences.gd")
 const Shortcuts = preload("shortcuts.gd")
@@ -63,6 +64,8 @@ const METHODS := [
 var _owner: WeakRef = null
 var _bound: Dictionary = {}
 var _steps: Array = []
+## What each `call_method` of the batch being applied returned.
+var _results: Array = []
 var _files = Filesystem.new()
 var _play = Play.new()
 
@@ -603,6 +606,7 @@ func _batch(payload: Dictionary) -> Dictionary:
 		"action": label,
 		"version": version,
 		"digest": _handlers().edit_digest(root),
+		"results": _results,
 		"transaction_id": str(payload.get("transaction_id", "")),
 	})
 
@@ -611,6 +615,7 @@ func _batch(payload: Dictionary) -> Dictionary:
 ## be applied undoes everything recorded so far and is returned.
 func _apply_all(root: Node, operations: Array) -> Dictionary:
 	_steps = []
+	_results = []
 	for index in operations.size():
 		var operation = operations[index]
 		if typeof(operation) != TYPE_DICTIONARY or not operation.has("op"):
@@ -671,6 +676,7 @@ func _edit(payload: Dictionary) -> Dictionary:
 		"history_version": history.get_version(),
 		"digest": _handlers().edit_digest(root),
 		"unsaved": _handlers().unsaved(root),
+		"results": _results,
 		"transaction_id": str(payload.get("transaction_id", "")),
 	})
 
@@ -928,6 +934,11 @@ func _apply(root: Node, op: Dictionary, index: int) -> Dictionary:
 			if node == null or not _owned(root, node):
 				return refused("node_not_found", index, str(op.get("node", ".")))
 			return _set_subresource(node, op, index)
+		"call_method":
+			var node: Node = _node(root, op.get("node", "."))
+			if node == null or not _owned(root, node):
+				return refused("node_not_found", index, str(op.get("node", ".")))
+			return _call_method(root, node, op, index)
 		_:
 			return refused("unknown_operation", index, kind)
 	return {"ok": true}
@@ -960,6 +971,40 @@ func _set_property(node: Node, op: Dictionary, index: int, clear: bool) -> Dicti
 		return refused("value_type_mismatch", index, property + " is " + type_string(typeof(after)))
 	node.set(property, before)
 	_record([[node, "set", [property, after]]], [[node, "set", [property, before]]])
+	return {"ok": true}
+
+
+## `call_method`: call a listed editing method on the node or on a resource
+## the scene embeds, and record how to redo and undo it from the receiver's
+## stored properties before and after the call.
+func _call_method(root: Node, node: Node, op: Dictionary, index: int) -> Dictionary:
+	var found: Dictionary = EditingMethods.receiver(node, op.get("resource"), root.scene_file_path)
+	if not found.get("ok", false):
+		return refused(found["reason"], index, found["detail"])
+	var receiver: Object = found["object"]
+	var method := str(op.get("method", ""))
+	var listed := EditingMethods.listed_class(receiver, method)
+	if listed == "":
+		return refused("method_not_listed", index, "%s cannot be called on a %s" % [method, receiver.get_class()])
+	var arguments: Array = []
+	var given = op.get("arguments", [])
+	if typeof(given) != TYPE_ARRAY or given.size() > EditingMethods.MAX_CALL_ARGUMENTS:
+		return refused("invalid_arguments", index, "`arguments` lists at most %d values" % EditingMethods.MAX_CALL_ARGUMENTS)
+	for argument in given:
+		var decoded: Dictionary = EditingMethods.decode_argument(argument)
+		if not decoded["ok"]:
+			return refused("invalid_value", index, decoded["reason"])
+		arguments.append(decoded["value"])
+	var problem := EditingMethods.signature_problem(receiver, method, arguments)
+	if problem != "":
+		return refused("invalid_arguments", index, problem)
+	var recorded: Dictionary = EditingMethods.call_recorded(receiver, listed, method, arguments)
+	if not recorded["ok"]:
+		if recorded["unresolved"]:
+			return fail("unavailable", recorded["detail"], "unresolved")
+		return refused("not_undoable", index, recorded["detail"])
+	_steps.append({"do": recorded["do"], "undo": recorded["undo"], "do_refs": [], "undo_refs": []})
+	_results.append({"index": index, "method": method, "value": EditingMethods.encode_result(recorded["value"])})
 	return {"ok": true}
 
 

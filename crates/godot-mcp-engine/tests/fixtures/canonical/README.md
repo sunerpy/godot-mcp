@@ -11,12 +11,12 @@ observable contract Todo 17 depends on, with the engine-side reasoning recorded 
 the file's own header comment:
 
 ```
---headless --path <project> --script res://godot_mcp_helpers/2/canonical_write.gd \
+--headless --path <project> --script res://godot_mcp_helpers/3/canonical_write.gd \
     -- --request <rel> --response <rel>
 ```
 
 Everything after the bare `--` is what `OS.get_cmdline_user_args()` returns. The
-fixture writes **only** inside `res://godot_mcp_helpers/2/staging/` plus the
+fixture writes **only** inside `res://godot_mcp_helpers/3/staging/` plus the
 response document it was told to write; it never touches the caller's target path,
 because publishing onto the target is the Rust side's compare-and-swap under the
 Todo 2 lease. Its exit statuses are the helper's own four: `0` ok, `64` usage,
@@ -76,5 +76,5 @@ revalidated.
 
 The acceptance suite always copies the project into a scratch directory before
 running, because a canonical write legitimately creates
-`godot_mcp_helpers/2/` inside the project it writes. The committed fixtures are
+`godot_mcp_helpers/3/` inside the project it writes. The committed fixtures are
 never mutated.

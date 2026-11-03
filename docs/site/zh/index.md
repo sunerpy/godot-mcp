@@ -91,7 +91,7 @@ home:
             status: no-engine
             link: /zh/guide/editing#设置与资产
           - title: 编辑器
-            body: godot_mcp 插件让正在运行的编辑器连进来：修改并保存场景、截图、读取日志、运行游戏；对已打开场景的每次改动都是编辑器里一次可撤销的操作。
+            body: godot_mcp 插件让正在运行的编辑器连进来：修改并保存场景、画图块、给动画打关键帧、截图、读取日志、运行游戏；对已打开场景的每次改动都是编辑器里一次可撤销的操作。
             status: engine
             link: /zh/guide/editor
       - name: 运行项目

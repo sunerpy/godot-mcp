@@ -17,8 +17,9 @@ are refused instead.
    later; on 4.4.1 it answers `unsupported`). `editor.node.get` reads a node in full;
    `editor.scene.edit` changes the scene the editor holds and saves nothing;
    `editor.undo` returns to the pre-edit digest.
-3. A second `editor.scene.edit` makes the same edit again, and `editor.scene.save` writes
-   the file, which then holds the new node.
+3. A second `editor.scene.edit` paints a tile and keys an animation with `call_method`
+   operations (a new library and animation, a track, two keys) and answers what every
+   call returned; `editor.scene.save` writes the file, which holds the cell and the keys.
 4. A script written headless (`script.create`) is picked up by `editor.filesystem.scan`,
    `editor.types.get` reads its class, and `editor.script.open` puts the caret where
    asked.
@@ -119,8 +120,41 @@ def integer(value: int) -> dict:
     return tagged("integer", value)
 
 
+def number(value: float) -> dict:
+    return tagged("float", value)
+
+
 def vector2(x: float, y: float) -> dict:
     return tagged("vector2", {"x": x, "y": y})
+
+
+def vector2i(x: int, y: int) -> dict:
+    return tagged("vector2i", {"x": x, "y": y})
+
+
+def call(node: str, method: str, arguments: list, resource: dict | None = None) -> dict:
+    operation = {"op": "call_method", "node": node, "method": method, "arguments": arguments}
+    if resource is not None:
+        operation["resource"] = resource
+    return operation
+
+
+WALK = {"animation": "walk"}
+
+# One tile painted and one animation keyed, with what each call returns.
+CALLS = [
+    (call("Layer", "set_cell", [vector2i(1, 2), integer(0), vector2i(0, 0)]), None),
+    (call("Animator", "add_animation_library",
+          [tagged("string", ""), tagged("new_resource", {"class": "AnimationLibrary"})]), integer(0)),
+    (call("Animator", "add_animation",
+          [tagged("string", "walk"), tagged("new_resource", {"class": "Animation"})],
+          {"library": ""}), integer(0)),
+    (call("Animator", "add_track", [integer(0)], WALK), integer(0)),
+    (call("Animator", "track_set_path", [integer(0), tagged("node_path", "Sprite:position")], WALK), None),
+    (call("Animator", "track_insert_key", [integer(0), number(0.0), vector2(1.0, 1.0)], WALK), integer(0)),
+    (call("Animator", "track_insert_key", [integer(0), number(1.0), vector2(50.0, 1.0)], WALK), integer(1)),
+    (call("Animator", "set_length", [number(1.0)], WALK), None),
+]
 
 
 def bundled_version() -> str:
@@ -306,26 +340,27 @@ async def flow(arguments: argparse.Namespace, scratch: Path, report: dict) -> No
             undone = (await client.call("editor.undo", {"idempotencyId": "m8-undo"})).require_ok()
             assert undone["digest"] == original, undone
 
-            # 3. Make the edit again, then save.
-            coined = (await client.call("editor.scene.edit", {
+            # 3. Paint a tile and key an animation, then save.
+            painted = (await client.call("editor.scene.edit", {
                 "expectedDigest": original,
-                "operations": [
-                    {"op": "add_node", "parent": ".", "name": "Coin", "type": "Node2D"},
-                    {"op": "set_property", "node": "Coin", "property": "position", "value": vector2(8.0, 9.0)},
-                ],
-                "label": "add a coin",
-                "idempotencyId": "m8-edit-coin-again",
+                "operations": [operation for operation, _ in CALLS],
+                "label": "paint and key",
+                "idempotencyId": "m8-edit-calls",
             })).require_ok()
+            assert painted["results"] == [
+                {"index": index, "method": operation["method"], "value": value}
+                for index, (operation, value) in enumerate(CALLS)
+            ], painted["results"]
             saved = (await client.call("editor.scene.save", {"idempotencyId": "m8-save"})).require_ok()
             scene = (project / "main.tscn").read_bytes()
             assert saved["saved"] == [{"path": "res://main.tscn", "sha256": sha256(scene)}], saved
             text = scene.decode("utf-8")
-            # Godot 4.6.1 and later add a unique_id to every node header.
-            for expected in ('[node name="Coin" type="Node2D" parent="."', "position = Vector2(8, 9)"):
+            for expected in ("tile_map_data = PackedByteArray(", 'NodePath("Sprite:position")',
+                             "Vector2(50, 1)", "AnimationLibrary"):
                 assert expected in text, f"{expected!r} is not in the saved scene:\n{text}"
             after = (await client.call("editor.scene.tree.get")).require_ok()
-            assert after["digest"] == coined["digest"] and after["unsaved"] is False, after["unsaved"]
-            report["edit"] = {"undo_restores_digest": True, "saved_bytes": len(scene)}
+            assert after["digest"] == painted["digest"] and after["unsaved"] is False, after["unsaved"]
+            report["edit"] = {"calls": len(CALLS), "undo_restores_digest": True, "saved_bytes": len(scene)}
 
             # 4. A script written headless, picked up by a scan.
             (await client.call("script.create", {

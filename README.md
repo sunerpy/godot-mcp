@@ -43,7 +43,8 @@ cannot.
   language server and debug adapter.
 - **The editor you already have open.** With the bundled `godot_mcp` add-on, an
   agent inspects and edits the scenes your editor holds as undoable editor
-  actions, saves and closes them, captures the editor, reads its log, changes
+  actions, saves and closes them, paints tile maps and keys animations through
+  one fixed table of editing calls, captures the editor, reads its log, changes
   its settings and shortcuts, picks up changed files and runs the game from the
   editor.
 - **Refuses rather than guesses.** A binary `.scn` answers `unsupported` with the

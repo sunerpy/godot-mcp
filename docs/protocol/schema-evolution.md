@@ -56,8 +56,9 @@ Contract 0.3.0 adds seventeen tools — `editor.node.get`, `editor.types.search`
 `editor.scene.save`, `editor.scene.close`, `editor.main_screen.set`,
 `editor.screenshot.capture`, `editor.filesystem.scan`, `editor.script.open`,
 `editor.preferences.set`, `editor.shortcuts.set`, `editor.play.start`, `editor.play.stop` and
-`runtime.performance.get` — and the artifacts resource in the `editor` profile. The 0.2.0
-manifests stay frozen in `schemas/domain/profiles/v0.2/`.
+`runtime.performance.get` — the artifacts
+resource in the `editor` profile, the batch operation `call_method`, and the `results` field
+of every batch answer. The 0.2.0 manifests stay frozen in `schemas/domain/profiles/v0.2/`.
 
 Three behaviours narrow while a live editor is connected, so they are listed with the
 release rather than hidden in it:

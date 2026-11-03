@@ -130,7 +130,8 @@ fn a_live_edit_changes_the_editor_copy_and_writes_no_file() {
                     "action": "godot-mcp: add a node",
                     "history_version": 4,
                     "digest": "e".repeat(64),
-                    "unsaved": true
+                    "unsaved": true,
+                    "results": []
                 })),
             ),
     );

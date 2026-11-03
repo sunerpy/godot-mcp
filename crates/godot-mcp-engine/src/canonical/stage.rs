@@ -95,6 +95,8 @@ pub struct StagedArtifact {
     /// The engine-minted `uid://…`, when the operation produced one. Never derived
     /// in Rust.
     pub uid: Option<String>,
+    /// What each `call_method` of the batch returned, in batch order.
+    pub results: Vec<serde_json::Value>,
     /// The linked launch transaction this helper ran under.
     pub launch_transaction_id: String,
     /// The `process_launch` proof read back independently from the journal.
@@ -337,6 +339,12 @@ pub fn stage(
         }
     }
 
+    let results = response
+        .call_results()
+        .map_err(|reason| CanonicalError::HelperInconclusive {
+            reason: format!("the helper's response cannot be read: {reason}"),
+        })?;
+
     let Some(bytes) = read_optional(root, &artifact_path)? else {
         return Err(CanonicalError::HelperInconclusive {
             reason: format!(
@@ -351,6 +359,7 @@ pub fn stage(
         artifact_path,
         bytes,
         uid: response.uid.clone(),
+        results,
         response,
         launch_transaction_id: run.transaction_id,
         launch_proof,
@@ -631,7 +640,7 @@ mod tests {
             .expect_err("a caller path is never discarded");
         assert!(matches!(error, CanonicalError::UnusablePath { .. }));
         assert!(
-            discard_helper_artifact(&scratch, "godot_mcp_helpers/2/io/absent.request").is_ok(),
+            discard_helper_artifact(&scratch, "godot_mcp_helpers/3/io/absent.request").is_ok(),
             "removing an absent scratch document is not a failure"
         );
         let _ = std::fs::remove_dir_all(&scratch);
