@@ -60,7 +60,7 @@ reqwest = { version = "=0.13.5", default-features = false, features = ["rustls",
 # filesystem operations and by server observability to compare an opened log
 # file's identity with stdout. The only in-tree `unsafe` on Unix is the macOS
 # process observation (`sysctl`/`libproc`), which rustix does not cover.
-rustix = { version = "=1.1.5", default-features = false, features = ["std", "fs", "process"] }
+rustix = { version = "=1.1.6", default-features = false, features = ["std", "fs", "process"] }
 # Windows syscall bindings for the same handle-relative primitives: NT
 # handle-relative opens with reparse-point nofollow, volume-serial + 128-bit
 # file-ID object identity, `LockFileEx` advisory locking, handle-relative
@@ -91,16 +91,16 @@ tree-sitter = "=0.27.1"
 tree-sitter-gdscript = "=6.1.0"
 streaming-iterator = "=0.1.9"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
-notify = "=8.2.0"
+notify = "=8.2.1"
 
 # --- Serialization / schema ---------------------------------------------
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 toml = "=1.1.8"
-schemars = "=1.2.2"
+schemars = "=1.2.3"
 thiserror = "=2.0.21"
 anyhow = "=1.0.104"
-sha2 = "=0.11.0"
+sha2 = "=0.11.1"
 
 # --- Logging -------------------------------------------------------------
 tracing = "=0.1.44"
