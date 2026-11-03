@@ -7,7 +7,9 @@
 //! runtime probe of a managed game session is the other, one bridge per
 //! session ([`BridgeConfig::runtime`]). Each session has a reader thread that delivers
 //! answers to waiting callers, answers pings, sends heartbeats and closes the
-//! session when the plugin falls silent.
+//! session when the plugin falls silent while it runs no request. A plugin
+//! runs requests on its main thread and answers no heartbeat meanwhile, so a
+//! request in progress may keep it silent until that request's deadline.
 //!
 //! A call is dispatched only when a session is live and the plugin reported,
 //! in `bridge.describe_session`, that it implements the method. Every call has
@@ -48,15 +50,32 @@ pub(crate) const RENDEZVOUS_FILE: &str = "editor-bridge.rendezvous";
 /// The bridge methods this server may send, as advertised in `capabilities`.
 pub(crate) const BRIDGE_METHODS: &[&str] = &[
     "editor.addon.reload",
+    "editor.capture.chunk",
+    "editor.capture.viewport",
+    "editor.filesystem.scan",
     "editor.history.redo",
     "editor.history.undo",
+    "editor.log.read",
+    "editor.main_screen.set",
+    "editor.node",
+    "editor.play.start",
+    "editor.play.stop",
+    "editor.preferences.read",
+    "editor.preferences.set",
     "editor.scene.batch",
+    "editor.scene.close",
+    "editor.scene.edit",
     "editor.scene.open",
+    "editor.scene.save",
     "editor.scene.tree",
+    "editor.script.open",
     "editor.selection.set",
     "editor.settings.apply",
+    "editor.shortcuts.read",
+    "editor.shortcuts.set",
     "editor.state",
     "editor.types.class",
+    "editor.types.search",
 ];
 
 /// What distinguishes one bridge from another: where its rendezvous file is
@@ -68,7 +87,24 @@ pub(crate) struct BridgeConfig {
     pub(crate) methods: &'static [&'static str],
     label: &'static str,
     events: BridgeEvents,
+    liveness: Liveness,
 }
+
+/// How a bridge tells a live peer from a gone one.
+#[derive(Debug, Clone, Copy)]
+struct Liveness {
+    /// How often the server proves its own liveness to the peer.
+    heartbeat: Duration,
+    /// How long the peer may stay silent while it runs no request.
+    silence: Duration,
+}
+
+/// A peer answers heartbeats from its main thread, which can block for a
+/// while (an import, a large save) without the peer being gone.
+const LIVENESS: Liveness = Liveness {
+    heartbeat: Duration::from_secs(5),
+    silence: Duration::from_secs(30),
+};
 
 #[derive(Debug, Clone, Copy)]
 struct BridgeEvents {
@@ -91,6 +127,7 @@ impl BridgeConfig {
                 connected: "editor_bridge_connected",
                 disconnected: "editor_bridge_disconnected",
             },
+            liveness: LIVENESS,
         }
     }
 
@@ -106,15 +143,19 @@ impl BridgeConfig {
                 connected: "runtime_bridge_connected",
                 disconnected: "runtime_bridge_disconnected",
             },
+            liveness: LIVENESS,
         }
+    }
+
+    /// This bridge, sending heartbeats every `heartbeat` and closing a peer
+    /// silent for `silence`.
+    #[cfg(test)]
+    pub(crate) const fn with_liveness(mut self, heartbeat: Duration, silence: Duration) -> Self {
+        self.liveness = Liveness { heartbeat, silence };
+        self
     }
 }
 
-/// How often the server proves liveness to the plugin.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-/// How long a plugin may stay silent before its session is closed. The editor
-/// main thread can block for a while (an import, a large save).
-const SILENCE_LIMIT: Duration = Duration::from_secs(30);
 /// How long a fresh session has to describe itself.
 const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the acceptor waits for a dial before checking whether to stop.
@@ -258,23 +299,32 @@ struct Inner {
     methods: &'static [&'static str],
     label: &'static str,
     events: BridgeEvents,
+    liveness: Liveness,
     /// How many exclusions are held. While one is, no session is installed.
     /// Taken before `current` wherever both are held.
     admission: Mutex<usize>,
     current: Mutex<Option<Session>>,
-    /// Waiting callers by request message id, with the session generation the
-    /// request was sent on.
-    pending: Mutex<HashMap<String, (u64, AnswerSender)>>,
+    /// Waiting callers by request message id.
+    pending: Mutex<HashMap<String, Pending>>,
     next_message: AtomicU64,
     next_generation: AtomicU64,
     counters: Mutex<Counters>,
+}
+
+/// One request awaiting its answer.
+struct Pending {
+    /// The session generation the request was sent on.
+    generation: u64,
+    /// When its caller stops waiting for the answer.
+    answer_by: Instant,
+    sender: AnswerSender,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn now_unix_ms() -> u64 {
+pub(crate) fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {
@@ -337,6 +387,7 @@ impl EditorBridge {
             methods: config.methods,
             label: config.label,
             events: config.events,
+            liveness: config.liveness,
             admission: Mutex::new(0),
             current: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
@@ -574,7 +625,15 @@ fn send_request(
         payload,
     );
     let (sender, receiver) = mpsc::sync_channel(1);
-    lock(&inner.pending).insert(message_id.clone(), (generation, sender));
+    let deadline = Instant::now() + timeout + ANSWER_GRACE;
+    lock(&inner.pending).insert(
+        message_id.clone(),
+        Pending {
+            generation,
+            answer_by: deadline,
+            sender,
+        },
+    );
     if writer.send(&envelope).is_err() {
         // A write that failed delivered no complete frame: nothing can run.
         lock(&inner.pending).remove(&message_id);
@@ -587,7 +646,6 @@ fn send_request(
             &message_id,
         ));
     };
-    let deadline = Instant::now() + timeout + ANSWER_GRACE;
     let mut withdrawn = false;
     loop {
         let now = Instant::now();
@@ -617,12 +675,12 @@ fn fail_pending(inner: &Inner, generation: Option<u64>) {
     let mut pending = lock(&inner.pending);
     let lost: Vec<String> = pending
         .iter()
-        .filter(|(_, (sent_on, _))| generation.is_none_or(|ended| *sent_on == ended))
+        .filter(|(_, waiting)| generation.is_none_or(|ended| waiting.generation == ended))
         .map(|(id, _)| id.clone())
         .collect();
     for id in lost {
-        if let Some((_, sender)) = pending.remove(&id) {
-            let _ = sender.try_send(Err(BridgeFailure::Lost));
+        if let Some(waiting) = pending.remove(&id) {
+            let _ = waiting.sender.try_send(Err(BridgeFailure::Lost));
         }
     }
 }
@@ -757,7 +815,7 @@ fn read_loop(
             Ok(None) => {}
             Err(error) => break error.to_string(),
         }
-        if last_beat.elapsed() >= HEARTBEAT_INTERVAL {
+        if last_beat.elapsed() >= inner.liveness.heartbeat {
             last_beat = Instant::now();
             let beat = Envelope::heartbeat(
                 &inner.server,
@@ -771,7 +829,7 @@ fn read_loop(
                 break "the connection closed".to_owned();
             }
         }
-        if last_heard.elapsed() >= SILENCE_LIMIT {
+        if last_heard.elapsed() >= inner.liveness.silence && !running_a_request(inner, generation) {
             let _ = writer.close(1001, "the plugin went silent");
             break "the plugin went silent".to_owned();
         }
@@ -802,6 +860,17 @@ fn read_loop(
     );
 }
 
+/// Whether the peer of session `generation` holds a request whose caller still
+/// waits for it. A peer runs requests on its main thread, which answers no
+/// heartbeat until the request is done, so its silence then is not its absence;
+/// once every such caller has given up, the silence limit applies again.
+fn running_a_request(inner: &Inner, generation: u64) -> bool {
+    let now = Instant::now();
+    lock(&inner.pending)
+        .values()
+        .any(|waiting| waiting.generation == generation && waiting.answer_by > now)
+}
+
 /// Hand one plugin message to whoever waits for it. Returns a reason to close
 /// the session when the message has no place in the protocol.
 fn deliver(inner: &Inner, envelope: &Envelope) -> Option<String> {
@@ -809,7 +878,7 @@ fn deliver(inner: &Inner, envelope: &Envelope) -> Option<String> {
         MessageKind::Result | MessageKind::Error => {
             let correlation = envelope.correlation_id()?.to_owned();
             let waiting = lock(&inner.pending).remove(&correlation);
-            if let Some((_, sender)) = waiting {
+            if let Some(Pending { sender, .. }) = waiting {
                 let answer = if envelope.kind() == MessageKind::Result {
                     BridgeAnswer::Result {
                         status: envelope
@@ -1235,6 +1304,109 @@ mod tests {
         );
         bridge.stop();
         plugin.join().expect("the plugin ended");
+    }
+
+    /// A bridge that takes a peer for gone after 300 ms of silence.
+    fn impatient(scratch: &Scratch) -> Arc<EditorBridge> {
+        EditorBridge::start_with(
+            BridgeConfig::editor(&scratch.0)
+                .with_liveness(Duration::from_millis(50), Duration::from_millis(300)),
+            project(),
+        )
+        .expect("start")
+    }
+
+    #[test]
+    fn a_silent_peer_running_no_request_is_closed() {
+        let scratch = Scratch::new("quiet");
+        let bridge = impatient(&scratch);
+        let mut script = FakePluginScript::implementing(&["editor.state"]);
+        script.answer_heartbeats = false;
+        let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
+        wait_until("the plugin to connect", || {
+            bridge.status().sessions_opened == 1
+        });
+        wait_until("the silent session to close", || {
+            bridge.status().sessions_closed == 1
+        });
+        assert_eq!(
+            bridge.status().last_close_reason.as_deref(),
+            Some("the plugin went silent")
+        );
+        bridge.stop();
+        plugin.join().expect("the plugin ended");
+    }
+
+    #[test]
+    fn a_peer_busy_with_a_request_may_stay_silent_until_its_deadline() {
+        let scratch = Scratch::new("busy");
+        let bridge = impatient(&scratch);
+        let plugin = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]).answering(
+                "editor.state",
+                FakeAnswer::PayloadAfter {
+                    delay: Duration::from_millis(1500),
+                    payload: json!({ "open_scenes": [] }),
+                },
+            ),
+        );
+        wait_until("the plugin to connect", || bridge.status().connected);
+        let answer = bridge.call(
+            "editor.state",
+            OperationClass::Read,
+            &json!({}),
+            "busy-1",
+            Duration::from_secs(10),
+        );
+        assert_eq!(
+            answer,
+            Ok(BridgeAnswer::Result {
+                status: MutationStatus::NotStarted,
+                payload: json!({ "open_scenes": [] }),
+            }),
+            "five times the silence limit, but within the request's deadline"
+        );
+        assert_eq!(bridge.status().sessions_closed, 0);
+        bridge.stop();
+        plugin.join().expect("the plugin ended");
+    }
+
+    #[test]
+    fn a_peer_silent_past_its_request_deadline_is_closed() {
+        let scratch = Scratch::new("overdue");
+        let bridge = impatient(&scratch);
+        let plugin = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]).answering(
+                "editor.state",
+                FakeAnswer::PayloadAfter {
+                    delay: Duration::from_secs(4),
+                    payload: json!({}),
+                },
+            ),
+        );
+        wait_until("the plugin to connect", || bridge.status().connected);
+        assert_eq!(
+            bridge.call(
+                "editor.state",
+                OperationClass::Read,
+                &json!({}),
+                "overdue-1",
+                Duration::from_millis(100),
+            ),
+            Err(BridgeFailure::TimedOut)
+        );
+        wait_until("the silent session to close", || {
+            bridge.status().sessions_closed == 1
+        });
+        assert_eq!(
+            bridge.status().last_close_reason.as_deref(),
+            Some("the plugin went silent")
+        );
+        bridge.stop();
+        // The plugin's late answer finds the connection closed.
+        let _ = plugin.join();
     }
 
     #[test]

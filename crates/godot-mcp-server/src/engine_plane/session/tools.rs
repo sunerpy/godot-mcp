@@ -177,6 +177,9 @@ fn outcome_error(kind: ErrorKind, message: impl Into<String>) -> OutcomeError {
     OutcomeError::new(kind, message, false, BTreeMap::new())
 }
 
+/// The most monitors one `runtime.performance.get` may name.
+const MAX_MONITORS: usize = 256;
+
 fn invalid(message: impl Into<String>) -> OutcomeError {
     outcome_error(ErrorKind::InvalidInput, message)
 }
@@ -196,6 +199,7 @@ impl SessionCall for SessionOperation {
             Self::PropertiesGet => "runtime.properties",
             Self::SignalsGet => "runtime.signals",
             Self::UiGet => "runtime.ui",
+            Self::PerformanceGet => "runtime.performance",
             Self::ActionSend | Self::KeySend | Self::MouseSend => "runtime.input.send",
             Self::SequenceSend => "runtime.input.sequence",
             Self::ScreenshotCapture => "runtime.capture.screenshot",
@@ -429,6 +433,19 @@ impl SessionCall for SessionOperation {
                     }
                 }),
                 &["session", "node"],
+            ),
+            Self::PerformanceGet => (
+                json!({
+                    "session": session,
+                    "monitors": {
+                        "type": "array",
+                        "maxItems": MAX_MONITORS,
+                        "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+                        "description": "Only these monitors, by the names an earlier read \
+                                        answered; every monitor when omitted."
+                    }
+                }),
+                &["session"],
             ),
             Self::UiGet => (
                 json!({
@@ -839,7 +856,8 @@ impl KernelToolHandler for SessionHandler {
             SessionOperation::TreeGet
             | SessionOperation::PropertiesGet
             | SessionOperation::SignalsGet
-            | SessionOperation::UiGet => self.read(arguments).await,
+            | SessionOperation::UiGet
+            | SessionOperation::PerformanceGet => self.read(arguments).await,
             SessionOperation::RunStart | SessionOperation::EditorStart => self.start(&call).await,
             SessionOperation::DebugGet => {
                 let session = string(arguments, "session")?.map(str::to_owned);
@@ -959,6 +977,25 @@ impl SessionHandler {
                 );
                 if let Some(watch) = boolean(arguments, "watch")? {
                     payload.insert("watch".to_owned(), Value::Bool(watch));
+                }
+            }
+            SessionOperation::PerformanceGet => {
+                if let Some(names) = arguments.get("monitors") {
+                    let names = names
+                        .as_array()
+                        .filter(|names| {
+                            names.len() <= MAX_MONITORS
+                                && names.iter().all(|name| {
+                                    name.as_str()
+                                        .is_some_and(|name| !name.is_empty() && name.len() <= 256)
+                                })
+                        })
+                        .ok_or_else(|| {
+                            invalid(format!(
+                                "`monitors` is an array of at most {MAX_MONITORS} monitor names"
+                            ))
+                        })?;
+                    payload.insert("monitors".to_owned(), Value::Array(names.clone()));
                 }
             }
             _ => {

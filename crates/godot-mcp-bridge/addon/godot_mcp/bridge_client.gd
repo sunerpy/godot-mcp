@@ -7,8 +7,11 @@ extends Node
 ## it names, proves it read that file by presenting the per-launch secret and
 ## the project identity in `hello`, and then serves the server's requests
 ## through the main-thread dispatcher. Everything runs on the main thread: the
-## socket is polled from `_process`, and requests are executed by a deferred
-## drain. The owner sets `handlers` (the method set it serves),
+## socket is polled from `_process`, and the requests a poll received are
+## executed right after it, still from `_process`. They never run inside the
+## poll's receive loop, nor while deferred calls are flushed, where a windowed
+## editor refuses to show the progress dialog it saves scenes with. The owner
+## sets `handlers` (the method set it serves),
 ## `client_version` and, for a peer other than the editor plugin,
 ## `rendezvous_env` and `rendezvous_path` before adding the client to the tree.
 ##
@@ -41,6 +44,9 @@ var client_version := ""
 ## when it is unset, `rendezvous_path`.
 var rendezvous_env := "GODOT_MCP_BRIDGE_RENDEZVOUS"
 var rendezvous_path := "res://.godot-mcp/editor-bridge.rendezvous"
+
+static var _raw_control: RegEx = null
+static var _vertical_tab: RegEx = null
 
 var _peer: WebSocketPeer = null
 var _phase := "idle"
@@ -91,6 +97,8 @@ func _process(_delta: float) -> void:
 			_dial()
 		return
 	_poll(now)
+	if _drain_pending:
+		_drain()
 
 
 # --- rendezvous and dialling -------------------------------------------------
@@ -243,7 +251,26 @@ func _blank(kind: String) -> Dictionary:
 static func _encode(envelope: Dictionary) -> String:
 	# Sorted keys, compact separators and exact floats. Every integer the plugin
 	# sends is small enough for a GDScript int, so no u64 rewriting is needed.
-	return JSON.stringify(envelope, "", true, true)
+	return strict_json(JSON.stringify(envelope, "", true, true))
+
+
+## `text`, written by JSON.stringify, as JSON the server accepts.
+## JSON.stringify leaves the C0 control characters other than \b \f \n \r \t
+## unescaped and writes U+000B as `\v`; JSON allows neither, and the server
+## refuses such a frame together with its whole session. Compact stringify
+## output has no whitespace outside strings, so a raw control character is
+## always inside a string, where \u00XX is its escape. A `\v` escape is one
+## preceded by an even run of backslashes; an odd run is an escaped backslash.
+static func strict_json(text: String) -> String:
+	if _raw_control == null:
+		_raw_control = RegEx.create_from_string("[\\x01-\\x1f]")
+		_vertical_tab = RegEx.create_from_string("(?<!\\\\)((?:\\\\\\\\)*)\\\\v")
+	if _raw_control.search(text) != null:
+		for code in range(1, 32):
+			text = text.replace(char(code), "\\u%04x" % code)
+	if text.contains("\\v"):
+		text = _vertical_tab.sub(text, "$1\\u000b", true)
+	return text
 
 
 func _send(envelope: Dictionary) -> bool:
@@ -339,9 +366,7 @@ func _accept_request(message: Dictionary) -> void:
 	if refusal != "":
 		_reply(message, CommandQueue.refusal("unavailable", refusal))
 		return
-	if not _drain_pending:
-		_drain_pending = true
-		_drain.call_deferred()
+	_drain_pending = true
 
 
 func _drain() -> void:

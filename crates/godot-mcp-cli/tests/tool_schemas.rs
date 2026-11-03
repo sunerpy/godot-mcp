@@ -19,7 +19,7 @@ const STDIO_HANDSHAKE: &str = concat!(
     "\n",
 );
 
-const LIVE_TOOLS: [&str; 73] = [
+const LIVE_TOOLS: [&str; 90] = [
     "asset.delete",
     "asset.put",
     "asset.status",
@@ -31,14 +31,30 @@ const LIVE_TOOLS: [&str; 73] = [
     "editor.addon.remove",
     "editor.addon.status",
     "editor.addon.update",
+    "editor.filesystem.scan",
+    "editor.log.get",
+    "editor.main_screen.set",
+    "editor.node.get",
+    "editor.play.start",
+    "editor.play.stop",
+    "editor.preferences.get",
+    "editor.preferences.set",
     "editor.redo",
+    "editor.scene.close",
+    "editor.scene.edit",
     "editor.scene.open",
+    "editor.scene.save",
     "editor.scene.tree.get",
+    "editor.screenshot.capture",
+    "editor.script.open",
     "editor.selection.set",
     "editor.session.start",
     "editor.session.stop",
+    "editor.shortcuts.get",
+    "editor.shortcuts.set",
     "editor.status.get",
     "editor.types.get",
+    "editor.types.search",
     "editor.undo",
     "export.presets.list",
     "file.create",
@@ -78,6 +94,7 @@ const LIVE_TOOLS: [&str; 73] = [
     "resource.dependencies.get",
     "resource.tree.get",
     "resource.update",
+    "runtime.performance.get",
     "runtime.properties.get",
     "runtime.recording.capture",
     "runtime.screenshot.capture",
@@ -208,8 +225,9 @@ fn tools_list_from_shipped_binary_advertises_live_argument_schemas() {
     );
 
     let schemas = listed_schemas(&output.stdout);
-    // Contract 0.2: the full profile lists exactly the implemented catalog. The
-    // 27 version 0.1 planned methods without handlers are no longer listed.
+    // Since contract 0.2 the full profile lists exactly the implemented
+    // catalog. The 27 version 0.1 planned methods without handlers are no
+    // longer listed.
     assert_eq!(
         schemas.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         LIVE_TOOLS.into_iter().collect::<BTreeSet<_>>(),
@@ -323,7 +341,7 @@ fn tools_list_from_shipped_binary_advertises_live_argument_schemas() {
     assert_eq!(
         stubs.len(),
         0,
-        "contract 0.2 lists no handlerless stub: {stubs:?}"
+        "the contract lists no handlerless stub: {stubs:?}"
     );
     for (name, schema) in stubs {
         assert_eq!(

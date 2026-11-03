@@ -23,9 +23,9 @@ unreachable answers `unavailable` and names the plane. See
 | Profile | Capabilities | Tools | Resources |
 | --- | --- | --- | --- |
 | `core` | 1 | 15 | 4 |
-| `editor` | 3 | 48 | 4 |
-| `runtime` | 3 | 44 | 5 |
-| `full` | 5 | 73 | 5 |
+| `editor` | 3 | 62 | 5 |
+| `runtime` | 3 | 47 | 5 |
+| `full` | 5 | 90 | 5 |
 
 ## Methods
 
@@ -42,14 +42,30 @@ unreachable answers `unavailable` and names the plane. See
 | `editor.addon.remove` | `project_write` | `project_files` | no | yes | yes | no |
 | `editor.addon.status` | `read` | `project_files` | yes | no | yes | no |
 | `editor.addon.update` | `project_write` | `project_files` | no | yes | yes | no |
+| `editor.filesystem.scan` | `editor_mutate` | `live_editor` | no | yes | yes | no |
+| `editor.log.get` | `read` | `live_editor` | yes | no | yes | no |
+| `editor.main_screen.set` | `editor_mutate` | `live_editor` | no | no | yes | no |
+| `editor.node.get` | `read` | `live_editor` | yes | no | yes | no |
+| `editor.play.start` | `runtime_execute` | `live_editor` | no | no | no | yes |
+| `editor.play.stop` | `runtime_execute` | `live_editor` | no | yes | yes | no |
+| `editor.preferences.get` | `read` | `live_editor` | yes | no | yes | no |
+| `editor.preferences.set` | `editor_mutate` | `live_editor` | no | no | yes | no |
 | `editor.redo` | `editor_mutate` | `live_editor` | no | yes | no | no |
+| `editor.scene.close` | `editor_mutate` | `live_editor` | no | no | yes | no |
+| `editor.scene.edit` | `editor_mutate` | `live_editor` | no | yes | no | no |
 | `editor.scene.open` | `editor_mutate` | `live_editor` | no | no | yes | no |
+| `editor.scene.save` | `editor_mutate` | `live_editor` | no | yes | yes | no |
 | `editor.scene.tree.get` | `read` | `live_editor` | yes | no | yes | no |
+| `editor.screenshot.capture` | `editor_mutate` | `live_editor` | no | no | no | no |
+| `editor.script.open` | `editor_mutate` | `live_editor` | no | no | yes | no |
 | `editor.selection.set` | `editor_mutate` | `live_editor` | no | no | yes | no |
 | `editor.session.start` | `runtime_execute` | `headless_engine` | no | no | no | yes |
 | `editor.session.stop` | `runtime_execute` | `editor_session` | no | yes | yes | no |
+| `editor.shortcuts.get` | `read` | `live_editor` | yes | no | yes | no |
+| `editor.shortcuts.set` | `editor_mutate` | `live_editor` | no | no | yes | no |
 | `editor.status.get` | `read` | `live_editor` | yes | no | yes | no |
 | `editor.types.get` | `read` | `live_editor` | yes | no | yes | no |
+| `editor.types.search` | `read` | `live_editor` | yes | no | yes | no |
 | `editor.undo` | `editor_mutate` | `live_editor` | no | yes | no | no |
 | `export.presets.list` | `read` | `headless_engine` | yes | no | yes | no |
 | `file.create` | `project_write` | `project_files` | no | no | yes | no |
@@ -91,6 +107,7 @@ unreachable answers `unavailable` and names the plane. See
 | `resource.dependencies.get` | `read` | `project_files` | yes | no | yes | no |
 | `resource.tree.get` | `read` | `project_files` | yes | no | yes | no |
 | `resource.update` | `project_write` | `headless_engine` | no | yes | yes | no |
+| `runtime.performance.get` | `read` | `game_session` | yes | no | yes | no |
 | `runtime.properties.get` | `read` | `game_session` | yes | no | yes | no |
 | `runtime.recording.capture` | `runtime_execute` | `game_session` | no | no | no | no |
 | `runtime.screenshot.capture` | `runtime_execute` | `game_session` | no | no | no | no |
@@ -152,17 +169,69 @@ Compare the bundled godot_mcp editor add-on with addons/godot_mcp/ in the projec
 
 Bring addons/godot_mcp/ to the bundled add-on: unchanged files are replaced, missing ones written, and a file you edited is kept as `<name>.godot-mcp-backup` beside the new one. Nothing changes when it is current. One journaled transaction; requires `idempotencyId`.
 
+### `editor.filesystem.scan`
+
+Have the connected editor rescan the project's files, import what changed and register new script classes, as it does when it regains focus; `reimport` also reimports those assets. Then reload every open script tab whose file changed and that holds no unsaved edit, and list the tabs left as they were. Refused when an import could start an external program (Blender, FBX2glTF). Waits up to `timeoutMs` (300000 by default). The editor may write any project file meanwhile, so a lost answer blocks writes until it is resolved.
+
+### `editor.log.get`
+
+Return what the connected editor logged since its godot_mcp plugin started — prints, errors, warnings and script and shader errors, each with its source location and script backtrace — after the `after` cursor, oldest first, up to `limit` (100 by default), optionally only some `kinds`. `next` is the cursor for the next read; a different `epoch` means the plugin restarted and the read starts again from the oldest entry kept. Godot 4.4.1 cannot hand its log to a plugin; 4.5.1 and later can. Changes nothing.
+
+### `editor.main_screen.set`
+
+Show the `screen` — 2D, 3D or Script — as the connected editor's main screen, as its own screen buttons do, and answer once it is shown. Changes editor state only.
+
+### `editor.node.get`
+
+Return one `node` — a path relative to the scene root, the root by default — of the scene the connected editor is editing (or the open `scene`, when current) as the editor holds it: class, script, instanced scene, ownership, groups and children; every property, or the named `properties`, with its type, hint, usage, tagged value and whether it differs from its default; and its signals with their connections. Carries the scene's semantic digest. Reading adds no undo history and marks nothing unsaved.
+
+### `editor.play.start`
+
+Run the project in the connected editor as its Play buttons do: the main scene by default, the scene being edited for `current`, or the scene at `scene`. The editor first saves the open scenes, which are listed in `saved`, and runs the game as its own child process, outside every boundary this server holds, so an untrusted project is refused; a managed session (project.run.start) runs the game inside one. Needs an editor with a window. Refused while a game runs: stop it with editor.play.stop.
+
+### `editor.play.stop`
+
+Stop the game the connected editor runs, as its Stop button does, and answer once it ended, with `was_playing`. Changes nothing when no game runs.
+
+### `editor.preferences.get`
+
+Read the connected editor's own settings, the ones its Editor Settings dialog shows: the named `settings`, or those whose names start with `prefix`, `limit` at a time (100 by default) from `offset`. Each names its type, tagged value, default, whether it differs from the default, its hint, whether a change needs the editor restarted and whether editor.preferences.set may change it. The value of a setting that holds a path, a host or a credential is withheld. Changes nothing.
+
+### `editor.preferences.set`
+
+Change the connected editor's own settings: `settings` maps setting names to tagged values of their types. The editor applies them as its Editor Settings dialog does and writes them to the user's editor settings file, which every project shares. All or nothing: a value of another type or outside its range or choices, or a setting that names a program, a path, a host or a credential, refuses the whole change, and so does a value the editor puts back, such as a color its theme preset sets while that preset is not Custom. Answers each setting before and after, anything the editor changed with them, and whether the editor must restart for one to take effect. No project file is written.
+
 ### `editor.redo`
 
 Redo the most recently undone action in the undo history of the scene being edited, in the connected editor, as the editor's own Redo does; refused with nothing changed while the editor's global or remote history also has an action to redo. `save` also saves the scene. Returns the scene's semantic digest after the redo. A lost answer is reported as unresolved and never repeated.
+
+### `editor.scene.close`
+
+Close the scene the connected editor is editing, or the open `scene`, as its Close Scene does, and answer the scenes left open and the one the editor then shows. Refused while the scene holds a change its file does not, which closing would discard: save it with editor.scene.save first. Needs Godot 4.5.1 or later. Changes editor state only; no project file is written.
+
+### `editor.scene.edit`
+
+Apply typed `operations` — the scene.batch.apply model, nodes named by path — to the scene the connected editor is editing (or the open `scene`) as the editor holds it, unsaved changes included, when its semantic digest is still `expectedDigest`. The whole batch is one undoable action, named after `label`; a refused operation changes nothing. Nothing is saved: save with editor.scene.save. Returns the new digest.
 
 ### `editor.scene.open`
 
 Open the text scene at `path` in the connected editor and make it the scene being edited; `reload` re-reads an open scene from its file, refused while the editor holds changes the file does not. Changes editor state only; no project file is written.
 
+### `editor.scene.save`
+
+Save the scene the connected editor is editing, the open `scene`, or with `all` every open scene, when each file still holds the bytes it held when the call was checked. Succeeds only when every file then holds its scene as the editor does; otherwise the answer is uncertain. Lists every file saved, including the scripts and resources the editor wrote with them. An uncertain or lost answer leaves every project file in doubt and blocks writes until it is resolved.
+
 ### `editor.scene.tree.get`
 
 Return the scene the connected editor is editing (or the open `scene`, when current) as the editor holds it: nodes with class, script, instanced scene, groups and changed stored properties as tagged values, persistent signal connections, unsaved state and a semantic digest. Reading adds no undo history and marks nothing unsaved.
+
+### `editor.screenshot.capture`
+
+Capture what the connected editor shows — its whole window, or the 2D or one 3D viewport (`viewport` 0 to 3) of the main screen shown, which editor.main_screen.set switches — after its next drawn frame, optionally scaled to `maxWidth`, as a PNG artifact read back from the editor and checked against its digest, and answer its opaque artifact URI, size and SHA-256. Needs an editor with a window; a headless editor draws nothing. Changes nothing in the project.
+
+### `editor.script.open`
+
+Open the GDScript file at `path` in the connected editor's built-in script editor with the caret at `line` and `column` (both from 1, the start by default). Refused when the editor is set to open scripts in an external program. Changes editor state only.
 
 ### `editor.selection.set`
 
@@ -176,13 +245,25 @@ Start a headless Godot editor on the project as a managed session this server ow
 
 Stop a managed editor session: its language-server and debug-adapter connections are closed and the editor, with any game it runs under the debugger, is terminated inside its boundary. Stopping a session that already ended answers its record. Answers the exit facts.
 
+### `editor.shortcuts.get`
+
+Read the connected editor's shortcuts, the ones its Editor Settings dialog lists on its Shortcuts tab: every editor shortcut and every built-in input action of its Common section. Answers the named `shortcuts`, or those whose names start with `prefix`, only the changed ones with `changedOnly`, `limit` at a time (100 by default) from `offset`. Each names its kind, label, key events and default events, and whether it differs from them. Needs Godot 4.6.1 or later. Changes nothing.
+
+### `editor.shortcuts.set`
+
+Change the connected editor's shortcuts and built-in actions, as editor.shortcuts.get names them: `shortcuts` maps each to the key events it is triggered by, an empty list for none, or `default` for its default events. The editor applies them as its Shortcuts tab does and writes them to the user's editor settings file, which every project shares. All or nothing: an unknown shortcut or key refuses the whole change. Answers each before and after, and anything the editor changed with them. Needs Godot 4.6.1 or later. No project file is written.
+
 ### `editor.status.get`
 
-Report whether a Godot editor running the godot_mcp plugin is connected, with its Godot and plugin versions, and, when it is, the open scenes and which one is being edited, the selection, unsaved state and the edited scene's undo history. Changes nothing in the editor.
+Report whether a Godot editor running the godot_mcp plugin is connected, with its Godot and plugin versions, and, when it is, the open scenes and which one is being edited, the selection, unsaved state, the edited scene's undo history, whether the file system is being scanned, the main screen shown, the scene being played, whether its log can be read, whether it can close scenes, whether it hands its shortcuts to a plugin and whether the plugin differs from the one this server bundles. Changes nothing in the editor.
 
 ### `editor.types.get`
 
 Describe one `class` as the connected editor sees it: an engine class of its exact Godot build, or a project script class by its `class_name` — inheritance, its own properties with types, hints and defaults, signals, methods and enums. Inherited members are listed under the parent class.
+
+### `editor.types.search`
+
+Find the classes the connected editor knows — the engine classes of its exact Godot build and the project's script classes — whose name contains `query` in any case, optionally only those inheriting `base` or only instantiable ones, up to `limit` (100 by default). Each names its kind, parent class, whether it can be instantiated and, for a script class, its script. editor.types.get describes one class. Changes nothing.
 
 ### `editor.undo`
 
@@ -348,6 +429,10 @@ Return the parsed structure of one text `resource` (.tres): its type, properties
 
 Canonicalize one existing text `target` resource through a supervised headless Godot re-save and publish the result with compare-and-swap. `dry_run` validates without writing. Needs a headless Godot editor process; the workspace revision advances after it commits.
 
+### `runtime.performance.get`
+
+Read the running game's performance monitors — frame rate and times, object, node and resource counts, memory, rendering, physics, audio and navigation figures — by the names its Godot build gives them (TIME_FPS, OBJECT_NODE_COUNT, ...), with the project's own custom monitors, or only the named `monitors`. The set differs between builds, so every value carries its name; an unknown name is refused. Answers the probe's revision and frame. Changes nothing in the game.
+
 ### `runtime.properties.get`
 
 Read the current values of one running node's `properties` (its stored and editor-visible ones by default) as tagged values, with the probe's revision and frame. A value the contract cannot carry is named, not serialized. Changes nothing in the game.
@@ -469,12 +554,26 @@ Tools:
 * `editor.addon.remove`
 * `editor.addon.status`
 * `editor.addon.update`
+* `editor.filesystem.scan`
+* `editor.log.get`
+* `editor.main_screen.set`
+* `editor.node.get`
+* `editor.preferences.get`
+* `editor.preferences.set`
 * `editor.redo`
+* `editor.scene.close`
+* `editor.scene.edit`
 * `editor.scene.open`
+* `editor.scene.save`
 * `editor.scene.tree.get`
+* `editor.screenshot.capture`
+* `editor.script.open`
 * `editor.selection.set`
+* `editor.shortcuts.get`
+* `editor.shortcuts.set`
 * `editor.status.get`
 * `editor.types.get`
+* `editor.types.search`
 * `editor.undo`
 * `file.create`
 * `file.delete`
@@ -519,6 +618,7 @@ Bootstrap tools, listed before a `--workspace` server binds its project:
 
 Resources:
 
+* `godot-mcp://artifacts/{artifact_id}`
 * `godot-mcp://resources/capabilities`
 * `godot-mcp://resources/health`
 * `godot-mcp://resources/project`
@@ -538,6 +638,8 @@ Tools:
 * `capabilities.get`
 * `debug.command`
 * `debug.session.get`
+* `editor.play.start`
+* `editor.play.stop`
 * `editor.session.start`
 * `editor.session.stop`
 * `export.presets.list`
@@ -568,6 +670,7 @@ Tools:
 * `project.validate`
 * `resource.dependencies.get`
 * `resource.tree.get`
+* `runtime.performance.get`
 * `runtime.properties.get`
 * `runtime.recording.capture`
 * `runtime.screenshot.capture`
@@ -617,14 +720,30 @@ Tools:
 * `editor.addon.remove`
 * `editor.addon.status`
 * `editor.addon.update`
+* `editor.filesystem.scan`
+* `editor.log.get`
+* `editor.main_screen.set`
+* `editor.node.get`
+* `editor.play.start`
+* `editor.play.stop`
+* `editor.preferences.get`
+* `editor.preferences.set`
 * `editor.redo`
+* `editor.scene.close`
+* `editor.scene.edit`
 * `editor.scene.open`
+* `editor.scene.save`
 * `editor.scene.tree.get`
+* `editor.screenshot.capture`
+* `editor.script.open`
 * `editor.selection.set`
 * `editor.session.start`
 * `editor.session.stop`
+* `editor.shortcuts.get`
+* `editor.shortcuts.set`
 * `editor.status.get`
 * `editor.types.get`
+* `editor.types.search`
 * `editor.undo`
 * `export.presets.list`
 * `file.create`
@@ -664,6 +783,7 @@ Tools:
 * `resource.dependencies.get`
 * `resource.tree.get`
 * `resource.update`
+* `runtime.performance.get`
 * `runtime.properties.get`
 * `runtime.recording.capture`
 * `runtime.screenshot.capture`

@@ -18,6 +18,8 @@
 
 `runtime.tree.get`、`runtime.properties.get`、`runtime.signals.get` 和 `runtime.ui.get` 通过探针读取游戏，不改动游戏：带类、脚本、分组和可见性的场景树，一个节点的属性（带类型的值），一个节点的信号和连接（设置 `watch` 后还会统计之后的每次发射），以及可见控件的矩形、文本和焦点。每个答复都写明探针的场景版本号和它取自哪一帧。
 
+`runtime.performance.get` 读取游戏的性能监视器：帧率和帧耗时、对象和节点数量、内存、渲染、物理、音频和导航数据，名字沿用你所用 Godot 版本里的叫法，比如 `TIME_FPS` 和 `OBJECT_NODE_COUNT`，并附带项目自己添加的自定义监视器。用 `monitors` 指定名字可以只读这些；这个版本没有的名字会被拒绝。
+
 ## 截取
 
 `runtime.screenshot.capture` 把根视口截成一张 PNG；`runtime.recording.capture` 以最多每秒 30 帧录制最长 10 秒，生成一个动态 PNG。每一帧都对照探针报告的摘要校验，答复把截取结果作为一个产物——带媒体类型、大小和 SHA-256 的不透明 URI——客户端用 `resources/read` 读取。无界面会话不渲染画面，在其中截取会答复 `unavailable`。

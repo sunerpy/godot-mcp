@@ -113,8 +113,8 @@ impl EngineRuntime {
                 ErrorKind::Conflict,
                 format!(
                     "{tool} writes the editor's import and UID caches, and a Godot editor is \
-                     connected that writes them too; let the editor import, or close the editor \
-                     first. Nothing was started."
+                     connected that writes them too; import through editor.filesystem.scan \
+                     (with `reimport`) instead, or close the editor first. Nothing was started."
                 ),
             )
         })

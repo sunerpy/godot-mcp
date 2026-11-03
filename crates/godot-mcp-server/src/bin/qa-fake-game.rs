@@ -198,6 +198,15 @@ fn script(stop: FakeAnswer, project: &std::path::Path) -> FakePluginScript {
             FakeAnswer::Payload(json!({ "held": [], "revision": 1, "frame": 13 })),
         )
         .answering(
+            "runtime.performance",
+            FakeAnswer::Payload(json!({
+                "monitors": { "TIME_FPS": 60.0, "OBJECT_NODE_COUNT": 3.0 },
+                "custom": {},
+                "revision": 1,
+                "frame": 14
+            })),
+        )
+        .answering(
             "runtime.input.release",
             FakeAnswer::Error(ErrorKind::Unavailable, MutationStatus::NotStarted),
         )

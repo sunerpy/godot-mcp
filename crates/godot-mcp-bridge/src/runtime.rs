@@ -18,7 +18,7 @@ pub const RENDEZVOUS_ENV: &str = "GODOT_MCP_RUNTIME_RENDEZVOUS";
 pub const SCENE_ENV: &str = "GODOT_MCP_RUNTIME_SCENE";
 
 /// The probe version, as it reports itself in every envelope.
-pub const PROBE_VERSION: &str = "0.2.0";
+pub const PROBE_VERSION: &str = "0.3.0";
 
 /// The bridge methods the probe implements, as the server may send them.
 pub const METHODS: &[&str] = &[
@@ -29,6 +29,7 @@ pub const METHODS: &[&str] = &[
     "runtime.input.send",
     "runtime.input.sequence",
     "runtime.input.state",
+    "runtime.performance",
     "runtime.properties",
     "runtime.session.stop",
     "runtime.signals",

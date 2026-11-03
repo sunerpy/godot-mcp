@@ -4,7 +4,7 @@
 //! handler) and F-10 (tool name, schema, policy and description maintained in
 //! independent registries) are reproduced over the wire: every tool a profile
 //! lists must have a strict schema, a specific description, MCP annotations and
-//! a production handler, and the contract must be version 0.2.0.
+//! a production handler, and the contract must be version 0.3.0.
 
 mod support;
 
@@ -61,25 +61,40 @@ const AUTHORING_WRITES: [&str; 13] = [
     "script.patch",
 ];
 
-/// Contract 0.2 live-editor methods and the add-on lifecycle: the editor
-/// profiles.
-const EDITOR_PLANE: [&str; 12] = [
+/// Live-editor methods and the add-on lifecycle: the editor profiles.
+const EDITOR_PLANE: [&str; 26] = [
     "editor.addon.install",
     "editor.addon.reload",
     "editor.addon.remove",
     "editor.addon.status",
     "editor.addon.update",
+    "editor.filesystem.scan",
+    "editor.log.get",
+    "editor.main_screen.set",
+    "editor.node.get",
+    "editor.preferences.get",
+    "editor.preferences.set",
     "editor.redo",
+    "editor.scene.close",
+    "editor.scene.edit",
     "editor.scene.open",
+    "editor.scene.save",
     "editor.scene.tree.get",
+    "editor.screenshot.capture",
+    "editor.script.open",
     "editor.selection.set",
+    "editor.shortcuts.get",
+    "editor.shortcuts.set",
     "editor.status.get",
     "editor.types.get",
+    "editor.types.search",
     "editor.undo",
 ];
 
+/// Running the project in the connected editor: the profiles that run it.
+const EDITOR_PLAY: [&str; 2] = ["editor.play.start", "editor.play.stop"];
 /// Contract 0.2 managed game sessions: the profiles that run the project.
-const RUNTIME_PLANE: [&str; 14] = [
+const RUNTIME_PLANE: [&str; 15] = [
     "input.action.send",
     "input.key.send",
     "input.mouse.send",
@@ -88,6 +103,7 @@ const RUNTIME_PLANE: [&str; 14] = [
     "project.run.start",
     "project.run.status",
     "project.run.stop",
+    "runtime.performance.get",
     "runtime.properties.get",
     "runtime.recording.capture",
     "runtime.screenshot.capture",
@@ -121,6 +137,7 @@ fn expected(profile: &str) -> BTreeSet<String> {
     if matches!(profile, "runtime" | "full") {
         tools.extend(RUNTIME_ONLY.iter().map(|tool| (*tool).to_owned()));
         tools.extend(RUNTIME_PLANE.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(EDITOR_PLAY.iter().map(|tool| (*tool).to_owned()));
         tools.extend(DEBUG_PLANE.iter().map(|tool| (*tool).to_owned()));
         tools.extend(EXPORT_PLANE.iter().map(|tool| (*tool).to_owned()));
     }
@@ -199,10 +216,10 @@ fn discovery_lists_only_implemented_tools_with_strict_descriptions() {
     }
 }
 
-/// The capability report carries the 0.2.0 contract and the same tool sets
+/// The capability report carries the 0.3.0 contract and the same tool sets
 /// discovery lists.
 #[test]
-fn the_capability_report_is_contract_0_2_0_and_matches_discovery() {
+fn the_capability_report_is_contract_0_3_0_and_matches_discovery() {
     let tree = ProjectTree::new("m1-capabilities");
     let mut session = StdioSession::initialized(&Spawn {
         project: &tree.root,
@@ -216,7 +233,7 @@ fn the_capability_report_is_contract_0_2_0_and_matches_discovery() {
         let manifest = &manifests[profile];
         assert_eq!(
             manifest["schema_version"],
-            json!("0.2.0"),
+            json!("0.3.0"),
             "{profile} manifest version: {manifest}"
         );
         let tools: BTreeSet<String> = manifest["tools"]

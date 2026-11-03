@@ -125,12 +125,14 @@ that history; see [Editor bridge](editor-bridge.md). An editor change whose answ
 is unresolved: it is never resent, and one that may have saved a file blocks writes until it
 is resolved, like any other quarantined transaction.
 
-A `project.settings.patch` carried out by the editor may switch a plugin, whose own code then
-runs and may write files nobody can list in advance. Such a transaction records
-`project.godot` with its precondition and one more entry, `*`, that stands for the whole
-project. A lost answer quarantines it like any unresolved effect that touched files, so writes
-stay blocked until an operator resolves it, and a committed one is followed by a full rescan of
-the workspace.
+Some editor effects may write files nobody can list in advance: `editor.scene.save` and
+`editor.play.start` save the open scenes with whatever external resources they changed,
+`editor.filesystem.scan` imports and writes `.import`, `.uid` and cache files, and
+`project.settings.patch` carried out by the editor may switch a plugin, whose own code then
+runs. Each of these transactions records the files it names, each with its precondition,
+and one more entry, `*`, that stands for the whole project. A lost answer quarantines it
+like any unresolved effect that touched files, so writes stay blocked until an operator
+resolves it, and a committed one is followed by a full rescan of the workspace.
 
 Nothing in the shipped planes silently substitutes for it. A durable write on the
 project plane is not undoable through the editor's history — its recovery story is the

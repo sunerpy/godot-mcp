@@ -176,9 +176,16 @@ const fn operations(
     }
 }
 
-/// The schema of one operation field.
-fn operation_field_schema(field: &str) -> Value {
+/// The schema of one operation field; a `live` operation names nodes by path
+/// only.
+fn operation_field_schema(field: &str, live: bool) -> Value {
     match field {
+        "parent" | "node" | "from" | "to" if live => json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_NAME_BYTES,
+            "description": "A node path relative to the scene root (`.` is the root)."
+        }),
         "parent" | "node" | "from" | "to" => json!({
             "type": "string",
             "minLength": 1,
@@ -208,7 +215,49 @@ fn operation_field_schema(field: &str) -> Value {
 }
 
 fn operations_schema(scene: bool) -> Value {
-    let description = if scene {
+    operations_schema_for(scene, false)
+}
+
+/// The operations an `editor.scene.edit` applies to the scene the editor
+/// holds: the scene batch model, with every node named by its path.
+pub(crate) fn live_operations_schema() -> Value {
+    operations_schema_for(true, true)
+}
+
+/// One operation of `editor.scene.edit`: a valid scene batch operation that
+/// names no node handle, since a handle is bound to file bytes the editor's
+/// copy may no longer hold.
+///
+/// # Errors
+/// Returns [`ErrorKind::InvalidInput`] for an invalid operation or a handle.
+pub(crate) fn validate_live_operation(operation: &Value, index: usize) -> Result<(), OutcomeError> {
+    validate_operation(true, operation, index)?;
+    for field in ["parent", "node", "from", "to"] {
+        if operation
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|reference| reference.starts_with(node_handle::PREFIX))
+        {
+            return Err(invalid(format!(
+                "operation {index}: `{field}` is a node handle, which names a node of a file's \
+                 bytes; name the node in the editor's copy by its path"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn operations_schema_for(scene: bool, live: bool) -> Value {
+    let description = if live {
+        "Typed operations applied in order: add_node {parent?, name, type?}, instance_scene \
+         {parent?, name, scene}, remove_node {node}, rename_node {node, name}, move_node {node, \
+         parent, index?}, duplicate_node {node, name}, set_property {node?, property, value}, \
+         clear_property {node?, property}, attach_script {node?, script}, detach_script {node?}, \
+         replace_instance {node, scene}, connect_signal / disconnect_signal {from, signal, to, \
+         method}, add_group / remove_group {node?, group}, set_subresource {node?, property, \
+         class, properties?}. `node`, `parent`, `from` and `to` take a node path relative to the \
+         scene root (`.` is the root). Values are tagged {type, value} objects."
+    } else if scene {
         "Typed operations applied in order: add_node {parent?, name, type?}, instance_scene \
          {parent?, name, scene}, remove_node {node}, rename_node {node, name}, move_node {node, \
          parent, index?}, duplicate_node {node, name}, set_property {node?, property, value}, \
@@ -234,7 +283,7 @@ fn operations_schema(scene: bool) -> Value {
                 .map(|(op, fields, required)| {
                     let fields: Vec<(&str, Value)> = fields
                         .iter()
-                        .map(|field| (*field, operation_field_schema(field)))
+                        .map(|field| (*field, operation_field_schema(field, live)))
                         .collect();
                     crate::schema::variant("op", op, &fields, required)
                 })
@@ -421,7 +470,7 @@ fn resource_path(
 
 /// A writable tagged value: any contract value except a live object reference,
 /// declaring no field beside `type` and `value` at any depth.
-fn tagged_value(value: &Value, context: &str) -> Result<(), OutcomeError> {
+pub(crate) fn tagged_value(value: &Value, context: &str) -> Result<(), OutcomeError> {
     /// Whether a tagged value, or one nested in it, declares another field.
     fn undeclared(value: &Value) -> bool {
         let Some(object) = value.as_object() else {

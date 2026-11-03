@@ -41,6 +41,11 @@ cannot.
   action and sequence input, read the live scene tree, properties, signals and UI,
   take screenshots and recordings, and step through code over the editor's
   language server and debug adapter.
+- **The editor you already have open.** With the bundled `godot_mcp` add-on, an
+  agent inspects and edits the scenes your editor holds as undoable editor
+  actions, saves and closes them, captures the editor, reads its log, changes
+  its settings and shortcuts, picks up changed files and runs the game from the
+  editor.
 - **Refuses rather than guesses.** A binary `.scn` answers `unsupported` with the
   fix ("re-save it as text"); an outcome it cannot prove answers `uncertain`.
   There is no tool that runs arbitrary GDScript.
@@ -121,12 +126,12 @@ Point your MCP client at the binary and a project directory (the one holding
 
 `core` is read-only. Choose the profile deliberately:
 
-| Profile   | Adds                                                           |
-| --------- | -------------------------------------------------------------- |
-| `core`    | Discovery and analysis; nothing in the project changes         |
-| `editor`  | Authoring: files, scripts, scenes, resources, settings, assets |
-| `runtime` | Running, testing, exporting and observing the game             |
-| `full`    | All of the above                                               |
+| Profile   | Adds                                                                            |
+| --------- | ------------------------------------------------------------------------------- |
+| `core`    | Discovery and analysis; nothing in the project changes                          |
+| `editor`  | Authoring: files, scripts, scenes, resources, settings, assets, the live editor |
+| `runtime` | Running, testing, exporting and observing the game, also from the live editor   |
+| `full`    | All of the above                                                                |
 
 Engine-backed tools need a Godot executable. The server looks in the usual install
 locations and on `PATH`; to choose one, set `godot_binary` in a configuration file
@@ -163,6 +168,7 @@ client as above, then let the agent discover the rest:
 | Install, configure and make a first request           | [Quickstart: local stdio](docs/operator/quickstart-stdio.md)         |
 | Every capability, with requests and measured answers  | [Usage and verification](docs/operator/usage-and-verification.md)    |
 | Games and editors it runs, input, captures, debugging | [Managed sessions](docs/operator/managed-sessions.md)                |
+| Driving the editor you have open                      | [Editor bridge](docs/operator/editor-bridge.md)                      |
 | Profiles, outcomes, `unavailable` and `uncertain`     | [Profiles and tool outcomes](docs/operator/profiles-and-outcomes.md) |
 | Crashes, survivors, quarantine and repair             | [Recovery](docs/operator/recovery.md)                                |
 | Trust boundaries and residual risk                    | [Threat model](docs/security/threat-model.md)                        |

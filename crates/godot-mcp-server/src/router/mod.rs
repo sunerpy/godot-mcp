@@ -739,6 +739,14 @@ impl OutcomeRouter {
                      project.settings.patch, which the editor carries out, or disable the \
                      godot_mcp plugin in the editor first. Nothing was written."
                         .to_owned()
+                } else if write.path.ends_with(".gd") {
+                    format!(
+                        "{} is open in the connected editor, whose copy may hold edits the \
+                         file does not; if the file was changed outside the editor, run \
+                         editor.filesystem.scan to reload it there, otherwise save or close it \
+                         in the editor first. Nothing was written.",
+                        write.path
+                    )
                 } else {
                     format!(
                         "{} is open in the connected editor; change a scene through \

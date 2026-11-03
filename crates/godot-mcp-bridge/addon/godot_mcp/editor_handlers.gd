@@ -10,6 +10,11 @@ extends RefCounted
 const VariantCodec = preload("variant_codec.gd")
 const TypeCatalog = preload("type_catalog.gd")
 const Mutations = preload("mutation_handlers.gd")
+const NodeReader = preload("node_reader.gd")
+const Capture = preload("capture.gd")
+const Preferences = preload("preferences.gd")
+const Shortcuts = preload("shortcuts.gd")
+const EditorConfig = preload("editor_config.gd")
 
 const PLUGIN_VERSION := "0.3.0"
 const MAX_NODES := 2000
@@ -17,14 +22,30 @@ const MAX_PROPERTIES_PER_NODE := 256
 const READS := [
 	"bridge.describe_session",
 	"bridge.ping",
+	"editor.capture.chunk",
+	"editor.capture.viewport",
+	"editor.node",
+	"editor.preferences.read",
 	"editor.scene.tree",
 	"editor.state",
 	"editor.types.class",
+	"editor.types.search",
 ]
 const SKIPPED_USAGE := PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP
+## Frames the editor gets to show a scene it was asked to show.
+const SHOW_FRAMES := 30
 
 var plugin: EditorPlugin = null
 var mutations = null
+var captures = null
+## The plugin's log capture, which serves `editor.log.read` while it runs.
+var editor_log = null
+## Script tabs this plugin proved are their script's, by path: the tab's
+## CodeEdit, held weakly. Before Godot 4.7 the editor cannot say whether a tab
+## is unsaved, but a tab seen here still says whether it is at its saved
+## version. A closed tab's CodeEdit is freed, so it is never mistaken for a
+## later one.
+var script_tabs: Dictionary = {}
 ## Undo-history version recorded when each history's scene was last known to
 ## match its file: when it was first seen open, and after every save.
 var saved_versions: Dictionary = {}
@@ -33,17 +54,46 @@ var saved_versions: Dictionary = {}
 func _init(owner_plugin: EditorPlugin = null) -> void:
 	plugin = owner_plugin
 	mutations = Mutations.new(self)
+	captures = Capture.new()
 
 
 func methods() -> Array:
 	var all: Array = READS.duplicate()
-	all.append_array(Mutations.METHODS)
+	for method in Mutations.METHODS:
+		if supports(method):
+			all.append(method)
+	for method in ["editor.log.read", "editor.shortcuts.read"]:
+		if supports(method):
+			all.append(method)
 	all.sort()
 	return all
 
 
 func supports(method: String) -> bool:
+	if method == "editor.log.read":
+		return log_capture()
+	if method == "editor.scene.close":
+		return scene_close()
+	if method == "editor.shortcuts.read" or method == "editor.shortcuts.set":
+		return shortcuts()
 	return READS.has(method) or Mutations.METHODS.has(method)
+
+
+## Whether this editor can close a scene from a plugin: false on a Godot
+## before 4.5.
+static func scene_close() -> bool:
+	return EditorInterface.has_method("close_scene")
+
+
+## Whether this editor names its shortcuts to a plugin: false on a Godot
+## before 4.6.
+static func shortcuts() -> bool:
+	return EditorConfig.has_shortcuts()
+
+
+## Whether the editor's log is being captured: false on a Godot before 4.5.
+func log_capture() -> bool:
+	return editor_log != null and editor_log.capturing()
 
 
 func is_mutation(method: String) -> bool:
@@ -73,6 +123,22 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			if described.get("ok", false):
 				return ok(described["payload"])
 			return fail(described["error_kind"], described["message"])
+		"editor.node":
+			return NodeReader.node(self, payload)
+		"editor.types.search":
+			return NodeReader.search(payload)
+		"editor.preferences.read":
+			return Preferences.read(payload)
+		"editor.shortcuts.read":
+			return Shortcuts.read(payload)
+		"editor.capture.viewport":
+			return await captures.viewport(payload)
+		"editor.capture.chunk":
+			return captures.chunk(payload)
+		"editor.log.read":
+			if not log_capture():
+				return fail("unsupported", "this editor does not capture its log; log capture needs Godot 4.5 or later")
+			return ok(editor_log.read(payload))
 		_:
 			return await mutations.dispatch(method, payload, context)
 
@@ -91,6 +157,9 @@ func describe() -> Dictionary:
 		"methods": methods(),
 		"headless": DisplayServer.get_name() == "headless",
 		"unsaved_scenes_api": EditorInterface.has_method("get_unsaved_scenes"),
+		"log_capture": log_capture(),
+		"scene_close": scene_close(),
+		"shortcuts": shortcuts(),
 	}
 
 
@@ -107,9 +176,77 @@ func history_id_of(root: Node) -> int:
 
 
 ## Record that the edited scene matches its file at its current history version.
+## Any other open scene is not recorded: the editor names a scene's history
+## only while that scene is the edited one.
 func mark_saved(root: Node) -> void:
-	if root != null:
+	if root != null and root == EditorInterface.get_edited_scene_root():
 		saved_versions[history_id_of(root)] = history_of(root).get_version()
+
+
+## The root of the open scene at `path` as the editor holds it, or null.
+## Godot 4.4 lists no open scene's root but the edited one's.
+func held_root(path: String) -> Node:
+	var edited: Node = EditorInterface.get_edited_scene_root()
+	if edited != null and edited.scene_file_path == path:
+		return edited
+	if EditorInterface.has_method("get_open_scene_roots"):
+		for root in EditorInterface.call("get_open_scene_roots"):
+			if root != null and root.scene_file_path == path:
+				return root
+	return null
+
+
+## Whether the file at `path` holds the open scene `root` as the editor holds
+## it, by their semantic digests.
+func holds(path: String, root: Node) -> bool:
+	if root == null:
+		return false
+	var disk: Dictionary = file_snapshot(path)
+	return not disk.is_empty() and str(disk.get("digest", "")) == edit_digest(root)
+
+
+## The open scenes of `paths` a save just made is not proven to have saved.
+## The editor announces a scene saved, and EditorInterface.save_scene()
+## answers OK, even when the file could not be written. So a scene counts as
+## saved when the editor itself reports it saved, which Godot 4.7 does, or
+## when its file holds the scene as the editor holds it. On Godot 4.4 each
+## open scene but the edited one is shown in turn to be read, and the edited
+## one shown again after. Every proven scene is marked saved.
+func not_saved(paths: Array) -> Array:
+	var reported: bool = EditorInterface.has_method("get_unsaved_scenes")
+	var still_unsaved: Array = Array(EditorInterface.call("get_unsaved_scenes")) if reported else []
+	var listed: bool = EditorInterface.has_method("get_open_scene_roots")
+	var edited: Node = EditorInterface.get_edited_scene_root()
+	var edited_path: String = edited.scene_file_path if edited != null else ""
+	var missing: Array = []
+	for path in paths:
+		var root: Node = held_root(path)
+		if root == null and not listed and EditorInterface.get_open_scenes().has(path):
+			root = await show_scene(path)
+		var proven: bool = (reported and not still_unsaved.has(path)) or holds(path, root)
+		if proven and root != null:
+			mark_saved(root)
+		elif not proven:
+			missing.append(path)
+	if edited_path != "":
+		await show_scene(edited_path)
+	return missing
+
+
+## Make the open scene at `path` the edited one, and answer its root once the
+## editor shows it, or null when it does not within SHOW_FRAMES frames. The
+## editor ignores a request to show a scene while it still settles the last
+## one it showed, so the request is repeated each frame.
+func show_scene(path: String) -> Node:
+	var tree: SceneTree = EditorInterface.get_base_control().get_tree()
+	for frame in SHOW_FRAMES:
+		var edited: Node = EditorInterface.get_edited_scene_root()
+		if edited != null and edited.scene_file_path == path:
+			return edited
+		EditorInterface.open_scene_from_path(path)
+		await tree.process_frame
+	var shown: Node = EditorInterface.get_edited_scene_root()
+	return shown if shown != null and shown.scene_file_path == path else null
 
 
 ## Whether the edited scene `root` holds changes its file does not: true or
@@ -124,6 +261,26 @@ func unsaved(root: Node):
 	if not saved_versions.has(id):
 		return null
 	return history_of(root).get_version() != int(saved_versions[id])
+
+
+## Remember that `code` is the tab showing the script at `path`.
+func remember_tab(path: String, code: CodeEdit) -> void:
+	script_tabs[path] = weakref(code)
+
+
+## Whether the tab last proved to show `script` holds unsaved edits: false
+## when it is still open, shows the script's source and is at its saved
+## version; true when it moved past its saved version; null when no such tab
+## is known.
+func known_tab_unsaved(script):
+	var known = script_tabs.get(script.resource_path)
+	var code = known.get_ref() if known != null else null
+	if not (code is CodeEdit):
+		script_tabs.erase(script.resource_path)
+		return null
+	if code.get_version() != code.get_saved_version():
+		return true
+	return null if code.text != script.source_code else false
 
 
 func state() -> Dictionary:
@@ -161,6 +318,8 @@ func state() -> Dictionary:
 				# This build cannot say whether the editor buffer is unsaved,
 				# only that the script differs from its file.
 				script_unsaved = true
+			else:
+				script_unsaved = known_tab_unsaved(script)
 			open_scripts.append({"path": script_path, "unsaved": script_unsaved})
 	var history = null
 	if edited != null:
@@ -171,6 +330,8 @@ func state() -> Dictionary:
 			"has_redo": undo_redo.has_redo(),
 			"current_action": undo_redo.get_current_action_name(),
 		}
+	var filesystem: EditorFileSystem = EditorInterface.get_resource_filesystem()
+	var playing_scene := EditorInterface.get_playing_scene()
 	return {
 		"open_scenes": open_scenes,
 		"open_scripts": open_scripts,
@@ -178,7 +339,32 @@ func state() -> Dictionary:
 		"selection": selection,
 		"history": history,
 		"playing": EditorInterface.is_playing_scene(),
+		"playing_scene": playing_scene if playing_scene != "" else null,
+		"filesystem": {
+			"scanning": filesystem.is_scanning(),
+			# Only Godot 4.7 says whether an import is running.
+			"importing": filesystem.call("is_importing") if filesystem.has_method("is_importing") else null,
+		},
+		"main_screen": main_screen(),
+		"log_capture": log_capture(),
+		"scene_close": scene_close(),
+		"shortcuts": shortcuts(),
 	}
+
+
+## The main screen the editor shows, told by which screen is visible: `2D`,
+## `3D`, `Script`, or `other` for any other screen (AssetLib, a plugin's).
+static func main_screen() -> String:
+	var viewport_2d = EditorInterface.get_editor_viewport_2d()
+	if viewport_2d != null and viewport_2d.get_parent() is Control and viewport_2d.get_parent().is_visible_in_tree():
+		return "2D"
+	var viewport_3d = EditorInterface.get_editor_viewport_3d(0)
+	if viewport_3d != null and viewport_3d.get_parent() is Control and viewport_3d.get_parent().is_visible_in_tree():
+		return "3D"
+	var script_editor = EditorInterface.get_script_editor()
+	if script_editor != null and script_editor.is_visible_in_tree():
+		return "Script"
+	return "other"
 
 
 static func node_path(root: Node, node: Node) -> String:
@@ -284,10 +470,128 @@ static func _stored_properties(node: Node) -> Dictionary:
 	return properties
 
 
+## The semantic digest of the scene `root` as the editor holds it, hashed in
+## one pass over every owned node: its path, class, script, instanced scene and
+## groups, every changed stored property with embedded sub-resources to any
+## depth, and the persistent signal connections between the scene's nodes. No
+## limit applies, so a change anywhere in the scene changes the digest; equal
+## digests mean equal scene content. It is what editor.scene.edit compares
+## `expected_digest` with, and what every answer reports as `digest`.
+static func edit_digest(root: Node) -> String:
+	var hashing := HashingContext.new()
+	hashing.start(HashingContext.HASH_SHA256)
+	var visited: Dictionary = {}
+	var connections: Array = []
+	# A cursor rather than pop_front(), which would make the walk quadratic.
+	var pending: Array = [root]
+	var cursor := 0
+	while cursor < pending.size():
+		var node: Node = pending[cursor]
+		cursor += 1
+		for child in node.get_children():
+			if child.owner == root:
+				pending.append(child)
+		var script = node.get_script()
+		var groups: Array = []
+		for group in node.get_groups():
+			if not String(group).begins_with("_"):
+				groups.append(String(group))
+		groups.sort()
+		_digest_text(hashing, "node", node_path(root, node))
+		_digest_text(hashing, "class", node.get_class())
+		_digest_text(hashing, "script", script.resource_path if script != null else "")
+		_digest_text(hashing, "instance", node.scene_file_path if node != root else "")
+		_digest_text(hashing, "groups", ",".join(groups))
+		for property in node.get_property_list():
+			var usage: int = int(property.get("usage", 0))
+			if not (usage & PROPERTY_USAGE_STORAGE) or (usage & SKIPPED_USAGE):
+				continue
+			var name: String = property["name"]
+			if name == "script":
+				continue
+			var value = node.get(name)
+			if value == _default_value(node, name):
+				continue
+			_digest_text(hashing, "property", name)
+			_digest_value(hashing, value, visited)
+		for connection in node.get_incoming_connections():
+			var source = connection["signal"].get_object()
+			if not (int(connection["flags"]) & CONNECT_PERSIST) or not (source is Node):
+				continue
+			if source != root and not root.is_ancestor_of(source):
+				continue
+			connections.append("%s|%s|%s|%s" % [
+				String(connection["signal"].get_name()),
+				node_path(root, source),
+				node_path(root, node),
+				String(connection["callable"].get_method()),
+			])
+	connections.sort()
+	for connection in connections:
+		_digest_text(hashing, "connection", connection)
+	return hashing.finish().hex_encode()
+
+
+## Feed one tagged, length-prefixed text into the digest, so no two different
+## sequences of fields hash alike. An empty text adds only its prefix:
+## HashingContext refuses an empty update with an engine error, and thousands
+## of those per scene flood the Output panel until each one takes seconds.
+static func _digest_text(hashing: HashingContext, tag: String, text: String) -> void:
+	var bytes := text.to_utf8_buffer()
+	hashing.update(("%s:%d:" % [tag, bytes.size()]).to_utf8_buffer())
+	if not bytes.is_empty():
+		hashing.update(bytes)
+
+
+## Feed one stored value: an embedded sub-resource by its class, script and
+## every changed stored property, once per resource however often it is
+## referenced; a container item by item; anything else by its text form.
+static func _digest_value(hashing: HashingContext, value, visited: Dictionary) -> void:
+	if value is Resource and (value.resource_path == "" or value.resource_path.contains("::")):
+		var id: int = value.get_instance_id()
+		if visited.has(id):
+			_digest_text(hashing, "seen", str(visited[id]))
+			return
+		visited[id] = visited.size()
+		var script = value.get_script()
+		_digest_text(hashing, "subresource", value.get_class())
+		_digest_text(hashing, "script", script.resource_path if script != null else "")
+		for property in value.get_property_list():
+			var usage: int = int(property.get("usage", 0))
+			if not (usage & PROPERTY_USAGE_STORAGE) or (usage & SKIPPED_USAGE):
+				continue
+			var name: String = property["name"]
+			if name in ["resource_path", "script"]:
+				continue
+			var current = value.get(name)
+			if current == ClassDB.class_get_property_default_value(value.get_class(), name):
+				continue
+			_digest_text(hashing, "property", name)
+			_digest_value(hashing, current, visited)
+		return
+	if value is Resource:
+		_digest_text(hashing, "resource", value.resource_path)
+		return
+	match typeof(value):
+		TYPE_ARRAY:
+			_digest_text(hashing, "array", str(value.size()))
+			for item in value:
+				_digest_value(hashing, item, visited)
+		TYPE_DICTIONARY:
+			_digest_text(hashing, "dictionary", str(value.size()))
+			for key in value:
+				_digest_value(hashing, key, visited)
+				_digest_value(hashing, value[key], visited)
+		TYPE_OBJECT:
+			_digest_text(hashing, "object", value.get_class() if value != null else "")
+		_:
+			_digest_text(hashing, "value", var_to_str(value))
+
+
 ## The semantic tree of the scene `root` as the editor holds it: owned nodes
 ## with their class, script, instanced scene, groups and changed stored
-## properties, and the persistent signal connections between them, plus a
-## digest of all of it. Equal digests mean equal scene content.
+## properties, and the persistent signal connections between them, plus the
+## digest of the whole scene. The node list is bounded; the digest is not.
 static func scene_snapshot(root: Node) -> Dictionary:
 	var nodes: Array = []
 	var connections: Array = []
@@ -320,12 +624,11 @@ static func scene_snapshot(root: Node) -> Dictionary:
 				"method": String(connection["callable"].get_method()),
 			})
 	connections.sort_custom(func(a, b): return JSON.stringify(a) < JSON.stringify(b))
-	var body := {"nodes": nodes, "connections": connections}
 	return {
 		"nodes": nodes,
 		"connections": connections,
 		"truncated": owned.size() >= MAX_NODES,
-		"digest": JSON.stringify(body, "", true, true).sha256_text(),
+		"digest": edit_digest(root),
 	}
 
 

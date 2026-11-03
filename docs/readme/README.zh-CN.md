@@ -26,6 +26,7 @@ MCP 客户端只和一个本地 `godot-mcp` 进程对话，从不直接连 Godot
 - **改动即事务。** 文件与脚本补丁带上被改内容的预期 SHA-256；场景与资源的批量改动写入日志。改到一半进程崩溃，下一个请求被服务之前，它会被核对为已证实的改前或改后状态，或者被隔离。
 - **真实引擎，版本钉死。** 校验、导入、测试与导出在你配置的 Godot 上执行；CI 让每次发布都跑过锁文件里从 4.4.1 到 4.7.1 的每个确切版本。
 - **它自己管理的游戏与编辑器。** 启动游戏或编辑器，发送键盘、鼠标、动作与序列输入，读取运行中的场景树、属性、信号与 UI，截图与录制，并通过编辑器的语言服务器和调试适配器单步调试。
+- **你已经打开的编辑器。** 启用内置的 `godot_mcp` 插件后，Agent 可以查看并修改编辑器持有的场景，作为可撤销的编辑器操作，并保存、关闭它们；截取编辑器画面，读取它的日志，修改编辑器的设置和快捷键，接收变化的文件，并从编辑器运行游戏。
 - **宁可拒绝，也不猜。** 二进制 `.scn` 返回 `unsupported` 并附上补救办法（另存为文本格式）；无法证实的结果返回 `uncertain`。没有任何工具能执行任意 GDScript。
 - **本地优先。** 默认走 stdio，没有端口，也没有凭据。可选的回环 HTTP 只接受每次启动生成的密钥，或经过认证的代理转发。
 - **可以自证的发布包。** Linux 用 musl 静态链接，Windows 用 `crt-static`；包里的 `MANIFEST.json` 供二进制自检，附 CycloneDX SBOM；发布归档带 GitHub 签发的构建证明。
@@ -93,8 +94,8 @@ make dist        # 输出 target/release-dist/godot-mcp-<版本>-<目标>.<扩�
 | profile   | 增加的能力                                         |
 | --------- | -------------------------------------------------- |
 | `core`    | 发现与分析，项目里什么都不会改                     |
-| `editor`  | 编写：文件、脚本、场景、资源、项目设置、资产       |
-| `runtime` | 运行、测试、导出与观察游戏                         |
+| `editor`  | 编写：文件、脚本、场景、资源、项目设置、资产，以及已连接的编辑器 |
+| `runtime` | 运行、测试、导出与观察游戏，也可以从已连接的编辑器运行           |
 | `full`    | 以上全部                                           |
 
 依赖引擎的工具需要一个 Godot 可执行文件。服务器会在常见安装位置和 `PATH` 上查找；要指定某一个，就在通过 `--config` 传入的配置文件里设置 `godot_binary`（见[配置](../operator/configuration.md)）。每个 profile 包含哪些工具，见生成的[工具清单](../protocol/tool-inventory.md)；HTTP 与反向代理的接法见 [MCP 客户端](../operator/mcp-clients.md)。
@@ -121,6 +122,7 @@ make dist        # 输出 target/release-dist/godot-mcp-<版本>-<目标>.<扩�
 | 安装、配置并发出第一个请求 | [快速开始：本地 stdio](../operator/quickstart-stdio.md) |
 | 每个能力的请求与实测答复 | [能力实操与验证复现](../operator/usage-and-verification.md) |
 | 它运行的游戏与编辑器、输入、截取、调试 | [托管会话](../operator/managed-sessions.md) |
+| 操作你已经打开的编辑器 | [编辑器桥](../operator/editor-bridge.md) |
 | profile、答复、`unavailable` 与 `uncertain` | [Profile 与工具答复](../operator/profiles-and-outcomes.md) |
 | 崩溃、遗留进程、隔离与修复 | [恢复](../operator/recovery.md) |
 | 信任边界与残余风险 | [威胁模型](../security/threat-model.md) |

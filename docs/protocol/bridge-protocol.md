@@ -3,10 +3,11 @@
 The wire contract between the Rust server and a GDScript editor plug-in is frozen and
 ships in the archive as `schemas/bridge/protocol-v1.json`, alongside its GDScript codec.
 
-The plug-in that would speak it is not part of this release. The protocol is documented
-here because it is finished, self-contained, and versioned — a future plug-in is an
-implementation task against a fixed contract rather than a redesign. See
-[Editor bridge](../operator/editor-bridge.md).
+The `godot_mcp` editor add-on speaks it, and so does the runtime probe of a managed game
+session, each over its own authenticated loopback connection. The protocol did not change
+when they shipped: everything they added travels inside the envelope as request methods
+and payloads. See [Editor bridge](../operator/editor-bridge.md) and
+[Managed sessions](../operator/managed-sessions.md).
 
 ## Framing
 
@@ -179,6 +180,22 @@ Three properties matter:
 
 The bridge endpoint is loopback-only. Being able to open it is not authentication; the
 handshake is. See the [threat model](../security/threat-model.md).
+
+## Methods and liveness
+
+A `bridge:request` names its method inside the envelope. When a session opens, the server
+asks the peer to describe itself, and the peer answers with its version, its Godot version
+and the exact list of methods it implements. The server sends no method the peer did not
+list: a tool whose method an older add-on lacks answers `unsupported` before anything is
+sent, naming the add-on's version. Adding a method is therefore a compatible change that
+needs no new protocol version; an add-on and a server of different releases agree on the
+methods both have.
+
+The server sends `bridge:heartbeat` every 5 seconds and closes a session that stays silent
+for 30. A peer that is running a request whose `deadline_unix_ms` has not passed is not
+silent: an editor runs one request at a time on its main thread and answers no heartbeat
+until it is done, so a long scan is not mistaken for a lost editor. Once the deadline
+passes without an answer the request is unresolved, and the silence rule applies again.
 
 ## Identity, project and deadlines
 

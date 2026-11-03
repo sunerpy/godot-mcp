@@ -17,14 +17,12 @@ use std::time::Duration;
 use godot_mcp_bridge::protocol::envelope::OperationClass;
 use godot_mcp_bridge::protocol::mutation::MutationStatus;
 use godot_mcp_domain::ErrorKind;
-use godot_mcp_domain::contracts::{
-    ArtifactContract, ArtifactId, ArtifactKind, ArtifactMetadata, ArtifactOwner,
-    ArtifactResourceUri, OutcomeError, PrincipalId, ProjectIdentity, RangeSemantics, SessionId,
-};
+use godot_mcp_domain::contracts::{ArtifactContract, ArtifactKind, OutcomeError, ProjectIdentity};
 use serde_json::{Map, Value, json};
 
 use super::{SessionManager, apng};
-use crate::artifacts::{ArtifactStore, sha256_hex};
+use crate::artifacts::ArtifactStore;
+use crate::capture::CaptureSink;
 use crate::editor::boundary::{bridge_outcome, receipt};
 use crate::editor::bridge::{BridgeAnswer, BridgeFailure, EditorBridge};
 use crate::effect::boundary::{
@@ -33,8 +31,6 @@ use crate::effect::boundary::{
 };
 use crate::journal::{EffectBoundaryKind, TypedProof};
 
-/// The probe's chunk size, and the most one chunk read asks for.
-const CHUNK_BYTES: u64 = 1024 * 1024;
 /// How long one capture or chunk read may take, beyond a recording's length.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -278,57 +274,20 @@ impl SessionRuntimeBoundary {
         bytes: &[u8],
         owner: Option<&Value>,
     ) -> Result<ArtifactContract, OutcomeError> {
-        let sha256 = sha256_hex(bytes);
-        let token = sha256_hex(format!("{}\n{sha256}", ticket.transaction_id()).as_bytes());
-        let id = ArtifactId::parse(format!("artifact_{token}")).map_err(|error| {
-            OutcomeError::new(
-                ErrorKind::Internal,
-                error.to_string(),
-                false,
-                BTreeMap::new(),
-            )
-        })?;
-        let length = bytes.len() as u64;
-        let created = super::now_unix_ms();
-        let principal = owner
-            .and_then(|owner| owner.get("principal"))
-            .and_then(Value::as_str)
-            .and_then(|principal| PrincipalId::parse(principal).ok());
-        let session = owner
-            .and_then(|owner| owner.get("session"))
-            .and_then(Value::as_str)
-            .and_then(|session| SessionId::parse(session).ok());
-        let owner = (principal.is_some() || session.is_some())
-            .then_some(ArtifactOwner { principal, session });
-        let violation = |error: godot_mcp_domain::contracts::ContractViolation| {
-            OutcomeError::new(
-                ErrorKind::Internal,
-                error.to_string(),
-                false,
-                BTreeMap::new(),
-            )
-        };
-        ArtifactContract::new(
-            id.clone(),
-            ArtifactResourceUri::for_artifact(&id),
-            self.project.clone(),
-            owner,
-            ArtifactMetadata {
-                kind,
-                media_type: media_type.to_owned(),
-                byte_length: length,
-                sha256,
-                created_at_unix_ms: created,
+        crate::capture::contract(
+            &CaptureSink {
+                store: Arc::clone(&self.artifacts),
+                project: self.project.clone(),
+                retention_ms: self.retention_ms,
+                max_range_bytes: self.max_range_bytes,
             },
-            created.saturating_add(self.retention_ms.max(1)),
-            RangeSemantics::new(
-                length.max(1),
-                length.clamp(1, self.max_range_bytes.max(1)),
-                true,
-            )
-            .map_err(violation)?,
+            ticket,
+            kind,
+            media_type,
+            bytes,
+            owner,
+            super::now_unix_ms(),
         )
-        .map_err(violation)
     }
 }
 
@@ -411,127 +370,19 @@ fn answer_of(answer: Result<BridgeAnswer, BridgeFailure>) -> Result<Value, Outco
     }
 }
 
-/// Read every frame of a capture back in bounded chunks and check each one
-/// against the length and SHA-256 the probe reported for it.
+/// Read every frame of a capture back from the probe in bounded chunks.
 fn fetch_frames(
     bridge: &EditorBridge,
     described: &Value,
     idempotency_id: &str,
 ) -> Result<Vec<Vec<u8>>, OutcomeError> {
-    let malformed = || {
-        OutcomeError::new(
-            ErrorKind::Internal,
-            "the probe described a capture it did not complete",
-            false,
-            BTreeMap::new(),
+    crate::capture::fetch_frames(described, |chunk| {
+        ask(
+            bridge,
+            "runtime.capture.chunk",
+            chunk,
+            idempotency_id,
+            CAPTURE_TIMEOUT,
         )
-    };
-    let capture = described
-        .get("capture_id")
-        .and_then(Value::as_str)
-        .ok_or_else(malformed)?;
-    let frames = described
-        .get("frames")
-        .and_then(Value::as_array)
-        .ok_or_else(malformed)?;
-    let mut fetched = Vec::with_capacity(frames.len());
-    for (index, frame) in frames.iter().enumerate() {
-        let length = frame
-            .get("byte_length")
-            .and_then(Value::as_u64)
-            .ok_or_else(malformed)?;
-        let expected = frame
-            .get("sha256")
-            .and_then(Value::as_str)
-            .ok_or_else(malformed)?;
-        let mut bytes: Vec<u8> = Vec::with_capacity(usize::try_from(length).unwrap_or(0));
-        while (bytes.len() as u64) < length {
-            let chunk = ask(
-                bridge,
-                "runtime.capture.chunk",
-                &json!({
-                    "capture_id": capture,
-                    "frame": index,
-                    "offset": bytes.len(),
-                    "length": CHUNK_BYTES,
-                }),
-                idempotency_id,
-                CAPTURE_TIMEOUT,
-            )?;
-            let data = chunk
-                .get("data_base64")
-                .and_then(Value::as_str)
-                .ok_or_else(malformed)?;
-            let decoded = base64_decode(data).ok_or_else(malformed)?;
-            if decoded.is_empty() {
-                return Err(malformed());
-            }
-            bytes.extend_from_slice(&decoded);
-        }
-        if bytes.len() as u64 != length || sha256_hex(&bytes) != expected {
-            return Err(OutcomeError::new(
-                ErrorKind::Internal,
-                format!("frame {index} did not arrive as the probe described it"),
-                false,
-                BTreeMap::new(),
-            ));
-        }
-        fetched.push(bytes);
-    }
-    Ok(fetched)
-}
-
-/// Decode standard base64 (with padding), as Godot's `Marshalls` writes it.
-fn base64_decode(text: &str) -> Option<Vec<u8>> {
-    fn value(byte: u8) -> Option<u32> {
-        Some(u32::from(match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => return None,
-        }))
-    }
-    let bytes: Vec<u8> = text
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .collect();
-    if !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for quad in bytes.chunks(4) {
-        let padding = quad.iter().rev().take_while(|byte| **byte == b'=').count();
-        if padding > 2 {
-            return None;
-        }
-        let mut word = 0_u32;
-        for (position, byte) in quad.iter().enumerate() {
-            let digit = if position >= 4 - padding {
-                0
-            } else {
-                value(*byte)?
-            };
-            word = (word << 6) | digit;
-        }
-        let decoded = [(word >> 16) as u8, (word >> 8) as u8, word as u8];
-        out.extend_from_slice(&decoded[..3 - padding]);
-    }
-    Some(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base64_decodes_what_godot_encodes() {
-        assert_eq!(base64_decode("aGVsbG8=").as_deref(), Some(&b"hello"[..]));
-        assert_eq!(base64_decode("aGk=").as_deref(), Some(&b"hi"[..]));
-        assert_eq!(base64_decode("aGV5").as_deref(), Some(&b"hey"[..]));
-        assert_eq!(base64_decode("").as_deref(), Some(&b""[..]));
-        assert!(base64_decode("a$==").is_none());
-        assert!(base64_decode("abc").is_none());
-    }
+    })
 }

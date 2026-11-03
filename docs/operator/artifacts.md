@@ -4,10 +4,11 @@ An operation whose result is a block of bytes rather than a value returns it as 
 resource with an **opaque identifier**, and only that way. This page describes that
 contract.
 
-Captures of a managed game session and the outputs of a managed export are the artifacts
-this build produces: a screenshot is one PNG, a recording is one animated PNG and an
-export output is one file of the exported build (see the section at the end,
-[Managed sessions](managed-sessions.md) and [Exports](exports.md)).
+Captures of a managed game session or of the connected editor, and the outputs of a
+managed export, are the artifacts this build produces: a screenshot is one PNG, a
+recording is one animated PNG and an export output is one file of the exported build (see
+the section at the end, [Managed sessions](managed-sessions.md),
+[Editor bridge](editor-bridge.md#captures) and [Exports](exports.md)).
 
 ## The identifier is the whole address
 
@@ -84,13 +85,17 @@ the artifact becomes readable; nothing about a capture is committed until it is.
 * One read returns at most `limits.max_output_bytes`; read a larger artifact in byte
   ranges.
 
+`editor.screenshot.capture` registers what the connected editor shows the same way: the
+server reads the PNG back from the editor in bounded chunks and checks it against the
+length and SHA-256 the editor reported before the artifact becomes readable.
+
 `project.export` registers every output file of a successful export the same way, as
 `application/octet-stream` with its size and SHA-256, once the export process has ended;
 `project.export.status` lists them. An export's outputs register together or not at all,
 and an export larger than the store's 256 MiB is failed rather than truncated.
 
-A capture needs a windowed game session: a headless session answers `unavailable`
-rather than an empty or synthesized image. What a capture shows is whatever the engine
+A capture needs a windowed game session or an editor with a window: a headless one
+answers `unavailable` rather than an empty or synthesized image. What a capture shows is whatever the engine
 drew into its root viewport; it promises nothing about fidelity beyond that, and frames
 from different Godot builds can differ.
 

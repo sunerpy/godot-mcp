@@ -135,10 +135,13 @@ sbom:
 ## and runs the engine's locked-artifact check against it
 ## (crates/godot-mcp-engine/tests/locked_artifact.rs): an editor is probed and
 ## checks scripts, export templates must match the build, and with
-## GODOT_DISPLAY_REQUIRED=1 the editor must also run windowed and render. A
-## download that does not match the locked digest is a hard failure, so only
-## hash-verified artifacts are ever cached or executed, and a run in which the
-## check itself did not run fails too.
+## GODOT_DISPLAY_REQUIRED=1 the editor must also run windowed and render. Every
+## artifact but an export-templates archive is then an editor, and the
+## live-editor suite (crates/godot-mcp-server/tests/live_editor_bridge.rs) runs
+## the shipped add-on in it; with GODOT_DISPLAY_REQUIRED=1 its windowed cases
+## run too. A download that does not match the locked digest is a hard failure,
+## so only hash-verified artifacts are ever cached or executed, and a run in
+## which a check did not run, or ran fewer cases than it lists, fails too.
 godot-test:
 	@if [ -z "$(GODOT_ARTIFACT_URL)" ]; then \
 		echo "godot-test: no locked Godot artifact requested (set GODOT_ARTIFACT_URL from make ci-matrix)"; \
@@ -157,7 +160,23 @@ godot-test:
 	status=$$?; printf '%s\n' "$$output"; \
 	[ "$$status" -eq 0 ] || exit "$$status"; \
 	printf '%s\n' "$$output" | grep -q 'test result: ok. 1 passed' || { \
-		echo "godot-test: FAIL: the locked-artifact check did not run" >&2; exit 1; }
+		echo "godot-test: FAIL: the locked-artifact check did not run" >&2; exit 1; }; \
+	case "$$artifact" in \
+		*.tpz) exit 0 ;; \
+	esac; \
+	listing=$$($(CARGO) test -p godot-mcp-server --all-features --test live_editor_bridge -- \
+		--ignored --list --format terse) || exit $$?; \
+	expected=$$(printf '%s\n' "$$listing" | grep -c ': test$$'); \
+	[ "$$expected" -gt 0 ] || { \
+		echo "godot-test: FAIL: the live-editor suite lists no case" >&2; exit 1; }; \
+	output=$$(GODOT_MCP_LOCKED_ARTIFACT="$$artifact" \
+		GODOT_MCP_DISPLAY_REQUIRED="$(GODOT_DISPLAY_REQUIRED)" \
+		$(CARGO) test -p godot-mcp-server --all-features --test live_editor_bridge -- \
+			--ignored 2>&1); \
+	status=$$?; printf '%s\n' "$$output"; \
+	[ "$$status" -eq 0 ] || exit "$$status"; \
+	printf '%s\n' "$$output" | grep -qF "test result: ok. $$expected passed" || { \
+		echo "godot-test: FAIL: the live-editor suite did not run its $$expected cases" >&2; exit 1; }
 
 ## check: the local gate to run before pushing: formatting, lint, tests, build, licences.
 check: fmt-check lint test build deny

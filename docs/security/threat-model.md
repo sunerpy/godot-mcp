@@ -94,14 +94,31 @@ archive entry, each archive's embedded manifest and the SBOM components for one.
 project has its own `@tool` code, that code runs when the project is loaded, and this
 boundary has no bearing on it.
 
-**Residual risk.** The `godot_mcp` editor add-on runs inside the editor with the editor's
-own privileges, as every editor plug-in does. It listens on nothing: the server listens on
+**Residual risk.** The `godot_mcp` editor add-on runs inside the editor with the editor's own
+privileges, as every editor plug-in does. It listens on nothing: the server listens on
 loopback, and the add-on dials it and must present the per-launch secret from the private
 rendezvous file before one request is served. Any process running as your user can read that
-file, so the bridge is no stronger than your user account. Its mutations are typed: scene
-commands, and project settings changed as typed values, never as a resource to load or an
-object other than an input event. It exposes no arbitrary method call. See
-[Editor bridge](../operator/editor-bridge.md).
+file, so the bridge is no stronger than your user account. The `editor`, `full` and `runtime`
+profiles serve it; `runtime` lists only the two tools that run the project in the editor. Its
+mutations are typed: scene commands, project settings, the editor's own settings and
+shortcuts, saves, closing scenes, captures, navigation, rescans, and starting and stopping the
+project. It exposes no arbitrary method call and evaluates no expression; the only code it
+compiles at runtime is its own logger, from a source constant it carries. A capture contains
+whatever the editor shows, and its log whatever the editor and the project print. A game the
+editor runs for `editor.play.start` is the editor's own child process, outside every boundary
+this server holds, so it is refused for an untrusted project.
+
+`editor.preferences.set` and `editor.shortcuts.set` are the changes that reach past the
+project: the editor writes them to your own editor settings file, which every project it opens
+shares. A setting that names a program the editor starts, a path, a host, a port or a
+credential, or that makes the editor rescan and import on its own, is refused, by name in the
+server and again by name and property hint in the add-on; the ones that hold paths, hosts or
+credentials are not read either. Every other setting can be changed, including ones that make
+the editor save on its own, whose saves no transaction records. `editor.shortcuts.set` rebinds
+the editor's shortcuts in the same file. It starts nothing itself, but a key it binds then
+triggers the editor action it names whenever you press it, Run Project among them; every
+binding a change made is in its answer, before and after.
+See [Editor bridge](../operator/editor-bridge.md).
 
 ### 4. The HTTP boundary
 

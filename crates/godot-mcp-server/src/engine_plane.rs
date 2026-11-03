@@ -34,7 +34,7 @@ use godot_mcp_engine::supervision::reconcile::{
 use godot_mcp_engine::validation::diagnostic::parse_engine_diagnostics;
 use godot_mcp_engine::validation::outcome::Observed;
 
-mod authored;
+pub(crate) mod authored;
 mod canonical;
 mod handler;
 mod journal;
