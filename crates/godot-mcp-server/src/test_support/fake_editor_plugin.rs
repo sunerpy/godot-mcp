@@ -74,12 +74,27 @@ pub enum FakeAnswer {
     /// plugin whose main thread is busy with the request, so it answers no
     /// heartbeat until the request is done.
     PayloadAfter { delay: Duration, payload: Value },
+    /// Answer with this payload (a mutation reports `committed`), then close
+    /// the connection, as an editor that exits once it answered a restart
+    /// does; when `then` names a script, dial again as that plugin, as the
+    /// editor it restarted does.
+    PayloadThenRedial {
+        payload: Value,
+        then: Option<Box<FakePluginScript>>,
+    },
+    /// Answer as `after` once a request for `method` has arrived, and as
+    /// `before` until then.
+    After {
+        method: String,
+        before: Box<FakeAnswer>,
+        after: Box<FakeAnswer>,
+    },
     /// Never answer.
     Ignore,
 }
 
 /// One scripted plugin.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FakePluginScript {
     /// The bridge methods the plugin reports in `bridge.describe_session`.
     pub methods: Vec<String>,
@@ -234,11 +249,17 @@ fn serve(
         ));
     }
 
+    // Requests that arrive while a request awaits its withdrawal wait their
+    // turn, as a plugin's command queue holds them.
+    let mut queued = std::collections::VecDeque::new();
     loop {
-        let message = match receive(&mut stream, &mut buffer) {
-            Ok(message) => message,
-            Err(closed) if closed.contains("closed") => return Ok(()),
-            Err(error) => return Err(error),
+        let message = match queued.pop_front() {
+            Some(message) => message,
+            None => match receive(&mut stream, &mut buffer) {
+                Ok(message) => message,
+                Err(closed) if closed.contains("closed") => return Ok(()),
+                Err(error) => return Err(error),
+            },
         };
         match message.kind() {
             MessageKind::Heartbeat => {
@@ -282,12 +303,28 @@ fn serve(
                     )?;
                     continue;
                 }
-                match script
+                let mut answer = script
                     .answers
                     .get(&method)
                     .cloned()
-                    .unwrap_or(FakeAnswer::Payload(json!({})))
+                    .unwrap_or(FakeAnswer::Payload(json!({})));
+                while let FakeAnswer::After {
+                    method: trigger,
+                    before,
+                    after,
+                } = answer
                 {
+                    // The request just received is the last one recorded.
+                    let seen = received
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .iter()
+                        .rev()
+                        .skip(1)
+                        .any(|(received, _)| *received == trigger);
+                    answer = if seen { *after } else { *before };
+                }
+                match answer {
                     FakeAnswer::Payload(payload) => send(
                         &mut stream,
                         &Envelope::result(
@@ -369,6 +406,7 @@ fn serve(
                             script,
                             message.message_id(),
                             within,
+                            &mut queued,
                         )?;
                         if withdrawn && let Some(marker) = &marker {
                             std::fs::write(marker, format!("withdrawn {method}"))
@@ -401,6 +439,7 @@ fn serve(
                             script,
                             message.message_id(),
                             within,
+                            &mut queued,
                         )?;
                         if withdrawn {
                             if let Some(marker) = &marker {
@@ -444,6 +483,28 @@ fn serve(
                             ),
                         )?;
                     }
+                    FakeAnswer::PayloadThenRedial { payload, then } => {
+                        send(
+                            &mut stream,
+                            &Envelope::result(
+                                &plugin,
+                                message.message_id(),
+                                if mutation {
+                                    MutationStatus::Committed
+                                } else {
+                                    MutationStatus::NotStarted
+                                },
+                                &payload,
+                            ),
+                        )?;
+                        let _ = stream.flush();
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        return match then {
+                            Some(then) => serve(rendezvous, &then, received),
+                            None => Ok(()),
+                        };
+                    }
+                    FakeAnswer::After { .. } => unreachable!("resolved above"),
                     FakeAnswer::Ignore => {}
                 }
             }
@@ -455,7 +516,8 @@ fn serve(
 }
 
 /// Read until the server withdraws request `message_id` (true) or `within`
-/// passes (false), answering heartbeats meanwhile.
+/// passes (false), answering heartbeats meanwhile and queueing every other
+/// request in `queued`, to be served after this one.
 fn await_withdrawal(
     stream: &mut TcpStream,
     buffer: &mut Vec<u8>,
@@ -463,6 +525,7 @@ fn await_withdrawal(
     script: &FakePluginScript,
     message_id: &str,
     within: Duration,
+    queued: &mut std::collections::VecDeque<Envelope>,
 ) -> Result<bool, String> {
     let deadline = Instant::now() + within;
     let withdrawn = loop {
@@ -490,6 +553,7 @@ fn await_withdrawal(
                 stream,
                 &Envelope::heartbeat_reply(plugin, message.message_id()),
             )?,
+            MessageKind::Request => queued.push_back(message),
             _ => {}
         }
     };

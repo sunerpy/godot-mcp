@@ -45,8 +45,9 @@ use godot_mcp_domain::objid::{LeaseKey, StableObjectId};
 use godot_mcp_server::audit::{
     AuditBoundary, AuditDigest, AuditEvent, AuditEventDraft, AuditFailurePolicy, AuditLane,
     AuditLog, AuditPhase, AuditPriority, AuditQueueFacts, AuditSinkConfig, AuditStatus,
-    AuditTransport, MAX_AUDIT_EVENT_BYTES, RESERVED_UNSAFE_SCRIPT_CAPABILITY,
-    audit_execution_surface, config_surface_probe, scan_bytes_for_reserved_identifier,
+    AuditTransport, DECLARED_SCRIPT_TOOLS, MAX_AUDIT_EVENT_BYTES,
+    RESERVED_UNSAFE_SCRIPT_CAPABILITY, audit_execution_surface, config_surface_probe,
+    scan_bytes_for_reserved_identifier,
 };
 use godot_mcp_server::idempotency::{ModePrincipal, TransportAuthMode};
 use godot_mcp_server::kernel::{
@@ -73,22 +74,27 @@ const PROFILES: [CapabilityProfile; 4] = [
 
 /// Frozen Todo 3 profile capacities. A drift here means the enumeration below
 /// silently stopped covering the real surface.
-/// Exact contract 0.3 profile sizes. Version 0.1 listed planned editor and
+/// Exact contract 0.4 profile sizes. Version 0.1 listed planned editor and
 /// runtime methods without handlers (25/39/49); contract 0.2 lists only the
-/// implemented catalog, so a planned method cannot inflate a profile, and
-/// contract 0.3 adds the live editor's tools to it.
+/// implemented catalog, so a planned method cannot inflate a profile,
+/// contract 0.3 adds the live editor's tools to it, and contract 0.4 adds
+/// the script runners, the engine reads, the Android device tools, game
+/// speed, image comparison, test scenarios and the other 0.4 tools.
 const PROFILE_TOOL_COUNTS: [(CapabilityProfile, usize); 4] = [
-    (CapabilityProfile::Core, 15),
-    (CapabilityProfile::Editor, 62),
-    (CapabilityProfile::Runtime, 47),
-    (CapabilityProfile::Full, 90),
+    (CapabilityProfile::Core, 22),
+    (CapabilityProfile::Editor, 81),
+    (CapabilityProfile::Runtime, 74),
+    (CapabilityProfile::Full, 129),
 ];
 
-/// Every shape that would denote an arbitrary-code-execution outcome. The
-/// enumeration below asserts no manifest entry matches any of them.
+/// Every shape that would denote a code-execution outcome. The enumeration
+/// below asserts no manifest entry matches any of them unless ADR 0012
+/// declares it (`DECLARED_SCRIPT_TOOLS`).
 const EXECUTION_SHAPES: &[&str] = &[
     "unsafe_script",
     "unsafe-script",
+    "editor.script.run",
+    "runtime.script.run",
     "script.run",
     "script.eval",
     "script.exec",
@@ -1433,8 +1439,20 @@ async fn audit_limits_failure_paths() {
     );
     assert!(
         surface.execution_entries.is_empty(),
-        "no manifest entry denotes arbitrary execution: {:?}",
+        "no manifest entry denotes undeclared execution: {:?}",
         surface.execution_entries
+    );
+    assert_eq!(
+        surface.declared_entries,
+        [
+            "editor:tool:editor.script.run",
+            "editor:tool:script.run",
+            "runtime:tool:runtime.script.run",
+            "full:tool:editor.script.run",
+            "full:tool:runtime.script.run",
+            "full:tool:script.run",
+        ],
+        "the declared script tools are advertised by the profiles that list them"
     );
 
     let mut union: BTreeSet<String> = BTreeSet::new();
@@ -1451,10 +1469,9 @@ async fn audit_limits_failure_paths() {
                 "no profile may advertise the reserved identifier"
             );
             for shape in EXECUTION_SHAPES {
-                assert_ne!(
-                    tool.as_str(),
-                    *shape,
-                    "no profile may advertise an arbitrary-execution tool"
+                assert!(
+                    tool.as_str() != *shape || DECLARED_SCRIPT_TOOLS.contains(shape),
+                    "no profile may advertise an undeclared execution tool ({tool})"
                 );
             }
         }
@@ -1522,10 +1539,9 @@ async fn audit_limits_failure_paths() {
     let registry = AuditLimitsHarness::open(reg_root.path(), AuditLimitsConfig::default())
         .expect("registry harness opens");
     for name in std::iter::once(RESERVED_UNSAFE_SCRIPT_CAPABILITY).chain(
-        EXECUTION_SHAPES
-            .iter()
-            .copied()
-            .filter(|shape| *shape != RESERVED_UNSAFE_SCRIPT_CAPABILITY),
+        EXECUTION_SHAPES.iter().copied().filter(|shape| {
+            *shape != RESERVED_UNSAFE_SCRIPT_CAPABILITY && !DECLARED_SCRIPT_TOOLS.contains(shape)
+        }),
     ) {
         let code = registry
             .register_reserved_handler(name)
@@ -1546,10 +1562,9 @@ async fn audit_limits_failure_paths() {
     // F. Structural absence proof: a real negative MCP call
     // =====================================================================
     for name in std::iter::once(RESERVED_UNSAFE_SCRIPT_CAPABILITY).chain(
-        EXECUTION_SHAPES
-            .iter()
-            .copied()
-            .filter(|shape| *shape != RESERVED_UNSAFE_SCRIPT_CAPABILITY),
+        EXECUTION_SHAPES.iter().copied().filter(|shape| {
+            *shape != RESERVED_UNSAFE_SCRIPT_CAPABILITY && !DECLARED_SCRIPT_TOOLS.contains(shape)
+        }),
     ) {
         let report = registry.negative_tool_call(name).await;
         assert_eq!(
@@ -1597,7 +1612,7 @@ async fn audit_limits_failure_paths() {
     );
     for shape in EXECUTION_SHAPES {
         assert!(
-            !advertised.contains(*shape),
+            !advertised.contains(*shape) || DECLARED_SCRIPT_TOOLS.contains(shape),
             "the advertised MCP tool list omits `{shape}`"
         );
     }
@@ -1629,8 +1644,13 @@ async fn audit_limits_failure_paths() {
     let probe = config_surface_probe();
     assert!(
         probe.accepted.is_empty(),
-        "no configuration key may enable arbitrary execution: {:?}",
+        "no configuration key but the declared switch may enable execution: {:?}",
         probe.accepted
+    );
+    assert_eq!(
+        probe.declared_switch,
+        ["server.allow_scripts"],
+        "the declared switch is accepted in the server section and nowhere else"
     );
     assert!(
         probe.rejected >= 8,

@@ -970,7 +970,7 @@ mod tests {
             )],
             pre_hashes: vec![FileEntry::absent("scenes/main.tscn", FileOperation::Create)],
             staged: vec![StagedOutput::of(
-                "godot_mcp_helpers/3/staging/abc.tscn",
+                "godot_mcp_helpers/4/staging/abc.tscn",
                 "0123456789abcdef",
                 b"[gd_scene]\n",
             )],

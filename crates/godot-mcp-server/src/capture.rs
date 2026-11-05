@@ -113,8 +113,38 @@ pub(crate) fn contract(
     owner: Option<&Value>,
     created_unix_ms: u64,
 ) -> Result<ArtifactContract, OutcomeError> {
+    contract_salted(
+        sink,
+        ticket,
+        "",
+        kind,
+        media_type,
+        bytes,
+        owner,
+        created_unix_ms,
+    )
+}
+
+/// [`contract`], for one of several artifacts a transaction makes: a
+/// non-empty `salt` sets it apart from the others, so two artifacts of the
+/// same bytes made by one transaction still have identities of their own.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn contract_salted(
+    sink: &CaptureSink,
+    ticket: &EffectTicket,
+    salt: &str,
+    kind: ArtifactKind,
+    media_type: &str,
+    bytes: &[u8],
+    owner: Option<&Value>,
+    created_unix_ms: u64,
+) -> Result<ArtifactContract, OutcomeError> {
     let sha256 = sha256_hex(bytes);
-    let token = sha256_hex(format!("{}\n{sha256}", ticket.transaction_id()).as_bytes());
+    let token = if salt.is_empty() {
+        sha256_hex(format!("{}\n{sha256}", ticket.transaction_id()).as_bytes())
+    } else {
+        sha256_hex(format!("{}\n{salt}\n{sha256}", ticket.transaction_id()).as_bytes())
+    };
     let id = ArtifactId::parse(format!("artifact_{token}"))
         .map_err(|error| internal(error.to_string()))?;
     let length = bytes.len() as u64;
@@ -152,8 +182,29 @@ pub(crate) fn contract(
     .map_err(violation)
 }
 
+/// Encode standard base64 with padding, as Godot's `Marshalls` reads it.
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for group in bytes.chunks(3) {
+        let word = (u32::from(group[0]) << 16)
+            | (u32::from(group.get(1).copied().unwrap_or(0)) << 8)
+            | u32::from(group.get(2).copied().unwrap_or(0));
+        for index in 0..4 {
+            if index <= group.len() {
+                out.push(char::from(
+                    TABLE[((word >> (18 - 6 * index)) & 63) as usize],
+                ));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// Decode standard base64 (with padding), as Godot's `Marshalls` writes it.
-fn base64_decode(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
     fn value(byte: u8) -> Option<u32> {
         Some(u32::from(match byte {
             b'A'..=b'Z' => byte - b'A',
@@ -195,6 +246,19 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_encodes_what_godot_decodes() {
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(b"hi"), "aGk=");
+        assert_eq!(base64_encode(b"hey"), "aGV5");
+        assert_eq!(base64_encode(b""), "");
+        let bytes: Vec<u8> = (0..=255).collect();
+        assert_eq!(
+            base64_decode(&base64_encode(&bytes)).as_deref(),
+            Some(&bytes[..])
+        );
+    }
 
     #[test]
     fn base64_decodes_what_godot_encodes() {

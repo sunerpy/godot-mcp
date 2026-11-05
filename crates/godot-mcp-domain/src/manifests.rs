@@ -287,6 +287,34 @@ const V0_2_BOOTSTRAP_TOOLS: &[&str] = &[
 /// Contract 0.2 bootstrap tools listed by `editor` and `full` only.
 const V0_2_EDITOR_BOOTSTRAP_TOOLS: &[&str] = &["project.create"];
 
+/// The frozen version 0.3 manifest for a profile, exactly as released in
+/// godot-mcp 0.2.0: every catalog tool that contract 0.3.0 or an earlier one
+/// introduced. A released tool is never removed or renamed, so the catalog
+/// still holds each one; the committed artifacts in
+/// `schemas/domain/profiles/v0.3/` hold this to the release.
+#[must_use]
+pub fn historical_manifest_v0_3(profile: CapabilityProfile) -> ProfileManifest {
+    let released = |state: ServerState| -> BTreeSet<String> {
+        TOOL_CATALOG
+            .iter()
+            .filter(|descriptor| {
+                descriptor.introduced_in <= ContractVersion::V0_3_0
+                    && descriptor.in_profile(profile)
+                    && descriptor.in_state(state)
+            })
+            .map(|descriptor| descriptor.name.to_owned())
+            .collect()
+    };
+    ProfileManifest {
+        schema_version: ContractVersion::V0_3_0,
+        profile,
+        capabilities: profile_capabilities(profile),
+        tools: released(ServerState::ProjectBound),
+        bootstrap_tools: released(ServerState::Bootstrap),
+        resources: profile_resources(profile),
+    }
+}
+
 /// The frozen version 0.2 manifest for a profile, exactly as released in
 /// godot-mcp 0.1.0 through 0.1.2.
 ///

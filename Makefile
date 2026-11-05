@@ -128,6 +128,11 @@ deny:
 sbom:
 	$(CARGO) cyclonedx --format json
 
+# The live suites `godot-test` runs against a locked editor, each case once per build.
+LIVE_SUITES := live_editor_bridge live_authoring live_recipes live_editor_script \
+	live_editor_more live_runtime_control live_runtime_script live_runtime_scenario \
+	script_run insight_engine live_deploy
+
 ## godot-test: batch Godot fixture command. With no GODOT_ARTIFACT_URL it stays
 ## the stable no-op entry point Todo 1 froze. With GODOT_ARTIFACT_URL and
 ## GODOT_ARTIFACT_SHA256 (both supplied by the lock-derived CI matrix, never by
@@ -136,12 +141,13 @@ sbom:
 ## (crates/godot-mcp-engine/tests/locked_artifact.rs): an editor is probed and
 ## checks scripts, export templates must match the build, and with
 ## GODOT_DISPLAY_REQUIRED=1 the editor must also run windowed and render. Every
-## artifact but an export-templates archive is then an editor, and the
-## live-editor suite (crates/godot-mcp-server/tests/live_editor_bridge.rs) runs
-## the shipped add-on in it; with GODOT_DISPLAY_REQUIRED=1 its windowed cases
-## run too. A download that does not match the locked digest is a hard failure,
-## so only hash-verified artifacts are ever cached or executed, and a run in
-## which a check did not run, or ran fewer cases than it lists, fails too.
+## artifact but an export-templates archive is then an editor, and each live
+## suite of LIVE_SUITES (crates/godot-mcp-server/tests/<suite>.rs) runs the
+## shipped add-on, the runtime probe, the script runners and the headless
+## helper in it; with GODOT_DISPLAY_REQUIRED=1 their windowed cases run too. A
+## download that does not match the locked digest is a hard failure, so only
+## hash-verified artifacts are ever cached or executed, and a run in which a
+## check did not run, or ran fewer cases than it lists, fails too.
 godot-test:
 	@if [ -z "$(GODOT_ARTIFACT_URL)" ]; then \
 		echo "godot-test: no locked Godot artifact requested (set GODOT_ARTIFACT_URL from make ci-matrix)"; \
@@ -164,19 +170,21 @@ godot-test:
 	case "$$artifact" in \
 		*.tpz) exit 0 ;; \
 	esac; \
-	listing=$$($(CARGO) test -p godot-mcp-server --all-features --test live_editor_bridge -- \
-		--ignored --list --format terse) || exit $$?; \
-	expected=$$(printf '%s\n' "$$listing" | grep -c ': test$$'); \
-	[ "$$expected" -gt 0 ] || { \
-		echo "godot-test: FAIL: the live-editor suite lists no case" >&2; exit 1; }; \
-	output=$$(GODOT_MCP_LOCKED_ARTIFACT="$$artifact" \
-		GODOT_MCP_DISPLAY_REQUIRED="$(GODOT_DISPLAY_REQUIRED)" \
-		$(CARGO) test -p godot-mcp-server --all-features --test live_editor_bridge -- \
-			--ignored 2>&1); \
-	status=$$?; printf '%s\n' "$$output"; \
-	[ "$$status" -eq 0 ] || exit "$$status"; \
-	printf '%s\n' "$$output" | grep -qF "test result: ok. $$expected passed" || { \
-		echo "godot-test: FAIL: the live-editor suite did not run its $$expected cases" >&2; exit 1; }
+	for suite in $(LIVE_SUITES); do \
+		listing=$$($(CARGO) test -p godot-mcp-server --all-features --test "$$suite" -- \
+			--ignored --list --format terse) || exit $$?; \
+		expected=$$(printf '%s\n' "$$listing" | grep -c ': test$$'); \
+		[ "$$expected" -gt 0 ] || { \
+			echo "godot-test: FAIL: the live suite $$suite lists no case" >&2; exit 1; }; \
+		output=$$(GODOT_MCP_LOCKED_ARTIFACT="$$artifact" \
+			GODOT_MCP_DISPLAY_REQUIRED="$(GODOT_DISPLAY_REQUIRED)" \
+			$(CARGO) test -p godot-mcp-server --all-features --test "$$suite" -- \
+				--ignored 2>&1); \
+		status=$$?; printf '%s\n' "$$output"; \
+		[ "$$status" -eq 0 ] || exit "$$status"; \
+		printf '%s\n' "$$output" | grep -qF "test result: ok. $$expected passed" || { \
+			echo "godot-test: FAIL: the live suite $$suite did not run its $$expected cases" >&2; exit 1; }; \
+	done
 
 ## check: the local gate to run before pushing: formatting, lint, tests, build, licences.
 check: fmt-check lint test build deny

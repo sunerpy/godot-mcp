@@ -1,4 +1,10 @@
-//! Structural proof that no arbitrary-execution surface exists.
+//! Structural proof that the only execution surface is the declared one.
+//!
+//! ADR 0012 declares the script tools ([`DECLARED_SCRIPT_TOOLS`]): each runs
+//! caller-written GDScript, and only for a server whose operator set the one
+//! switch, [`SCRIPT_SWITCH_KEY`]. The proofs here keep everything else absent:
+//! no other advertised name denotes execution, no other configuration key turns
+//! anything on, and the reserved name stays a name.
 //!
 //! ## Why this is not a string blacklist
 //!
@@ -10,9 +16,11 @@
 //!   of **all four** canonical profiles. Because the kernel dispatches only names
 //!   the active profile's manifest contains, and only registers a handler for such
 //!   a name, a name absent from all four manifests is unreachable by construction.
+//!   Every execution-shaped name it finds is either declared or a finding.
 //! * [`config_surface_probe`] enumerates candidate switch keys against the frozen
 //!   `deny_unknown_fields` configuration shape, at the top level and inside every
-//!   nested section, so there is no configuration path that could turn one on.
+//!   nested section: the declared switch is accepted in the server section and
+//!   nowhere else, and no other candidate is accepted anywhere.
 //! * [`scan_bytes_for_reserved_identifier`] is a supplementary byte scan. Its zero
 //!   result means nothing on its own, which is why the acceptance suite first
 //!   proves the scanner finds a planted occurrence.
@@ -20,7 +28,8 @@
 //! [`RESERVED_UNSAFE_SCRIPT_CAPABILITY`] is a *reserved name only*. It is not a
 //! [`Capability`](godot_mcp_domain::contracts::Capability) variant, appears in no
 //! profile manifest, has no configuration switch, no public schema, no registry
-//! handler and no compiled execution path.
+//! handler and no compiled execution path. The declared script tools are not
+//! it: they are ordinary catalogued tools under the existing capabilities.
 
 use godot_mcp_domain::CapabilityProfile;
 use godot_mcp_domain::config::{BridgeConfig, HttpConfig, Limits, ServerConfig};
@@ -30,6 +39,15 @@ use serde_json::{Value, json};
 /// The reserved capability identifier that this release deliberately does not
 /// implement. It exists so the name cannot be quietly reused for something else.
 pub const RESERVED_UNSAFE_SCRIPT_CAPABILITY: &str = "unsafe_script";
+
+/// The script tools ADR 0012 declares. Each runs caller-written GDScript, only
+/// for a server whose operator set [`SCRIPT_SWITCH_KEY`], and never for a
+/// proxied principal; no other advertised name may denote execution.
+pub const DECLARED_SCRIPT_TOOLS: &[&str] =
+    &["editor.script.run", "runtime.script.run", "script.run"];
+
+/// The one configuration key that turns the declared script tools on.
+pub const SCRIPT_SWITCH_KEY: &str = "allow_scripts";
 
 /// Every four canonical profiles, in manifest order.
 const AUDITED_PROFILES: [CapabilityProfile; 4] = [
@@ -43,6 +61,8 @@ const AUDITED_PROFILES: [CapabilityProfile; 4] = [
 const EXECUTION_SHAPES: &[&str] = &[
     RESERVED_UNSAFE_SCRIPT_CAPABILITY,
     "unsafe-script",
+    "editor.script.run",
+    "runtime.script.run",
     "script.run",
     "script.eval",
     "script.exec",
@@ -60,7 +80,8 @@ const EXECUTION_SHAPES: &[&str] = &[
     "system",
 ];
 
-/// Configuration keys that would enable arbitrary execution if any existed.
+/// Configuration keys that would enable execution if any existed besides the
+/// declared switch.
 const CANDIDATE_SWITCH_KEYS: &[&str] = &[
     RESERVED_UNSAFE_SCRIPT_CAPABILITY,
     "unsafe_scripts",
@@ -84,7 +105,10 @@ pub struct ExecutionSurfaceAudit {
     pub resources_audited: usize,
     /// Whether the reserved identifier is reachable through any profile.
     pub reserved_is_callable: bool,
-    /// Every advertised entry that denotes arbitrary execution. Always empty.
+    /// Every advertised declared script tool, as `profile:tool:name`.
+    pub declared_entries: Vec<String>,
+    /// Every advertised entry that denotes execution and is not declared.
+    /// Always empty.
     pub execution_entries: Vec<String>,
 }
 
@@ -100,6 +124,7 @@ pub fn audit_execution_surface() -> ExecutionSurfaceAudit {
         tools_audited: 0,
         resources_audited: 0,
         reserved_is_callable: false,
+        declared_entries: Vec::new(),
         execution_entries: Vec::new(),
     };
     for profile in AUDITED_PROFILES {
@@ -110,12 +135,13 @@ pub fn audit_execution_surface() -> ExecutionSurfaceAudit {
             if tool == RESERVED_UNSAFE_SCRIPT_CAPABILITY {
                 audit.reserved_is_callable = true;
             }
-            if EXECUTION_SHAPES.contains(&tool.as_str())
-                || tool.contains(RESERVED_UNSAFE_SCRIPT_CAPABILITY)
-            {
-                audit
-                    .execution_entries
-                    .push(format!("{}:tool:{tool}", profile.manifest_name()));
+            let entry = format!("{}:tool:{tool}", profile.manifest_name());
+            if tool.contains(RESERVED_UNSAFE_SCRIPT_CAPABILITY) {
+                audit.execution_entries.push(entry);
+            } else if DECLARED_SCRIPT_TOOLS.contains(&tool.as_str()) {
+                audit.declared_entries.push(entry);
+            } else if EXECUTION_SHAPES.contains(&tool.as_str()) {
+                audit.execution_entries.push(entry);
             }
         }
         for resource in &manifest.resources {
@@ -138,6 +164,9 @@ pub fn audit_execution_surface() -> ExecutionSurfaceAudit {
 pub struct ConfigSurfaceProbe {
     /// Every candidate key the configuration shape accepted. Always empty.
     pub accepted: Vec<String>,
+    /// Every section that accepted the declared switch, as `section.key`.
+    /// Exactly `server.allow_scripts`.
+    pub declared_switch: Vec<String>,
     /// How many candidate keys were rejected.
     pub rejected: usize,
     /// How many configuration sections were probed.
@@ -152,6 +181,7 @@ pub struct ConfigSurfaceProbe {
 pub fn config_surface_probe() -> ConfigSurfaceProbe {
     let mut probe = ConfigSurfaceProbe {
         accepted: Vec::new(),
+        declared_switch: Vec::new(),
         rejected: 0,
         sections_probed: 0,
     };
@@ -160,6 +190,15 @@ pub fn config_surface_probe() -> ConfigSurfaceProbe {
             continue;
         }
         probe.sections_probed += 1;
+        let mut declared = base.clone();
+        if let Value::Object(fields) = &mut declared {
+            fields.insert(SCRIPT_SWITCH_KEY.to_owned(), Value::Bool(true));
+        }
+        if accepts(&declared) {
+            probe
+                .declared_switch
+                .push(format!("{section}.{SCRIPT_SWITCH_KEY}"));
+        }
         for key in CANDIDATE_SWITCH_KEYS {
             let mut candidate = base.clone();
             if let Value::Object(fields) = &mut candidate {
@@ -268,13 +307,30 @@ mod absence_audit {
         assert!(audit.tools_audited > 0);
         assert!(audit.resources_audited > 0);
         assert!(!audit.reserved_is_callable);
-        assert!(audit.execution_entries.is_empty());
+        assert!(
+            audit.execution_entries.is_empty(),
+            "{:?}",
+            audit.execution_entries
+        );
+        // Each declared tool is advertised, by the profiles that list it only.
+        for tool in DECLARED_SCRIPT_TOOLS {
+            let listing: Vec<String> = AUDITED_PROFILES
+                .into_iter()
+                .filter(|profile| canonical_manifest(*profile).tools.contains(*tool))
+                .map(|profile| format!("{}:tool:{tool}", profile.manifest_name()))
+                .collect();
+            assert!(!listing.is_empty(), "{tool} is advertised nowhere");
+            for entry in listing {
+                assert!(audit.declared_entries.contains(&entry), "{entry}");
+            }
+        }
     }
 
     #[test]
     fn no_configuration_section_accepts_an_execution_switch() {
         let probe = config_surface_probe();
         assert!(probe.accepted.is_empty());
+        assert_eq!(probe.declared_switch, ["server.allow_scripts"]);
         assert_eq!(probe.sections_probed, 4);
         assert_eq!(probe.rejected, 4 * CANDIDATE_SWITCH_KEYS.len());
     }

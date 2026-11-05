@@ -118,7 +118,7 @@ fn make_executable(_path: &Path) {}
 /// Copy the committed project fixture into a scratch directory.
 ///
 /// The committed fixture itself is never written to: a canonical write
-/// legitimately creates `godot_mcp_helpers/3/` inside the project it writes, so the
+/// legitimately creates `godot_mcp_helpers/4/` inside the project it writes, so the
 /// project under test is always a scratch copy.
 fn install_project(into: &Path) -> PathBuf {
     let source = crate_fixtures().join("projects/canonical");
@@ -570,7 +570,7 @@ fn canonical_writes_happy_path() {
     );
     assert_eq!(
         HelperScript::install_path(),
-        "godot_mcp_helpers/3/canonical_write.gd",
+        "godot_mcp_helpers/4/canonical_write.gd",
         "the install path is versioned, so two server versions can coexist"
     );
 
@@ -677,7 +677,7 @@ fn canonical_writes_happy_path() {
         .as_str()
         .expect("a staged path");
     assert!(
-        staged_path.starts_with("godot_mcp_helpers/3/staging/"),
+        staged_path.starts_with("godot_mcp_helpers/4/staging/"),
         "the helper only ever wrote inside its own versioned staging area: {staged_path}"
     );
     assert!(
@@ -853,7 +853,7 @@ fn canonical_writes_happy_path() {
         HelperScript::source().as_bytes(),
         "the installed helper is byte-identical to the pinned bytes"
     );
-    let staging = project.join("godot_mcp_helpers/3/staging");
+    let staging = project.join("godot_mcp_helpers/4/staging");
     let leftovers: Vec<PathBuf> = std::fs::read_dir(&staging)
         .expect("the staging directory exists")
         .flatten()
@@ -1165,7 +1165,7 @@ fn canonical_writes_failure_paths() {
         ("../outside.tscn", "a parent-directory escape"),
         ("/etc/passwd.tscn", "an absolute path"),
         (
-            "godot_mcp_helpers/3/staging/sneaky.tscn",
+            "godot_mcp_helpers/4/staging/sneaky.tscn",
             "the helper's own staging area",
         ),
         ("scripts/player.gd", "a non-resource file"),

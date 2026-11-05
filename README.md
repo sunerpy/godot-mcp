@@ -28,28 +28,44 @@ would: it reads before it writes, it proves what it did, and it says so when it
 cannot.
 
 - **Analysis without the engine.** Project discovery and validation, GDScript
-  symbols, references and impact, text scene and resource trees, and the
-  dependency graph all answer on a machine with no Godot installed.
+  symbols, references and impact, text scene and resource trees, the dependency
+  graph, and project-wide views — unused files, reference cycles, signal flow,
+  metrics, content search, UID lookups, and node and export queries across
+  scenes — all answer on a machine with no Godot installed.
 - **Edits as transactions.** File and script patches carry the expected SHA-256 of
   what they change; scene and resource batches are journaled. A crash mid-change
   is reconciled to the proven before- or after-state, or quarantined, before the
-  next request is served.
+  next request is served. One batch can change up to 16 scenes and resources in
+  one Godot run and land them all in one transaction, or none of them.
 - **The real engine, pinned.** Validation, import, tests and exports run against
-  the Godot build you configure; CI checks every release against exact locked
-  Godot builds from 4.4.1 to 4.7.1.
+  the Godot build you configure, and so do reads of what only the engine knows:
+  painted tile cells, animation keys, baked navigation polygons, a shader's
+  uniforms and compile errors. Exports cover packs, patches and Android APKs;
+  `android.deploy` installs and starts an APK on a device over adb, so far
+  measured only against a stand-in adb. CI checks every release against exact
+  locked Godot builds from 4.4.1 to 4.7.1.
 - **Games and editors it owns.** Start a game or an editor, send keyboard, mouse,
-  action and sequence input, read the live scene tree, properties, signals and UI,
-  take screenshots and recordings, and step through code over the editor's
-  language server and debug adapter.
+  action and sequence input and record and replay it, read the live scene tree,
+  properties, signals and UI, write live properties, wait for a condition, find
+  and move nodes, change the game's speed, take screenshots and recordings and
+  compare them with reference images, and step through code over the editor's
+  language server and debug adapter. A test scenario of input, waits, assertions
+  on node properties and Control text, image comparisons and stress windows ends
+  in one report.
 - **The editor you already have open.** With the bundled `godot_mcp` add-on, an
   agent inspects and edits the scenes your editor holds as undoable editor
   actions, saves and closes them, paints tile maps and keys animations through
-  one fixed table of editing calls, captures the editor, reads its log, changes
-  its settings and shortcuts, picks up changed files and runs the game from the
-  editor.
+  one fixed table of editing calls, reads back what only the engine knows about
+  them, captures the editor, reads its log, changes its settings and shortcuts,
+  moves its 3D cameras, answers its dialogs, restarts it once nothing it holds
+  can be lost, picks up changed files and runs the game from the editor. A panel
+  in the editor shows the connection and every request it answered.
 - **Refuses rather than guesses.** A binary `.scn` answers `unsupported` with the
   fix ("re-save it as text"); an outcome it cannot prove answers `uncertain`.
-  There is no tool that runs arbitrary GDScript.
+- **Scripts only when you allow them.** Start the server with `--allow-scripts`
+  and an agent can run its own GDScript headless, in the open editor or in a
+  running game, and see what it returned, printed and changed. It is off by
+  default, and nothing confines a script once it is on.
 - **Local-first.** stdio by default, with no port and no credential. Optional
   loopback HTTP accepts only a per-launch secret or an authenticated proxy hop.
 - **Verifiable packages.** Static Linux (musl) and `crt-static` Windows builds,
@@ -170,6 +186,7 @@ client as above, then let the agent discover the rest:
 | Every capability, with requests and measured answers  | [Usage and verification](docs/operator/usage-and-verification.md)    |
 | Games and editors it runs, input, captures, debugging | [Managed sessions](docs/operator/managed-sessions.md)                |
 | Driving the editor you have open                      | [Editor bridge](docs/operator/editor-bridge.md)                      |
+| Recipes for common nodes, created and tuned live      | [Recipes](docs/operator/recipes.md)                                  |
 | Profiles, outcomes, `unavailable` and `uncertain`     | [Profiles and tool outcomes](docs/operator/profiles-and-outcomes.md) |
 | Crashes, survivors, quarantine and repair             | [Recovery](docs/operator/recovery.md)                                |
 | Trust boundaries and residual risk                    | [Threat model](docs/security/threat-model.md)                        |

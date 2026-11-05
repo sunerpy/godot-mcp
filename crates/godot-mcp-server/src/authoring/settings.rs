@@ -54,29 +54,41 @@ struct Document {
     eol: &'static str,
 }
 
-/// Net bracket depth a line contributes outside string literals.
-fn depth_delta(line: &str) -> i64 {
-    let mut depth = 0_i64;
-    let mut in_string = false;
-    let mut escaped = false;
-    for character in line.chars() {
-        if in_string {
+/// Where a value's text stands after some of its lines: its bracket depth
+/// outside string literals, and whether it ends inside one. Godot writes a
+/// string's newlines as they are, so a string may span lines.
+#[derive(Debug, Clone, Copy, Default)]
+struct Scan {
+    depth: i64,
+    in_string: bool,
+    escaped: bool,
+}
+
+impl Scan {
+    fn feed(&mut self, text: &str) {
+        for character in text.chars() {
+            if self.in_string {
+                match character {
+                    _ if self.escaped => self.escaped = false,
+                    '\\' => self.escaped = true,
+                    '"' => self.in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
             match character {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_string = false,
+                '"' => self.in_string = true,
+                '{' | '[' | '(' => self.depth += 1,
+                '}' | ']' | ')' => self.depth -= 1,
                 _ => {}
             }
-            continue;
-        }
-        match character {
-            '"' => in_string = true,
-            '{' | '[' | '(' => depth += 1,
-            '}' | ']' | ')' => depth -= 1,
-            _ => {}
         }
     }
-    depth
+
+    /// Whether the value goes on to the next line.
+    const fn open(&self) -> bool {
+        self.depth > 0 || self.in_string
+    }
 }
 
 fn strip_eol(line: &str) -> &str {
@@ -115,14 +127,16 @@ impl Document {
                 continue;
             };
             let mut value = first.trim().to_owned();
-            let mut depth = depth_delta(first);
+            let mut scan = Scan::default();
+            scan.feed(first);
             let start = index;
             index += 1;
-            while depth > 0 && index < lines.len() {
+            while scan.open() && index < lines.len() {
                 let continuation = strip_eol(&lines[index]);
                 value.push('\n');
                 value.push_str(continuation);
-                depth += depth_delta(continuation);
+                scan.feed("\n");
+                scan.feed(continuation);
                 index += 1;
             }
             entries.push(Entry {
@@ -220,19 +234,7 @@ impl Document {
 
 /// A Godot string literal.
 fn godot_string(text: &str) -> String {
-    let mut quoted = String::with_capacity(text.len() + 2);
-    quoted.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\n' => quoted.push_str("\\n"),
-            '\t' => quoted.push_str("\\t"),
-            other => quoted.push(other),
-        }
-    }
-    quoted.push('"');
-    quoted
+    godot_mcp_domain::variant_text::string_literal(text)
 }
 
 /// The unquoted text of a simple Godot string literal.
@@ -837,6 +839,8 @@ const OPERATIONS: &[(&str, &[&str], &[&str])] = &[
     ),
     ("remove_input_action", &["name"], &["name"]),
     ("set_value", &["setting", "value"], &["setting", "value"]),
+    ("set_setting", &["setting", "value"], &["setting", "value"]),
+    ("clear_setting", &["setting"], &["setting"]),
     ("enable_plugin", &["plugin"], &["plugin"]),
     ("disable_plugin", &["plugin"], &["plugin"]),
 ];
@@ -864,6 +868,50 @@ const EVENT_TYPES: &[(&str, &[&str], &[&str])] = &[
         &["axis", "axisValue"],
     ),
 ];
+
+/// The settings a typed operation owns, by name or name prefix, with that
+/// operation: `set_setting` and `clear_setting` refuse them.
+const TYPED_SETTINGS: &[(&str, &str)] = &[
+    (
+        "application/run/main_scene",
+        "set_main_scene or clear_main_scene",
+    ),
+    ("autoload/", "set_autoload or remove_autoload"),
+    ("input/", "set_input_action or remove_input_action"),
+    ("editor_plugins/", "enable_plugin or disable_plugin"),
+];
+/// Longest setting name `set_setting` and `clear_setting` take.
+const MAX_SETTING_NAME: usize = 256;
+/// Largest literal `set_setting` writes.
+const MAX_SETTING_LITERAL: usize = 64 * 1024;
+/// A setting name: `section/key`, of letters, digits, `_`, `-`, `.` and `/`.
+const SETTING_NAME_PATTERN: &str = "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+$";
+
+/// A setting name `set_setting` and `clear_setting` may change.
+fn generic_setting(setting: &str) -> Result<(&str, &str), OutcomeError> {
+    let well_formed = setting.len() <= MAX_SETTING_NAME
+        && setting.contains('/')
+        && setting.split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
+        });
+    if !well_formed {
+        return Err(invalid(&format!(
+            "`{setting}` is not a setting name: `section/key` of letters, digits, `_`, `-`, \
+             `.` and `/`, at most {MAX_SETTING_NAME} bytes"
+        )));
+    }
+    if let Some((_, operation)) = TYPED_SETTINGS.iter().find(|(owned, _)| {
+        setting == *owned || (owned.ends_with('/') && setting.starts_with(owned))
+    }) {
+        return Err(invalid(&format!(
+            "`{setting}` is changed with {operation}, which checks what it names"
+        )));
+    }
+    Ok(split_setting(setting).expect("a setting name has a section"))
+}
 
 fn declared_fields(
     table: &[(&str, &'static [&'static str], &[&str])],
@@ -997,6 +1045,38 @@ fn apply_operation(
             document.set(section, key, &literal);
             Ok(json!({ "op": op, "setting": setting, "value": value }))
         }
+        "set_setting" => {
+            let setting = field(operation, "setting")?;
+            let (section, key) = generic_setting(setting)?;
+            let tagged = operation
+                .get("value")
+                .ok_or_else(|| invalid("set_setting needs a `value`"))?;
+            crate::engine_plane::authored::tagged_value(tagged, &format!("`{setting}`"))?;
+            let value: godot_mcp_domain::contracts::GodotValue =
+                serde_json::from_value(tagged.clone())
+                    .map_err(|error| invalid(&format!("`{setting}`: {error}")))?;
+            if value == godot_mcp_domain::contracts::GodotValue::Null {
+                return Err(invalid(&format!(
+                    "`{setting}`: a null value would remove the setting; use clear_setting"
+                )));
+            }
+            let literal = godot_mcp_domain::variant_text::write(&value)
+                .map_err(|error| invalid(&format!("`{setting}`: {error}")))?;
+            if literal.len() > MAX_SETTING_LITERAL {
+                return Err(invalid(&format!(
+                    "`{setting}` would be {} bytes; a setting holds at most {MAX_SETTING_LITERAL}",
+                    literal.len()
+                )));
+            }
+            document.set(section, key, &literal);
+            Ok(json!({ "op": op, "setting": setting, "literal": literal }))
+        }
+        "clear_setting" => {
+            let setting = field(operation, "setting")?;
+            let (section, key) = generic_setting(setting)?;
+            let removed = document.remove(section, key);
+            Ok(json!({ "op": op, "setting": setting, "changed": removed }))
+        }
         "enable_plugin" | "disable_plugin" => {
             let (uri, relative) = res_path(field(operation, "plugin")?, "plugin")?;
             if !(relative.starts_with("addons/") && relative.ends_with("/plugin.cfg")) {
@@ -1013,7 +1093,7 @@ fn apply_operation(
         other => Err(invalid(&format!(
             "unknown settings operation `{other}`; use set_main_scene, clear_main_scene, \
              set_autoload, remove_autoload, set_input_action, remove_input_action, set_value, \
-             enable_plugin or disable_plugin"
+             set_setting, clear_setting, enable_plugin or disable_plugin"
         ))),
     }
 }
@@ -1176,8 +1256,91 @@ fn typed_view(document: &Document, settings: &ProjectSettings) -> Value {
     })
 }
 
+/// Most settings one `project.settings.get` names or lists.
+const MAX_SELECTED_SETTINGS: usize = 512;
+
 pub(super) fn get_schema() -> Value {
-    object_schema(json!({}), &[], false)
+    object_schema(
+        json!({
+            "settings": {
+                "type": "array",
+                "maxItems": MAX_SELECTED_SETTINGS,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_SETTING_NAME
+                },
+                "description": "Also answer these settings, by full name, as `entries`: the \
+                                literal project.godot holds and its tagged value."
+            },
+            "prefix": {
+                "type": "string",
+                "maxLength": MAX_SETTING_NAME,
+                "description": "Also answer, as `entries`, every setting project.godot holds \
+                                whose name starts with this, such as `layer_names/`; \"\" lists \
+                                them all."
+            }
+        }),
+        &[],
+        false,
+    )
+}
+
+/// The settings `arguments` select, as {setting, literal, value} entries in
+/// name order: the literal project.godot holds, or null when it holds none,
+/// and its tagged value, or null when the literal has no typed value here, as
+/// an input event or a resource reference. `None` when nothing is selected.
+fn selected_entries(
+    document: &Document,
+    arguments: &Map<String, Value>,
+) -> Result<Option<Value>, OutcomeError> {
+    let named = match arguments.get("settings") {
+        None => None,
+        Some(Value::Array(names)) if names.len() <= MAX_SELECTED_SETTINGS => Some(
+            names
+                .iter()
+                .map(|name| {
+                    name.as_str()
+                        .filter(|name| !name.is_empty() && name.chars().count() <= MAX_SETTING_NAME)
+                        .map(str::to_owned)
+                        .ok_or_else(|| invalid("`settings` lists setting names"))
+                })
+                .collect::<Result<std::collections::BTreeSet<_>, _>>()?,
+        ),
+        Some(_) => {
+            return Err(invalid(&format!(
+                "`settings` lists at most {MAX_SELECTED_SETTINGS} setting names"
+            )));
+        }
+    };
+    let prefix = match arguments.get("prefix") {
+        None => None,
+        Some(Value::String(prefix)) if prefix.chars().count() <= MAX_SETTING_NAME => {
+            Some(prefix.as_str())
+        }
+        Some(_) => return Err(invalid("`prefix` is a string")),
+    };
+    if named.is_none() && prefix.is_none() {
+        return Ok(None);
+    }
+    let held = literals(document);
+    let mut selected: std::collections::BTreeSet<String> = named.unwrap_or_default();
+    if let Some(prefix) = prefix {
+        selected.extend(held.keys().filter(|name| name.starts_with(prefix)).cloned());
+    }
+    let truncated = selected.len() > MAX_SELECTED_SETTINGS;
+    let entries: Vec<Value> = selected
+        .iter()
+        .take(MAX_SELECTED_SETTINGS)
+        .map(|name| {
+            let literal = held.get(name);
+            let value = literal
+                .and_then(|literal| godot_mcp_domain::variant_text::parse(literal).ok())
+                .and_then(|value| serde_json::to_value(value).ok());
+            json!({ "setting": name, "literal": literal, "value": value })
+        })
+        .collect();
+    Ok(Some(json!({ "entries": entries, "truncated": truncated })))
 }
 
 /// The schema of one settings operation field.
@@ -1185,6 +1348,31 @@ fn settings_field_schema(field: &str) -> Value {
     match field {
         "scene" | "path" | "plugin" => json!({ "type": "string", "pattern": "^res://" }),
         "singleton" => json!({ "type": "boolean" }),
+        "setting" => json!({
+            "type": "string",
+            "maxLength": MAX_SETTING_NAME,
+            "pattern": SETTING_NAME_PATTERN,
+            "not": typed_setting_names(),
+            "description": "A setting's full name, `section/key`, such as \
+                            `layer_names/2d_physics/layer_1`. The main scene, autoloads, \
+                            input actions and plugins have their own operations."
+        }),
+        "value" => json!({
+            "allOf": [
+                crate::schema::plain_value(),
+                { "not": {
+                    "type": "object",
+                    "properties": {
+                        "type": { "const": "null" },
+                        "value": { "type": "null" }
+                    },
+                    "required": ["type"],
+                    "additionalProperties": false
+                } }
+            ],
+            "description": "The setting's new value. A null value is refused: clear_setting \
+                            removes a setting."
+        }),
         "deadzone" => json!({ "type": "number", "minimum": 0, "maximum": 1 }),
         "events" => json!({
             "type": "array",
@@ -1198,6 +1386,22 @@ fn settings_field_schema(field: &str) -> Value {
         }),
         _ => json!({ "type": "string", "minLength": 1 }),
     }
+}
+
+/// The setting names [`TYPED_SETTINGS`] gives to a typed operation.
+fn typed_setting_names() -> Value {
+    json!({
+        "anyOf": TYPED_SETTINGS
+            .iter()
+            .map(|(owned, _)| {
+                if owned.ends_with('/') {
+                    json!({ "pattern": format!("^{owned}") })
+                } else {
+                    json!({ "const": owned })
+                }
+            })
+            .collect::<Vec<_>>()
+    })
 }
 
 /// The schema of one input event type, exactly as [`event_literal`] reads it:
@@ -1301,7 +1505,7 @@ fn operation_items() -> Value {
 }
 
 pub(super) fn patch_schema() -> Value {
-    object_schema(
+    let mut schema = object_schema(
         json!({
             "expectedSha256": sha256_property("SHA-256 of project.godot's current bytes."),
             "operations": {
@@ -1311,8 +1515,11 @@ pub(super) fn patch_schema() -> Value {
                 "description": "Typed operations applied in order: set_main_scene {scene}, \
                     clear_main_scene, set_autoload {name, path, singleton?}, remove_autoload \
                     {name}, set_input_action {name, deadzone?, events[]}, remove_input_action \
-                    {name}, set_value {setting, value}, enable_plugin {plugin}, disable_plugin \
-                    {plugin}. Key events take key|physicalKeycode|keycode and shift/ctrl/alt/meta; \
+                    {name}, set_value {setting, value} for an allowlisted setting with its plain \
+                    JSON value, set_setting {setting, value} for any other setting with a tagged \
+                    value, clear_setting {setting} back to Godot's default, enable_plugin \
+                    {plugin}, disable_plugin {plugin}. Key events take \
+                    key|physicalKeycode|keycode and shift/ctrl/alt/meta; \
                     mouse_button events take button|buttonIndex; joypad_button events take \
                     buttonIndex; joypad_motion events take axis and axisValue.",
                 "items": operation_items()
@@ -1320,10 +1527,15 @@ pub(super) fn patch_schema() -> Value {
         }),
         &["expectedSha256", "operations"],
         true,
-    )
+    );
+    schema["$defs"] = Value::Object(crate::schema::value_definitions());
+    schema
 }
 
-pub(super) fn get(runtime: &AuthoringRuntime) -> Result<Value, OutcomeError> {
+pub(super) fn get(
+    runtime: &AuthoringRuntime,
+    arguments: &Map<String, Value>,
+) -> Result<Value, OutcomeError> {
     let (snapshot, contents) = runtime.coherent_read(&[MANIFEST.to_owned()])?;
     let bytes = contents
         .into_iter()
@@ -1333,8 +1545,13 @@ pub(super) fn get(runtime: &AuthoringRuntime) -> Result<Value, OutcomeError> {
     let text = utf8_text(&bytes, MANIFEST)?;
     let settings = ProjectSettings::parse(&text, runtime.generation)
         .map_err(|error| outcome_error(error.kind(), error.to_string()))?;
-    let mut view = typed_view(&Document::parse(&text), &settings);
+    let document = Document::parse(&text);
+    let selected = selected_entries(&document, arguments)?;
+    let mut view = typed_view(&document, &settings);
     if let Value::Object(object) = &mut view {
+        if let Some(Value::Object(selected)) = selected {
+            object.extend(selected);
+        }
         object.insert("sha256".to_owned(), Value::String(sha256_hex(&bytes)));
         object.insert("workspace".to_owned(), snapshot.to_value());
     }
@@ -1972,6 +2189,33 @@ mod tests {
     }
 
     #[test]
+    fn removing_an_autoload_keeps_the_others() {
+        let both = apply(
+            MANIFEST_TEXT,
+            json!([
+                { "op": "set_autoload", "name": "Game", "path": "res://autoload/game.gd" },
+                { "op": "set_autoload", "name": "Audio", "path": "res://autoload/audio.gd", "singleton": false }
+            ]),
+        );
+        let removed = apply(&both, json!([{ "op": "remove_autoload", "name": "Game" }]));
+        assert!(!removed.contains("Game="), "{removed}");
+        assert!(
+            removed.contains("Audio=\"res://autoload/audio.gd\"\n"),
+            "{removed}"
+        );
+        let settings = ProjectSettings::parse(&removed, 1).expect("parses");
+        assert_eq!(settings.autoloads().len(), 1);
+        let absent = apply(
+            &removed,
+            json!([{ "op": "remove_autoload", "name": "Missing" }]),
+        );
+        assert_eq!(
+            absent, removed,
+            "removing an absent autoload changes nothing"
+        );
+    }
+
+    #[test]
     fn replacing_a_multi_line_value_replaces_all_of_its_lines() {
         let first = apply(
             MANIFEST_TEXT,
@@ -2090,5 +2334,411 @@ mod tests {
         assert_eq!(view["input_actions"][0]["events"][0]["key"], "Space");
         assert_eq!(view["input_actions"][0]["events"][1]["axis"], 1);
         assert_eq!(view["values"]["application/config/name"], "Demo");
+    }
+
+    /// The `set_setting` and `clear_setting` schemas and the operation check
+    /// give the same verdict on every case, and it is the intended one: any
+    /// sectioned setting but those a typed operation owns, set to a tagged
+    /// value that is neither null nor a reference.
+    #[test]
+    fn the_generic_setting_schema_and_the_operation_check_agree() {
+        let set = |setting: &str, value: Value| json!({ "op": "set_setting", "setting": setting, "value": value });
+        let clear = |setting: &str| json!({ "op": "clear_setting", "setting": setting });
+        let text = |text: &str| json!({ "type": "string", "value": text });
+        let resource = json!({
+            "type": "resource",
+            "value": { "resource": "res://a.tres", "resource_type": "Resource" }
+        });
+        let longest = format!("section/{}", "k".repeat(MAX_SETTING_NAME - 8));
+        let too_long = format!("{longest}k");
+        let cases = [
+            (set("layer_names/2d_physics/layer_1", text("player")), true),
+            (set("application/config/name", text("Game")), true),
+            (
+                set("rendering/renderer/rendering_method.mobile", text("mobile")),
+                true,
+            ),
+            (
+                set(
+                    "my-plugin/settings/table",
+                    json!({ "type": "dictionary", "value": {
+                        "speed": { "type": "integer", "value": 3 },
+                        "tags": { "type": "packed_string_array", "value": ["a", "b"] }
+                    } }),
+                ),
+                true,
+            ),
+            (
+                set(
+                    "rendering/environment/defaults/default_clear_color",
+                    json!({ "type": "color", "value": { "red": 0.1, "green": 0.2, "blue": 0.3, "alpha": 1.0 } }),
+                ),
+                true,
+            ),
+            (
+                set(
+                    "physics/common/physics_jitter_fix",
+                    json!({ "type": "float", "value": 0.5 }),
+                ),
+                true,
+            ),
+            (
+                set(
+                    "display/window/size/always_on_top",
+                    json!({ "type": "bool", "value": true }),
+                ),
+                true,
+            ),
+            (
+                set(
+                    "my/list",
+                    json!({ "type": "array", "value": [
+                        { "type": "null" },
+                        { "type": "vector2", "value": { "x": 1, "y": 2 } }
+                    ] }),
+                ),
+                true,
+            ),
+            (set(&longest, text("x")), true),
+            (clear("layer_names/2d_physics/layer_1"), true),
+            (clear("application/config/name"), true),
+            (set(&too_long, text("x")), false),
+            (set("autoload/Game", text("*res://game.gd")), false),
+            (set("input/jump", text("x")), false),
+            (
+                set("application/run/main_scene", text("res://main.tscn")),
+                false,
+            ),
+            (
+                set(
+                    "editor_plugins/enabled",
+                    json!({ "type": "packed_string_array", "value": [] }),
+                ),
+                false,
+            ),
+            (
+                set("config_version", json!({ "type": "integer", "value": 5 })),
+                false,
+            ),
+            (set("a//b", text("x")), false),
+            (set("/a/b", text("x")), false),
+            (set("a/b/", text("x")), false),
+            (set("bad name/x", text("x")), false),
+            (set("a/b", json!("plain")), false),
+            (set("a/b", json!({ "type": "null" })), false),
+            (set("a/b", json!({ "type": "null", "value": null })), false),
+            (set("a/b", resource.clone()), false),
+            (
+                set("a/b", json!({ "type": "array", "value": [resource] })),
+                false,
+            ),
+            (
+                set("a/b", json!({ "type": "string", "value": "x", "extra": 1 })),
+                false,
+            ),
+            (
+                set("a/b", json!({ "type": "no_such_type", "value": 1 })),
+                false,
+            ),
+            (json!({ "op": "set_setting", "setting": "a/b" }), false),
+            (
+                json!({ "op": "set_setting", "setting": "a/b", "value": text("x"), "x": 1 }),
+                false,
+            ),
+            (clear("autoload/Game"), false),
+            (clear("input/jump"), false),
+            (clear("editor_plugins/enabled"), false),
+            (clear("config_version"), false),
+            (
+                json!({ "op": "clear_setting", "setting": "a/b", "value": text("x") }),
+                false,
+            ),
+        ];
+        let schema = advertised_operation_schema();
+        for (case, expected) in &cases {
+            assert_eq!(
+                crate::schema::conformance::conforms(&schema, case),
+                *expected,
+                "the schema's verdict on {case}"
+            );
+            let mut document = Document::parse(MANIFEST_TEXT);
+            let mut requirements = Requirements { files: Vec::new() };
+            assert_eq!(
+                apply_operation(&mut document, case, &mut requirements).is_ok(),
+                *expected,
+                "the handler's verdict on {case}"
+            );
+        }
+    }
+
+    /// `set_setting` writes Godot's spelling of the value, which the file
+    /// then holds and `project.settings.get` reads back as the same tagged
+    /// value; comments and unrelated keys stay; `clear_setting` removes the
+    /// key and says whether there was one.
+    #[test]
+    fn generic_settings_round_trip_and_clear() {
+        let values = [
+            (
+                "layer_names/2d_physics/layer_1",
+                json!({ "type": "string", "value": "player \"one\"\nsecond line" }),
+                "\"player \\\"one\\\"\\nsecond line\"",
+            ),
+            (
+                "rendering/environment/defaults/default_clear_color",
+                json!({ "type": "color", "value": { "red": 0.25, "green": 0.5, "blue": 0.75, "alpha": 1.0 } }),
+                "Color(0.25, 0.5, 0.75, 1)",
+            ),
+            (
+                "application/config/features",
+                json!({ "type": "packed_string_array", "value": ["4.7", "Mobile"] }),
+                "PackedStringArray(\"4.7\", \"Mobile\")",
+            ),
+            (
+                "physics/common/physics_ticks_per_second",
+                json!({ "type": "integer", "value": 120 }),
+                "120",
+            ),
+            (
+                "physics/common/physics_jitter_fix",
+                json!({ "type": "float", "value": 1.0 }),
+                "1.0",
+            ),
+            (
+                "my_plugin/config/table",
+                json!({ "type": "dictionary", "value": {
+                    "speed": { "type": "integer", "value": 3 },
+                    "offset": { "type": "vector2", "value": { "x": 1.5, "y": -2.0 } }
+                } }),
+                "{\n\"offset\": Vector2(1.5, -2),\n\"speed\": 3\n}",
+            ),
+        ];
+        let operations: Vec<Value> = values
+            .iter()
+            .map(|(setting, value, _)| json!({ "op": "set_setting", "setting": setting, "value": value }))
+            .collect();
+        let after = apply(MANIFEST_TEXT, Value::Array(operations));
+        assert!(after.starts_with("; Engine configuration file.\n; keep this comment\n"));
+        assert!(after.contains("textures/vram_compression/import_etc2_astc=true\n"));
+        assert!(after.contains("config/name=\"Demo\"\n"));
+        assert!(after.contains("[layer_names]\n"), "{after}");
+        let settings = ProjectSettings::parse(&after, 1).expect("parses");
+        assert!(
+            settings.diagnostics().is_empty(),
+            "{:?}",
+            settings.diagnostics()
+        );
+        let document = Document::parse(&after);
+        let held = literals(&document);
+        let names: Vec<&str> = values.iter().map(|(setting, _, _)| *setting).collect();
+        let selected = selected_entries(
+            &document,
+            json!({ "settings": names }).as_object().expect("arguments"),
+        )
+        .expect("selects")
+        .expect("entries");
+        for (setting, value, literal) in &values {
+            assert_eq!(
+                held.get(*setting).map(String::as_str),
+                Some(*literal),
+                "{setting}"
+            );
+            let entry = selected["entries"]
+                .as_array()
+                .expect("entries")
+                .iter()
+                .find(|entry| entry["setting"] == json!(setting))
+                .expect("selected");
+            assert_eq!(&entry["value"], value, "{setting}");
+        }
+
+        let mut document = Document::parse(&after);
+        let mut requirements = Requirements { files: Vec::new() };
+        let cleared = apply_operation(
+            &mut document,
+            &json!({ "op": "clear_setting", "setting": "my_plugin/config/table" }),
+            &mut requirements,
+        )
+        .expect("clears");
+        assert_eq!(cleared["changed"], true);
+        let again = apply_operation(
+            &mut document,
+            &json!({ "op": "clear_setting", "setting": "my_plugin/config/table" }),
+            &mut requirements,
+        )
+        .expect("clears");
+        assert_eq!(again["changed"], false);
+        let rendered = document.render();
+        assert!(!rendered.contains("table="), "{rendered}");
+        assert!(!rendered.contains("\"speed\""), "{rendered}");
+        assert!(rendered.contains("physics_jitter_fix=1.0\n"), "{rendered}");
+    }
+
+    /// Godot writes a string's newlines as they are, so a string may span
+    /// lines; the whole string is one assignment, even when a later line of
+    /// it looks like one.
+    #[test]
+    fn a_string_spanning_lines_is_one_assignment() {
+        let text = "[application]\n\nconfig/description=\"first line\nsecond = line [\"\nconfig/name=\"Demo\"\n";
+        let document = Document::parse(text);
+        let held = literals(&document);
+        assert_eq!(
+            held.get("application/config/description")
+                .map(String::as_str),
+            Some("\"first line\nsecond = line [\"")
+        );
+        assert_eq!(
+            held.get("application/config/name").map(String::as_str),
+            Some("\"Demo\"")
+        );
+        assert_eq!(held.len(), 2, "{held:?}");
+        let selected = selected_entries(
+            &document,
+            json!({ "settings": ["application/config/description"] })
+                .as_object()
+                .expect("arguments"),
+        )
+        .expect("selects")
+        .expect("entries");
+        assert_eq!(
+            selected["entries"][0]["value"],
+            json!({ "type": "string", "value": "first line\nsecond = line [" })
+        );
+        let after = apply(
+            text,
+            json!([{ "op": "set_value", "setting": "application/config/description", "value": "one line" }]),
+        );
+        assert_eq!(
+            after,
+            "[application]\n\nconfig/description=\"one line\"\nconfig/name=\"Demo\"\n"
+        );
+    }
+
+    /// `project.settings.get` answers the settings it names, and every
+    /// setting under a prefix, in name order, each with the literal the file
+    /// holds and its tagged value; a setting the file does not hold answers
+    /// nulls, and a literal with no plain value, as an input action, keeps
+    /// its text with a null value.
+    #[test]
+    fn get_selects_settings_by_name_and_prefix() {
+        let text = apply(
+            MANIFEST_TEXT,
+            json!([
+                { "op": "set_setting", "setting": "layer_names/2d_physics/layer_2", "value": { "type": "string", "value": "enemies" } },
+                { "op": "set_setting", "setting": "layer_names/2d_physics/layer_1", "value": { "type": "string", "value": "player" } },
+                { "op": "set_input_action", "name": "jump", "events": [{ "type": "key", "key": "Space" }] }
+            ]),
+        );
+        let document = Document::parse(&text);
+        let select = |arguments: Value| {
+            selected_entries(&document, arguments.as_object().expect("arguments")).expect("selects")
+        };
+        assert_eq!(select(json!({})), None);
+        let named = select(json!({ "settings": ["no/such_setting", "application/config/name"] }))
+            .expect("entries");
+        assert_eq!(named["truncated"], false);
+        assert_eq!(
+            named["entries"],
+            json!([
+                { "setting": "application/config/name", "literal": "\"Demo\"", "value": { "type": "string", "value": "Demo" } },
+                { "setting": "no/such_setting", "literal": null, "value": null }
+            ])
+        );
+        let layers = select(json!({ "prefix": "layer_names/" })).expect("entries");
+        assert_eq!(
+            layers["entries"],
+            json!([
+                { "setting": "layer_names/2d_physics/layer_1", "literal": "\"player\"", "value": { "type": "string", "value": "player" } },
+                { "setting": "layer_names/2d_physics/layer_2", "literal": "\"enemies\"", "value": { "type": "string", "value": "enemies" } }
+            ])
+        );
+        let input = select(json!({ "settings": ["input/jump"] })).expect("entries");
+        assert!(
+            input["entries"][0]["literal"]
+                .as_str()
+                .expect("literal")
+                .contains("InputEventKey")
+        );
+        assert_eq!(input["entries"][0]["value"], Value::Null);
+        let all = select(json!({ "prefix": "" })).expect("entries");
+        let names: Vec<&str> = all["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .map(|entry| entry["setting"].as_str().expect("name"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "application/config/features",
+                "application/config/name",
+                "input/jump",
+                "layer_names/2d_physics/layer_1",
+                "layer_names/2d_physics/layer_2",
+                "rendering/textures/vram_compression/import_etc2_astc"
+            ]
+        );
+
+        let many: String = std::iter::once("[many]\n".to_owned())
+            .chain((0..=MAX_SELECTED_SETTINGS).map(|index| format!("k{index:04}={index}\n")))
+            .collect();
+        let selected = selected_entries(
+            &Document::parse(&many),
+            json!({ "prefix": "many/" }).as_object().expect("arguments"),
+        )
+        .expect("selects")
+        .expect("entries");
+        assert_eq!(selected["truncated"], true);
+        assert_eq!(
+            selected["entries"].as_array().expect("entries").len(),
+            MAX_SELECTED_SETTINGS
+        );
+    }
+
+    /// The `project.settings.get` schema and the selection check give the
+    /// same verdict on every case. A name's bound counts characters, as the
+    /// schema does.
+    #[test]
+    fn the_get_schema_and_the_selection_check_agree() {
+        let document = Document::parse(MANIFEST_TEXT);
+        let many: Vec<String> = (0..=MAX_SELECTED_SETTINGS)
+            .map(|index| format!("a/k{index}"))
+            .collect();
+        let cases = [
+            (json!({}), true),
+            (json!({ "settings": [] }), true),
+            (
+                json!({ "settings": ["application/config/name", "application/config/name"] }),
+                true,
+            ),
+            (json!({ "settings": ["é".repeat(MAX_SETTING_NAME)] }), true),
+            (json!({ "prefix": "" }), true),
+            (
+                json!({ "prefix": "layer_names/", "settings": ["a/b"] }),
+                true,
+            ),
+            (json!({ "settings": [""] }), false),
+            (json!({ "settings": [5] }), false),
+            (json!({ "settings": "a/b" }), false),
+            (json!({ "settings": many }), false),
+            (
+                json!({ "settings": ["é".repeat(MAX_SETTING_NAME + 1)] }),
+                false,
+            ),
+            (json!({ "prefix": 5 }), false),
+            (json!({ "prefix": "x".repeat(MAX_SETTING_NAME + 1) }), false),
+        ];
+        let schema = get_schema();
+        for (case, expected) in &cases {
+            assert_eq!(
+                crate::schema::conformance::conforms(&schema, case),
+                *expected,
+                "the schema's verdict on {case}"
+            );
+            assert_eq!(
+                selected_entries(&document, case.as_object().expect("object")).is_ok(),
+                *expected,
+                "the handler's verdict on {case}"
+            );
+        }
     }
 }

@@ -320,6 +320,21 @@ pub(crate) trait ProcessEffectBoundary: Send + Sync {
             boundary: "process",
         })
     }
+
+    /// Install one finished Android export on one device with the
+    /// operator's `adb` and prove it runs, and report the deploy's
+    /// three-state answer. The command's `payload` names its `export` and
+    /// `serial`. `Err` means nothing was sent to any device.
+    fn deploy_to_device(
+        &self,
+        ticket: &EffectTicket,
+        command: &EditorMutation,
+    ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
+        let _ = (ticket, command);
+        Err(BoundaryUnavailable {
+            boundary: "process",
+        })
+    }
 }
 
 /// One LSP/DAP request/response exchange. Todos 15/16 implement the bounded

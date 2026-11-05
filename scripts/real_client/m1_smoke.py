@@ -29,30 +29,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mcp_client import Server, connect  # noqa: E402
 
-EXPECTED_FULL = {
-    "asset.delete", "asset.put", "asset.status", "capabilities.get",
-    "editor.addon.install", "editor.addon.reload", "editor.addon.remove", "editor.addon.status",
-    "editor.addon.update", "editor.redo", "editor.scene.open", "editor.scene.tree.get",
-    "editor.selection.set", "editor.status.get", "editor.types.get", "editor.undo", "file.create",
-    "file.delete", "file.get", "file.move", "file.patch", "gdscript.diagnostics.get",
-    "gdscript.impact.get", "gdscript.references.get", "gdscript.symbols.get", "health.get",
-    "project.dependencies.get", "project.discover", "project.files.list",
-    "project.import.run", "project.info.get", "project.run", "project.settings.get",
-    "project.settings.patch", "project.test", "project.uid.update", "project.validate",
-    "resource.batch.apply", "resource.create", "resource.dependencies.get",
-    "resource.tree.get", "resource.update", "scene.batch.apply", "scene.create",
-    "scene.dependencies.get", "scene.save", "scene.tree.get", "script.check",
-    "script.create", "script.patch", "script.validate",
-    # Contract 0.2 managed game sessions (M5).
-    "input.action.send", "input.key.send", "input.mouse.send", "input.sequence.send",
-    "project.run.logs", "project.run.start", "project.run.status", "project.run.stop",
-    "runtime.properties.get", "runtime.recording.capture", "runtime.screenshot.capture",
-    "runtime.signals.get", "runtime.tree.get", "runtime.ui.get",
-    # contract 0.2.0 managed editor sessions and receipt-bound LSP/DAP commands
-    "editor.session.start", "editor.session.stop", "debug.session.get", "debug.command",
-    # contract 0.2.0 managed exports
-    "export.presets.list", "project.export", "project.export.status", "project.export.cancel",
-}
+PROFILES = Path(__file__).resolve().parents[2] / "schemas" / "domain" / "profiles"
+
+
+def expected_full() -> set[str]:
+    """The tools the newest frozen `full` manifest lists: the catalog a server
+    built from this checkout must answer with."""
+    versions = sorted(
+        (tuple(int(part) for part in path.name[1:].split(".")), path)
+        for path in PROFILES.glob("v*.*")
+        if path.is_dir()
+    )
+    manifest = json.loads((versions[-1][1] / "full.json").read_text())
+    return set(manifest["tools"])
+
 
 RESOURCE = """[gd_resource type="Resource" format=3]
 
@@ -87,7 +77,8 @@ async def main() -> int:
                                   profile="full", godot=arguments.godot.resolve())) as client:
             tools = await client.tools()
             names = {tool.name for tool in tools}
-            assert names == EXPECTED_FULL, sorted(names ^ EXPECTED_FULL)
+            expected = expected_full()
+            assert names == expected, sorted(names ^ expected)
             for tool in tools:
                 assert tool.title, tool.name
                 assert len(tool.description or "") >= 40, tool.name

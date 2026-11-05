@@ -1,10 +1,10 @@
-//! The fifteen `core` outcome handlers.
+//! The `core` outcome handlers.
 //!
 //! Each handler is a thin, cancellable projection over the shared
 //! [`CoreSession`]: it validates its arguments, takes one coherent index
 //! snapshot, reads the answer off the Todo 10 graph, and renders it through
 //! [`super::answer`] so provenance, pagination and redaction are applied in one
-//! place rather than fifteen.
+//! place rather than in every handler.
 //!
 //! Three rules are enforced here rather than left to convention:
 //!
@@ -123,11 +123,22 @@ impl CoreArguments for CoreOperation {
             Self::ScriptReferences | Self::ScriptImpact => &["script", "symbol", "offset", "limit"],
             Self::SceneTree | Self::SceneDependencies => &["scene", "offset", "limit"],
             Self::ResourceTree | Self::ResourceDependencies => &["resource", "offset", "limit"],
+            Self::ProjectAudit
+            | Self::ProjectMetrics
+            | Self::ProjectSearch
+            | Self::ProjectSignals
+            | Self::ProjectUid
+            | Self::SceneExports
+            | Self::SceneNodes => super::insight::accepted_keys(self),
         }
     }
 
     fn requires_argument(self, key: &str) -> bool {
-        !matches!(self, Self::ScriptDiagnostics) && matches!(key, "script" | "scene" | "resource")
+        match self {
+            Self::ScriptDiagnostics | Self::ProjectSignals | Self::SceneNodes => false,
+            Self::ProjectSearch => key == "query",
+            _ => matches!(key, "script" | "scene" | "resource"),
+        }
     }
 
     fn input_schema(self, limits: CoreLimits) -> Map<String, Value> {
@@ -135,7 +146,11 @@ impl CoreArguments for CoreOperation {
         let properties = accepted
             .iter()
             .copied()
-            .map(|key| (key.to_owned(), core_argument_schema(key, limits)))
+            .map(|key| {
+                let schema = super::insight::operation_argument_schema(self, key, limits)
+                    .unwrap_or_else(|| core_argument_schema(key, limits));
+                (key.to_owned(), schema)
+            })
             .collect::<Map<_, _>>();
         let required = accepted
             .iter()
@@ -192,8 +207,45 @@ fn core_argument_schema(key: &str, limits: CoreLimits) -> Value {
             "maximum": limits.max_page(),
             "description": "Maximum number of entries returned in each result set."
         }),
-        _ => unreachable!("accepted core argument keys have schemas"),
+        other => match super::insight::argument_schema(other) {
+            Some(schema) => schema,
+            None => unreachable!("accepted core argument keys have schemas"),
+        },
     }
+}
+
+/// Enforce the `minimum` / `maximum` an integer argument advertises.
+///
+/// `offset` and `limit` keep their own messages in [`Arguments::new`].
+fn validate_core_argument_bounds(
+    key: &str,
+    value: &Value,
+    limits: CoreLimits,
+) -> Result<(), OutcomeError> {
+    let schema = core_argument_schema(key, limits);
+    if schema["type"] != "integer" {
+        return Ok(());
+    }
+    let Some(number) = crate::arguments::non_negative_whole_u64(value) else {
+        return Ok(());
+    };
+    if let Some(minimum) = schema["minimum"].as_u64()
+        && number < minimum
+    {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            format!("`{key}` must be at least {minimum}"),
+        ));
+    }
+    if let Some(maximum) = schema["maximum"].as_u64()
+        && number > maximum
+    {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            format!("`{key}` must not exceed {maximum}"),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_core_argument_type(
@@ -354,6 +406,15 @@ impl ServedRequest<'_> {
                 Some(diagnostics) => diagnostics.health_value(),
                 None => legacy_health(self.profile, self.session.session()),
             },
+            CoreOperation::ProjectAudit
+            | CoreOperation::ProjectMetrics
+            | CoreOperation::ProjectSearch
+            | CoreOperation::ProjectSignals
+            | CoreOperation::ProjectUid
+            | CoreOperation::SceneExports
+            | CoreOperation::SceneNodes => {
+                super::insight::serve(self.operation, &self.session, arguments, cancellation)
+            }
         }
     }
 
@@ -1178,7 +1239,7 @@ fn non_resolvable_declaration_kind(script: &GdScriptFile, symbol: &str) -> Optio
 }
 
 /// Validated tool arguments.
-struct Arguments<'call> {
+pub(super) struct Arguments<'call> {
     values: &'call Map<String, Value>,
     page: PageRequest,
 }
@@ -1203,6 +1264,9 @@ impl<'call> Arguments<'call> {
                 ));
             }
             validate_core_argument_type(key, value, limits)?;
+            if !matches!(key.as_str(), "offset" | "limit") {
+                validate_core_argument_bounds(key, value, limits)?;
+            }
         }
         let offset = read_index(values, "offset")?.unwrap_or(0);
         let limit = match read_index(values, "limit")? {
@@ -1228,15 +1292,20 @@ impl<'call> Arguments<'call> {
         })
     }
 
-    const fn page(&self) -> PageRequest {
+    pub(super) const fn page(&self) -> PageRequest {
         self.page
+    }
+
+    /// Every argument the caller supplied, already type-checked.
+    pub(super) const fn values(&self) -> &'call Map<String, Value> {
+        self.values
     }
 
     fn raw_document(&self, key: &str) -> Option<&'call Value> {
         self.values.get(key)
     }
 
-    fn document(
+    pub(super) fn document(
         &self,
         key: &str,
         expectation: DocumentExpectation,
@@ -1278,7 +1347,7 @@ fn read_index(values: &Map<String, Value>, key: &str) -> Result<Option<usize>, O
     }
 }
 
-fn guard_cancelled(cancellation: &CancellationToken) -> Result<(), OutcomeError> {
+pub(super) fn guard_cancelled(cancellation: &CancellationToken) -> Result<(), OutcomeError> {
     if cancellation.is_cancelled() {
         return Err(OutcomeError::new(
             ErrorKind::Cancelled,
@@ -1427,8 +1496,9 @@ mod schema_tests {
     }
 
     /// The core and kernel operations are exactly the catalog's contract 0.1
-    /// project-file reads, and every other tool that needs only the project
-    /// files is exactly one authoring or bootstrap operation.
+    /// project-file reads plus the contract 0.3 project-wide views the `core`
+    /// profile offers, and every other tool that needs only the project files
+    /// is exactly one authoring or bootstrap operation.
     #[test]
     fn core_bindings_are_exactly_the_catalog_project_file_reads() {
         use godot_mcp_domain::catalog::{
@@ -1454,7 +1524,32 @@ mod schema_tests {
             .filter(|tool| tool.introduced_in == ContractVersion::V0_1_0 && !tool.is_mutation())
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(bound, first_release_reads);
+        let project_wide_views: BTreeSet<&str> = project_files
+            .iter()
+            .filter(|tool| {
+                tool.introduced_in == ContractVersion::V0_4_0
+                    && !tool.is_mutation()
+                    && tool.profiles.contains(&CapabilityProfile::Core)
+            })
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(
+            project_wide_views,
+            CoreOperation::ALL
+                .iter()
+                .filter(|operation| !super::super::insight::accepted_keys(**operation).is_empty())
+                .map(|operation| operation.tool_name())
+                .collect::<BTreeSet<_>>(),
+            "every contract 0.4 core read is a project-wide view"
+        );
+        assert!(first_release_reads.is_disjoint(&project_wide_views));
+        assert_eq!(
+            bound,
+            first_release_reads
+                .union(&project_wide_views)
+                .copied()
+                .collect::<BTreeSet<_>>()
+        );
 
         let authoring: BTreeSet<&str> = AuthoringOperation::ALL
             .iter()
@@ -1715,6 +1810,13 @@ mod schema_tests {
             (CoreOperation::ResourceTree, &["resource"][..]),
             (CoreOperation::ProjectDiscover, &[][..]),
             (CoreOperation::ScriptDiagnostics, &[][..]),
+            (CoreOperation::ProjectAudit, &[][..]),
+            (CoreOperation::ProjectMetrics, &[][..]),
+            (CoreOperation::ProjectSearch, &["query"][..]),
+            (CoreOperation::ProjectSignals, &[][..]),
+            (CoreOperation::ProjectUid, &[][..]),
+            (CoreOperation::SceneExports, &["scene"][..]),
+            (CoreOperation::SceneNodes, &[][..]),
         ] {
             let schema = advertised_schema(operation);
             let required = schema["required"]

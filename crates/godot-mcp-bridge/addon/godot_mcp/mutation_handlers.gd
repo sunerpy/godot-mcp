@@ -1,10 +1,13 @@
 @tool
 extends RefCounted
-## Editor mutations: selection, opening and closing a scene, opening a
-## script, the main screen shown, semantic scene batches and live edits as one
+## Editor mutations: selection, opening and closing a scene, opening and
+## closing a script (`script_tabs.gd`), the main screen shown, a 3D viewport's
+## camera (`editor_camera.gd`), semantic scene batches and live edits as one
 ## undoable action, saving, undo/redo, project settings, the editor's own
-## settings and shortcuts, file-system scans, running the project, and
-## reloading this plugin.
+## settings and shortcuts, file-system scans, running the project, running a
+## caller's script (`script_runner.gd`), answering a dialog
+## (`editor_dialogs.gd`), reloading this plugin, and restarting the editor
+## (`editor_restart.gd`).
 ##
 ## A scene batch is the same typed command model the headless helper applies
 ## (`add_node`, `set_property`, `connect_signal`, ...). It is applied to the
@@ -32,6 +35,11 @@ const EditingMethods = preload("editing_methods.gd")
 const Play = preload("play.gd")
 const Preferences = preload("preferences.gd")
 const Shortcuts = preload("shortcuts.gd")
+const ScriptRunner = preload("script_runner.gd")
+const EditorCamera = preload("editor_camera.gd")
+const EditorDialogs = preload("editor_dialogs.gd")
+const EditorRestart = preload("editor_restart.gd")
+const ScriptTabs = preload("script_tabs.gd")
 
 const HANDLE_PREFIX := "nh1:"
 const MAX_OPERATIONS := 128
@@ -41,6 +49,8 @@ const MAX_SELECTION := 256
 const SETTLE_FRAMES := 3
 const METHODS := [
 	"editor.addon.reload",
+	"editor.camera.set",
+	"editor.dialog.respond",
 	"editor.filesystem.scan",
 	"editor.history.redo",
 	"editor.history.undo",
@@ -48,12 +58,15 @@ const METHODS := [
 	"editor.play.start",
 	"editor.play.stop",
 	"editor.preferences.set",
+	"editor.restart",
 	"editor.scene.batch",
 	"editor.scene.close",
 	"editor.scene.edit",
 	"editor.scene.open",
 	"editor.scene.save",
+	"editor.script.close",
 	"editor.script.open",
+	"editor.script.run",
 	"editor.selection.set",
 	"editor.settings.apply",
 	"editor.shortcuts.set",
@@ -68,6 +81,7 @@ var _steps: Array = []
 var _results: Array = []
 var _files = Filesystem.new()
 var _play = Play.new()
+var _scripts = ScriptRunner.new()
 
 
 func _init(owner = null) -> void:
@@ -96,6 +110,14 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return await _files.scan(_handlers(), payload, context)
 		"editor.script.open":
 			return _files.open_script(_handlers(), payload)
+		"editor.script.close":
+			return ScriptTabs.close(_handlers(), payload)
+		"editor.camera.set":
+			return await EditorCamera.move(payload)
+		"editor.dialog.respond":
+			return await EditorDialogs.respond(payload)
+		"editor.restart":
+			return await EditorRestart.request(_handlers(), self, payload)
 		"editor.play.start":
 			return await _play.start(_handlers(), payload)
 		"editor.play.stop":
@@ -126,6 +148,10 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return _reload()
 		"editor.settings.apply":
 			return ProjectSettingsApply.apply(payload)
+		"editor.script.run":
+			var handlers = _handlers()
+			var offered: bool = handlers.panel_state != null and handlers.panel_state.server_methods.has(ScriptRunner.EDITOR_METHOD)
+			return await _scripts.run(ScriptRunner.EDITOR_METHOD, offered, payload, handlers.editor_log, handlers.plugin)
 	return fail("unsupported", "the editor bridge does not implement %s" % method)
 
 
@@ -183,23 +209,6 @@ static func _map_owned(original: Node, copy: Node, owned: Array, into: Array) ->
 		into.append(copy)
 	for child in mini(original.get_child_count(), copy.get_child_count()):
 		_map_owned(original.get_child(child), copy.get_child(child), owned, into)
-
-
-static func _is_node_class(name: String) -> bool:
-	return ClassDB.class_exists(name) and ClassDB.can_instantiate(name) \
-		and (name == "Node" or ClassDB.is_parent_class(name, "Node"))
-
-
-static func _is_resource_class(name: String) -> bool:
-	return ClassDB.class_exists(name) and ClassDB.can_instantiate(name) \
-		and (name == "Resource" or ClassDB.is_parent_class(name, "Resource"))
-
-
-static func _has_property(object: Object, property: String) -> bool:
-	for entry in object.get_property_list():
-		if entry["name"] == property:
-			return true
-	return false
 
 
 # --- recorded primitive steps ------------------------------------------------
@@ -780,10 +789,10 @@ func _apply(root: Node, op: Dictionary, index: int) -> Dictionary:
 				if child == null:
 					return refused("scene_not_instantiable", index, str(op["scene"]))
 			else:
-				var node_type: String = str(op.get("type", "Node"))
-				if not _is_node_class(node_type):
-					return refused("unknown_node_type", index, node_type)
-				child = ClassDB.instantiate(node_type)
+				var made: Dictionary = EditingMethods.instantiate(str(op.get("type", "Node")), "Node")
+				if not made["ok"]:
+					return refused("unknown_node_type", index, made["detail"])
+				child = made["object"]
 			child.name = name
 			_record([[parent, "add_child", [child]], [child, "set_owner", [root]]],
 				[[parent, "remove_child", [child]]], [child], [])
@@ -854,7 +863,7 @@ func _apply(root: Node, op: Dictionary, index: int) -> Dictionary:
 			var node: Node = _node(root, op.get("node", "."))
 			if node == null or not _owned(root, node):
 				return refused("node_not_found", index, str(op.get("node", ".")))
-			return _set_property(node, op, index, kind == "clear_property")
+			return _set_property(root, node, op, index, kind == "clear_property")
 		"attach_script", "detach_script":
 			var node: Node = _node(root, op.get("node", "."))
 			if node == null or not _owned(root, node):
@@ -933,7 +942,7 @@ func _apply(root: Node, op: Dictionary, index: int) -> Dictionary:
 			var node: Node = _node(root, op.get("node", "."))
 			if node == null or not _owned(root, node):
 				return refused("node_not_found", index, str(op.get("node", ".")))
-			return _set_subresource(node, op, index)
+			return _set_subresource(root, node, op, index)
 		"call_method":
 			var node: Node = _node(root, op.get("node", "."))
 			if node == null or not _owned(root, node):
@@ -944,39 +953,123 @@ func _apply(root: Node, op: Dictionary, index: int) -> Dictionary:
 	return {"ok": true}
 
 
-func _set_property(node: Node, op: Dictionary, index: int, clear: bool) -> Dictionary:
-	var property: String = str(op.get("property", ""))
-	if property == "" or not _has_property(node, property):
-		return refused("unknown_property", index, property)
+## `set_property` and `clear_property`: a property of the node, or one the
+## property path reaches through resources the scene embeds, or a component
+## of a property's value (`position:x`).
+func _set_property(root: Node, node: Node, op: Dictionary, index: int, clear: bool) -> Dictionary:
+	var path: String = str(op.get("property", ""))
+	if path == "":
+		return refused("unknown_property", index, path)
+	var found: Dictionary = EditingMethods.walk(node, path, root.scene_file_path)
+	if not found["ok"]:
+		return refused(found["reason"], index, found["detail"])
+	var holder: Object = found["holder"]
+	var leaf: String = found["leaf"]
+	var problem: Dictionary = EditingMethods.leaf_problem(holder, leaf, clear)
+	if not problem.is_empty():
+		return refused(problem["reason"], index, problem["detail"])
 	var value
 	if clear:
-		if node.property_can_revert(property):
-			value = node.property_get_revert(property)
-		else:
-			value = ClassDB.class_get_property_default_value(node.get_class(), property)
+		if not EditingMethods.has_property(holder, leaf):
+			return refused("unknown_property", index, path)
+		value = EditingMethods.cleared_value(holder, leaf)
 	else:
 		var decoded: Dictionary = VariantCodec.decode(op.get("value"))
 		if not decoded["ok"]:
 			return refused("invalid_value", index, decoded["reason"])
 		value = decoded["value"]
-	var before = node.get(property)
-	node.set(property, value)
-	var after = node.get(property)
-	if not clear and typeof(value) != TYPE_NIL and typeof(after) != typeof(value) \
-			and not (typeof(value) == TYPE_FLOAT and typeof(after) == TYPE_INT) \
-			and not (typeof(value) == TYPE_INT and typeof(after) == TYPE_FLOAT) \
-			and not (typeof(value) == TYPE_STRING and typeof(after) == TYPE_STRING_NAME) \
-			and not (typeof(value) == TYPE_OBJECT):
-		node.set(property, before)
-		return refused("value_type_mismatch", index, property + " is " + type_string(typeof(after)))
-	node.set(property, before)
-	_record([[node, "set", [property, after]]], [[node, "set", [property, before]]])
+	return _write(root, node, found, path, value, index, not clear)
+
+
+## Write `value` where a walk led, and record how to redo and undo it. A
+## property the holder lists is written with `set`, or `set_indexed` for a
+## component, and undone with the value before. A metadata entry the holder
+## lacks is added and undone by removing it. A stored property a resource does
+## not list yet, as a state machine's `states/Run/node`, is written into a
+## rebuilt copy of the outer resource, which the node then holds, since
+## writing back cannot take the new property away again.
+func _write(root: Node, node: Node, found: Dictionary, path: String, value, index: int, check: bool) -> Dictionary:
+	var holder: Object = found["holder"]
+	var leaf: String = found["leaf"]
+	var name := leaf.get_slice(":", 0)
+	if EditingMethods.has_property(holder, name):
+		var setter := "set_indexed" if leaf.contains(":") else "set"
+		var key = NodePath(leaf) if leaf.contains(":") else leaf
+		var before = holder.get_indexed(key) if leaf.contains(":") else holder.get(key)
+		holder.call(setter, key, value)
+		var after = holder.get_indexed(key) if leaf.contains(":") else holder.get(key)
+		holder.call(setter, key, before)
+		if check and not EditingMethods.took(value, after):
+			return refused("value_type_mismatch", index, path + " is " + type_string(typeof(after)))
+		if check and not EditingMethods.kept(value, after):
+			return refused("value_not_kept", index, "%s kept %s, not %s" % [path, str(after), str(value)])
+		_record([[holder, setter, [key, after]]], [[holder, setter, [key, before]]])
+		return {"ok": true}
+	if name.begins_with("metadata/") and not leaf.contains(":"):
+		var key := name.trim_prefix("metadata/")
+		if not key.is_valid_identifier():
+			return refused("invalid_property_path", index, "%s is not a metadata name" % key)
+		_record([[holder, "set_meta", [key, value]]], [[holder, "remove_meta", [key]]])
+		return {"ok": true}
+	if found["outer"] == null or leaf.contains(":"):
+		return refused("unknown_property", index, path)
+	var copy: Dictionary = _copy_outer(root, node, found)
+	if not copy["ok"]:
+		return copy if copy.has("error_kind") else refused(copy["reason"], index, copy["detail"])
+	var inside: Object = copy["holder"]
+	inside.set(name, value)
+	if not EditingMethods.has_property(inside, name):
+		return refused("unknown_property", index, path)
+	if check and not EditingMethods.took(value, inside.get(name)):
+		return refused("value_type_mismatch", index, path + " is " + type_string(typeof(inside.get(name))))
+	if check and not EditingMethods.kept(value, inside.get(name)):
+		return refused("value_not_kept", index, "%s kept %s, not %s" % [path, str(inside.get(name)), str(value)])
+	_record([[node, "set", [found["outer_property"], copy["copy"]]]],
+		[[node, "set", [found["outer_property"], found["outer"]]]])
 	return {"ok": true}
 
 
+## A rebuilt copy of the resource a walk passed first, and the copy of the
+## object the walk reached inside it: {"ok": true, "copy", "holder"}. Refused
+## when the scene holds that resource, or one embedded in it, in another
+## place too, since giving one node property a copy would part them.
+func _copy_outer(root: Node, node: Node, found: Dictionary) -> Dictionary:
+	var shared := _sharer(root, node, found)
+	if shared != "":
+		return {"ok": false, "reason": "shared_resource", "detail": shared}
+	var copy: Resource = EditingMethods.rebuilt(found["outer"], root.scene_file_path)
+	var inside = copy if found["inner"] == "" else copy.get_indexed(NodePath(found["inner"]))
+	if not (inside is Object) or inside.get_class() != found["holder"].get_class():
+		return fail("unavailable", "a rebuilt copy of %s does not hold the %s the edit was for" % [found["outer_property"], found["holder"].get_class()])
+	return {"ok": true, "copy": copy, "holder": inside}
+
+
+## Where else the scene holds the resource a walk passed first, or a resource
+## embedded in it, as "node path:property also holds it"; "" when nowhere.
+func _sharer(root: Node, node: Node, found: Dictionary) -> String:
+	var mine: Dictionary = {}
+	EditingMethods.embedded_resources(found["outer"], root.scene_file_path, mine)
+	var nodes: Array = [root]
+	_collect_owned(root, root, nodes)
+	for other in nodes:
+		for property in other.get_property_list():
+			var name := str(property["name"])
+			if not (int(property.get("usage", 0)) & PROPERTY_USAGE_STORAGE) or name == "script" \
+					or (other == node and name == found["outer_property"]):
+				continue
+			var theirs: Dictionary = {}
+			EditingMethods.embedded_resources(other.get(name), root.scene_file_path, theirs)
+			for id in theirs:
+				if mine.has(id):
+					return "%s:%s holds it too; edit each, or give one its own with set_subresource first" % [String(root.get_path_to(other)), name]
+	return ""
+
+
 ## `call_method`: call a listed editing method on the node or on a resource
-## the scene embeds, and record how to redo and undo it from the receiver's
-## stored properties before and after the call.
+## the scene embeds, once or once per argument list of `repeat`, and record
+## how to redo and undo the calls together: from the receiver's stored
+## properties before and after them, or, for a REPLACING class, by making the
+## calls on a rebuilt copy of the outer resource, which the node then holds.
 func _call_method(root: Node, node: Node, op: Dictionary, index: int) -> Dictionary:
 	var found: Dictionary = EditingMethods.receiver(node, op.get("resource"), root.scene_file_path)
 	if not found.get("ok", false):
@@ -986,51 +1079,97 @@ func _call_method(root: Node, node: Node, op: Dictionary, index: int) -> Diction
 	var listed := EditingMethods.listed_class(receiver, method)
 	if listed == "":
 		return refused("method_not_listed", index, "%s cannot be called on a %s" % [method, receiver.get_class()])
-	var arguments: Array = []
-	var given = op.get("arguments", [])
-	if typeof(given) != TYPE_ARRAY or given.size() > EditingMethods.MAX_CALL_ARGUMENTS:
-		return refused("invalid_arguments", index, "`arguments` lists at most %d values" % EditingMethods.MAX_CALL_ARGUMENTS)
-	for argument in given:
-		var decoded: Dictionary = EditingMethods.decode_argument(argument)
-		if not decoded["ok"]:
-			return refused("invalid_value", index, decoded["reason"])
-		arguments.append(decoded["value"])
-	var problem := EditingMethods.signature_problem(receiver, method, arguments)
-	if problem != "":
-		return refused("invalid_arguments", index, problem)
-	var recorded: Dictionary = EditingMethods.call_recorded(receiver, listed, method, arguments)
-	if not recorded["ok"]:
-		if recorded["unresolved"]:
-			return fail("unavailable", recorded["detail"], "unresolved")
-		return refused("not_undoable", index, recorded["detail"])
-	_steps.append({"do": recorded["do"], "undo": recorded["undo"], "do_refs": [], "undo_refs": []})
-	_results.append({"index": index, "method": method, "value": EditingMethods.encode_result(recorded["value"])})
+	var lists: Dictionary = EditingMethods.argument_lists(op)
+	if not lists["ok"]:
+		return refused(lists["reason"], index, lists["detail"])
+	var info: Dictionary = EditingMethods.method_info(receiver, method)
+	for arguments in lists["lists"]:
+		var problem := EditingMethods.signature_problem(receiver, method, info, arguments)
+		if problem != "":
+			return refused("invalid_arguments", index, problem)
+	if EditingMethods.BAKING.has(listed):
+		return _bake(root, node, listed, op, lists["lists"], index)
+	var values: Array = []
+	if EditingMethods.REPLACING.has(listed):
+		if found["outer"] == null:
+			return refused("not_undoable", index, "a %s is called through the node property that holds it" % listed)
+		found["holder"] = receiver
+		var copy: Dictionary = _copy_outer(root, node, found)
+		if not copy["ok"]:
+			return copy if copy.has("error_kind") else refused(copy["reason"], index, copy["detail"])
+		for arguments in lists["lists"]:
+			values.append(copy["holder"].callv(method, arguments))
+		_record([[node, "set", [found["outer_property"], copy["copy"]]]],
+			[[node, "set", [found["outer_property"], found["outer"]]]])
+	else:
+		var recorded: Dictionary = EditingMethods.call_recorded(receiver, listed, method, lists["lists"])
+		if not recorded["ok"]:
+			if recorded["unresolved"]:
+				return fail("unavailable", recorded["detail"], "unresolved")
+			return refused("not_undoable", index, recorded["detail"])
+		_steps.append({"do": recorded["do"], "undo": recorded["undo"], "do_refs": [], "undo_refs": []})
+		values = recorded["values"]
+	_results.append(EditingMethods.result_entry(index, method, values, op.has("repeat")))
 	return {"ok": true}
 
 
-func _set_subresource(node: Node, op: Dictionary, index: int) -> Dictionary:
-	var property: String = str(op.get("property", ""))
-	var resource_class: String = str(op.get("class", ""))
-	if property == "" or not _has_property(node, property):
-		return refused("unknown_property", index, property)
-	if not _is_resource_class(resource_class):
-		return refused("unknown_resource_class", index, resource_class)
-	var resource: Resource = ClassDB.instantiate(resource_class)
+## A BAKING call: the region rebuilds the resource its BAKING property holds
+## from the nodes the engine parses for it, into a rebuilt copy the region then
+## holds, so undo gives it the untouched original back. The call is made with
+## `on_thread` false, so it returns only once the bake is done, and what it
+## produced is answered with the call.
+func _bake(root: Node, node: Node, listed: String, op: Dictionary, lists: Array, index: int) -> Dictionary:
+	var method := str(op.get("method", ""))
+	if op.has("repeat"):
+		return refused("invalid_arguments", index, "%s bakes once; `repeat` does not apply" % method)
+	var arguments: Array = lists[0]
+	if arguments.size() > 1 or arguments.size() == 1 and (typeof(arguments[0]) != TYPE_BOOL or arguments[0]):
+		return refused("invalid_arguments", index, "%s bakes on the calling thread: on_thread must be false" % method)
+	var property: String = EditingMethods.BAKING[listed]
+	var held = node.get(property)
+	if not (held is Resource):
+		return refused("not_a_resource", index, "the %s holds no %s to bake into; set one first" % [node.get_class(), property])
+	if not EditingMethods.embedded(held, root.scene_file_path):
+		return refused("external_resource", index, "%s is the file %s, which a bake would change too" % [property, held.resource_path])
+	var shared := _sharer(root, node, {"outer": held, "outer_property": property})
+	if shared != "":
+		return refused("shared_resource", index, shared)
+	var copy: Resource = EditingMethods.rebuilt(held, root.scene_file_path)
+	_record([[node, "set", [property, copy]]], [[node, "set", [property, held]]])
+	node.call(method, false)
+	var entry: Dictionary = EditingMethods.result_entry(index, method, [null], false)
+	entry["baked"] = EditingMethods.baked(copy)
+	_results.append(entry)
+	return {"ok": true}
+
+
+## `set_subresource`: a new resource of `class`, with `properties`, written
+## where the property path leads.
+func _set_subresource(root: Node, node: Node, op: Dictionary, index: int) -> Dictionary:
+	var path: String = str(op.get("property", ""))
+	if path == "":
+		return refused("unknown_property", index, path)
+	var found: Dictionary = EditingMethods.walk(node, path, root.scene_file_path)
+	if not found["ok"]:
+		return refused(found["reason"], index, found["detail"])
+	if str(found["leaf"]).contains(":"):
+		return refused("invalid_property_path", index, "%s names part of a value, not a property" % path)
+	var made: Dictionary = EditingMethods.instantiate(str(op.get("class", "")), "Resource")
+	if not made["ok"]:
+		return refused("unknown_resource_class", index, made["detail"])
+	var resource: Resource = made["object"]
 	var properties = op.get("properties", {})
 	if typeof(properties) != TYPE_DICTIONARY:
 		return refused("invalid_value", index, "properties must be an object")
 	for key in properties.keys():
-		if not _has_property(resource, str(key)):
+		if not EditingMethods.has_property(resource, str(key)):
 			return refused("unknown_property", index, str(key))
 		var decoded: Dictionary = VariantCodec.decode(properties[key])
 		if not decoded["ok"]:
 			return refused("invalid_value", index, decoded["reason"])
 		resource.set(str(key), decoded["value"])
-	var before = node.get(property)
-	node.set(property, resource)
-	if node.get(property) != resource:
-		node.set(property, before)
-		return refused("value_type_mismatch", index, property)
-	node.set(property, before)
-	_record([[node, "set", [property, resource]]], [[node, "set", [property, before]]])
-	return {"ok": true}
+		if not EditingMethods.took(decoded["value"], resource.get(str(key))):
+			return refused("value_type_mismatch", index, "%s is %s" % [str(key), type_string(typeof(resource.get(str(key))))])
+		if not EditingMethods.kept(decoded["value"], resource.get(str(key))):
+			return refused("value_not_kept", index, "%s kept %s, not %s" % [str(key), str(resource.get(str(key))), str(decoded["value"])])
+	return _write(root, node, found, path, resource, index, true)

@@ -61,9 +61,12 @@ pub fn tool_inventory(canonical: &Canonical) -> Result<String, String> {
     );
     out.push_str(
         "\n\
-         `full` is the union of `core`, `editor` and `runtime`. No profile carries an\n\
-         arbitrary-script-execution tool: `unsafe_script` is a reserved identifier with\n\
-         no capability variant, no handler and no profile membership.\n\
+         `full` is the union of `core`, `editor` and `runtime`. The three script tools,\n\
+         `script.run`, `editor.script.run` and `runtime.script.run`, run nothing until the\n\
+         operator turns script execution on for a launch; see\n\
+         [Script execution](../operator/profiles-and-outcomes.md#script-execution).\n\
+         `unsafe_script` is a reserved identifier with no capability variant, no handler\n\
+         and no profile membership.\n\
          \n\
          Discovery reports what this build implements. A profile is an authorization\n\
          ceiling: it lists exactly the catalog methods it authorizes, and the catalog\n\
@@ -170,7 +173,7 @@ pub fn error_taxonomy(canonical: &Canonical) -> Result<String, String> {
         ),
         (
             "Capabilities",
-            "The capability an operation consumes. There is no capability variant for\narbitrary script execution.",
+            "The capability an operation consumes. No capability turns script execution\non: the script tools consume these, and only the operator's switch lets them run.",
             &canonical.capabilities,
         ),
         (

@@ -1,0 +1,11 @@
+[remap]
+
+importer="texture"
+type="CompressedTexture2D"
+uid="uid://cunusedpng0001"
+path="res://.godot/imported/unused.png-0e1b5c1fd5e3a7f0b1d2b4c6a8e0f2d4.ctex"
+
+[deps]
+
+source_file="res://art/unused.png"
+dest_files=["res://.godot/imported/unused.png-0e1b5c1fd5e3a7f0b1d2b4c6a8e0f2d4.ctex"]

@@ -3,6 +3,7 @@
 
 pub(crate) mod boundary;
 pub(crate) mod bridge;
+pub(crate) mod scene_read;
 pub(crate) mod tools;
 
 pub(crate) use tools::input_schema;

@@ -1,6 +1,6 @@
 //! The `core` profile's outcome tools: static Godot intelligence, headless.
 //!
-//! Fifteen canonical tools, one shared [`CoreSession`], and one registration
+//! The canonical static tools, one shared [`CoreSession`], and one registration
 //! entry point ([`register_core_tools`]). Every handler is reached through Todo
 //! 5's [`ServiceKernel`](crate::kernel::ServiceKernel), which is the single
 //! authorization and dispatch boundary: nothing here builds its own dispatch
@@ -13,7 +13,11 @@
 //! trees, dependencies, the dangling audit and diagnostics are all read off the
 //! Todo 10 semantic graph that Todo 11 persisted, and rendered into a bounded
 //! public shape. No grammar, no relationship rule and no graph traversal is
-//! re-implemented here.
+//! re-implemented here. The project-wide views — the reference audit, signal
+//! flow, metrics, content search, UID lookup, node queries and scene exports —
+//! are computed by the analysis crate's `insight` module over the bytes the
+//! pinned session reads through the held lease; this layer reads, bounds and
+//! renders them.
 //!
 //! It is also headless. `core` never starts, connects to, or waits on a Godot
 //! process. `project.validate` and `script.validate` are therefore *static*
@@ -29,8 +33,7 @@
 //!
 //! ## Invariants the acceptance suite pins
 //!
-//! * Every one of the 15 canonical tools has a real handler; none reports
-//!   `unavailable`.
+//! * Every canonical tool has a real handler; none reports `unavailable`.
 //! * A binary `.scn` / `.res` request is [`ErrorKind::Unsupported`] with
 //!   actionable remediation — never an empty success.
 //! * Every collection is a deterministic page that declares its own truncation.
@@ -41,6 +44,7 @@
 
 mod answer;
 mod handlers;
+mod insight;
 mod session;
 
 pub use answer::{

@@ -5,15 +5,16 @@
 //! sampled for every report, so a health response cannot accidentally become a
 //! startup snapshot presented as current state.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use godot_mcp_analysis::index::IndexSnapshot;
 use godot_mcp_domain::CapabilityProfile;
+use godot_mcp_domain::catalog::{ToolNeeds, descriptor};
 use godot_mcp_domain::contracts::{OutcomeError, ProjectIdentity};
 use godot_mcp_domain::manifests::canonical_manifest;
 use godot_mcp_engine::discovery::{EnvironmentSnapshot, HostPlatform, discover};
-use godot_mcp_engine::supervision::protocol::bundled_supervisor;
 use serde_json::{Value, json};
 
 use super::{
@@ -268,6 +269,87 @@ impl DiagnosticsContext {
             json!(self.project.safe_root_generation),
         );
         Ok(report)
+    }
+
+    /// What a connected editor's `godot_mcp` panel shows about this server,
+    /// sent as `bridge.server_status`: the server's version, profile and
+    /// transport, why mutations are blocked if they are, and every tool the
+    /// profile lists with what it needs, plus how available each need is now.
+    ///
+    /// A need's availability is not derived here. Each one is the `health.get`
+    /// component that answers for it — `project`, `godot`, `editor` or
+    /// `runtime`, sampled now from the same owners and through the same
+    /// function — and a managed editor session is the router's `lsp_dap`
+    /// plane health, with its remediation as the reason.
+    pub(crate) fn editor_status_value(&self) -> Value {
+        let observed_at_unix_ms = current_unix_ms();
+        let snapshot = self.session.snapshot();
+        let engine = EngineObservation::observe(
+            self.profile,
+            self.session.engine_binary(),
+            self.process.as_deref(),
+        );
+        let planes = self.router.health(observed_at_unix_ms);
+        let report = legacy_health_value(
+            self.profile,
+            &self.project_identity,
+            &snapshot,
+            &engine.reach,
+            Some(&planes),
+        );
+        let manifest = canonical_manifest(self.profile);
+        let described: Vec<&'static godot_mcp_domain::catalog::ToolDescriptor> = manifest
+            .tools
+            .iter()
+            .filter_map(|name| descriptor(name))
+            .collect();
+        let used: BTreeSet<ToolNeeds> = described.iter().map(|tool| tool.needs).collect();
+        let tools: Vec<Value> = described
+            .iter()
+            .take(STATUS_MAX_TOOLS)
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "title": tool.title,
+                    "needs": tool.needs.as_str(),
+                    "read_only": tool.annotations.read_only,
+                })
+            })
+            .collect();
+        let needs: Vec<Value> = used
+            .into_iter()
+            .map(|need| match need {
+                ToolNeeds::ProjectFiles => need_from_component(need, "project", &report),
+                ToolNeeds::HeadlessEngine => need_from_component(need, "godot", &report),
+                ToolNeeds::LiveEditor => need_from_component(need, "editor", &report),
+                ToolNeeds::GameSession => need_from_component(need, "runtime", &report),
+                ToolNeeds::EditorSession => need_from_plane(need, EffectPlane::LspDap, &planes),
+            })
+            .collect();
+        json!({
+            "server_version": crate::SERVER_VERSION,
+            "profile": self.profile.manifest_name(),
+            "transport": self.transport_name(),
+            "observed_at_unix_ms": observed_at_unix_ms,
+            "mutations_blocked": planes.mutations_blocked().map(bounded_reason),
+            "needs": needs,
+            "tools_total": described.len(),
+            "tools_truncated": described.len() > tools.len(),
+            "tools": tools,
+        })
+    }
+
+    /// The transport this server answers on, without probing its readiness.
+    fn transport_name(&self) -> &'static str {
+        match *self
+            .transport
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            DiagnosticsTransport::Stdio => TransportSurface::Stdio.as_str(),
+            #[cfg(feature = "http")]
+            DiagnosticsTransport::Http(_) => TransportSurface::Http.as_str(),
+        }
     }
 
     /// Count one tool request without admitting attacker-controlled labels.
@@ -549,6 +631,58 @@ fn planes_value(planes: &crate::router::RouterHealth) -> Value {
     )
 }
 
+/// Most tools one editor status lists; the `full` profile lists 90.
+const STATUS_MAX_TOOLS: usize = 512;
+/// Longest reason one editor status carries, in characters.
+const STATUS_MAX_REASON: usize = 1024;
+
+fn bounded_reason(reason: &str) -> String {
+    if reason.chars().count() <= STATUS_MAX_REASON {
+        return reason.to_owned();
+    }
+    let mut kept: String = reason.chars().take(STATUS_MAX_REASON - 1).collect();
+    kept.push('…');
+    kept
+}
+
+/// One need, as the `health.get` component that answers for it reports it.
+fn need_from_component(need: ToolNeeds, component: &str, report: &Value) -> Value {
+    let found = report["components"]
+        .as_array()
+        .and_then(|components| {
+            components
+                .iter()
+                .find(|entry| entry["component"] == component)
+        })
+        .cloned()
+        .unwrap_or(Value::Null);
+    json!({
+        "needs": need.as_str(),
+        "component": component,
+        "status": found["status"].as_str().unwrap_or("unknown"),
+        "reason": found["message"].as_str().map(bounded_reason),
+    })
+}
+
+/// One need, as the router's health of the plane that serves it reports it.
+fn need_from_plane(
+    need: ToolNeeds,
+    plane: EffectPlane,
+    planes: &crate::router::RouterHealth,
+) -> Value {
+    let health = planes.plane(plane);
+    let usable = health.is_some_and(PlaneHealth::usable);
+    let reason = health
+        .and_then(PlaneHealth::remediation)
+        .map(|remediation| bounded_reason(&remediation.steps().join("; ")));
+    json!({
+        "needs": need.as_str(),
+        "plane": plane.as_str(),
+        "status": if usable { "ready" } else { "unavailable" },
+        "reason": reason,
+    })
+}
+
 fn queue_value(queue: QueueFacts) -> Value {
     json!({
         "mode": queue.mode,
@@ -680,7 +814,7 @@ impl EngineObservation {
             } else {
                 EngineReach::Undiscovered
             }
-        } else if !bundled_supervisor().is_file() {
+        } else if !crate::engine_plane::process_supervisor_binary().is_file() {
             EngineReach::SupervisorMissing
         } else {
             match process.map(crate::engine_plane::providers::LaunchProviders::status) {

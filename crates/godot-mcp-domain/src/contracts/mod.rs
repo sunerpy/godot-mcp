@@ -54,16 +54,20 @@ pub enum ContractVersion {
     #[serde(rename = "0.2.0")]
     V0_2_0,
     /// Live editor operability: editor-owned saves, captures, scans, play and settings.
-    #[default]
     #[serde(rename = "0.3.0")]
     V0_3_0,
+    /// Agent development: declared script execution, generic settings and the
+    /// tools contract 0.4.0 lists.
+    #[default]
+    #[serde(rename = "0.4.0")]
+    V0_4_0,
 }
 
 impl ContractVersion {
     /// Current version marker.
     #[must_use]
     pub const fn current() -> Self {
-        Self::V0_3_0
+        Self::V0_4_0
     }
 
     /// Stable textual representation.
@@ -72,7 +76,8 @@ impl ContractVersion {
         match self {
             Self::V0_1_0 => "0.1.0",
             Self::V0_2_0 => "0.2.0",
-            Self::V0_3_0 => CONTRACT_VERSION,
+            Self::V0_3_0 => "0.3.0",
+            Self::V0_4_0 => CONTRACT_VERSION,
         }
     }
 }

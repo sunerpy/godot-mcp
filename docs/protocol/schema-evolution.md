@@ -71,6 +71,71 @@ release rather than hidden in it:
 An artifact a 0.2.0 server recorded is unreadable to a 0.3.0 server and is discarded when
 it starts; an artifact stays readable for 15 minutes in any case.
 
+### Contract 0.4.0
+
+Contract 0.4.0 adds thirty-nine tools and widens six requests. The 0.3.0 manifests stay
+frozen in `schemas/domain/profiles/v0.3/`.
+
+* Seven project-wide static views, in every profile: `project.dependencies.audit`,
+  `project.metrics.get`, `project.search`, `project.signals.get`, `project.uid.get`,
+  `scene.exports.get` and `scene.nodes.find`.
+* Eleven managed-session tools, in the `runtime` and `full` profiles: `runtime.properties.set`,
+  `runtime.properties.batch.get`, `runtime.wait`, `runtime.sample`, `runtime.nodes.find`,
+  `runtime.navigation.path.get`, `runtime.node.move`, `runtime.ui.press`,
+  `input.recording.start`, `input.recording.stop` and `input.replay`. A game session whose probe
+  predates them answers `unsupported` for each.
+* Three test tools for a managed game, in the `runtime` and `full` profiles:
+  `runtime.time_scale.set`, `runtime.image.compare` and `test.scenario.run`. The runtime probe
+  gains four methods for them; a game session whose probe predates them answers `unsupported`.
+* Three tools that run caller-written GDScript
+  ([ADR 0012](../contributor/adr/0012-declared-script-execution.md)): `script.run` in a
+  supervised headless Godot and `editor.script.run` in the connected editor, in the `editor`
+  and `full` profiles, and `runtime.script.run` in a managed game, in the `runtime` and `full`
+  profiles. Each is listed and refused with `permission_denied` unless the operator turned on
+  `allow_scripts` for the launch. The editor bridge and the runtime probe gain the methods
+  `editor.script.run` and `runtime.script.run`, which a server lists in a session's
+  capabilities only while the switch is on; add-on 0.4.0 and probe 0.4.0 implement them.
+* Three engine reads, in the `runtime` and `full` profiles: `scene.read` and `resource.read`
+  call the reading methods of a scene's or a resource's objects in a supervised headless Godot,
+  and `shader.check` compiles a shader there and answers its mode and uniforms.
+* `editor.scene.read`, in the `editor` and `full` profiles, makes the calls `scene.read`
+  makes on the scene the connected editor is editing, unsaved edits included. Add-on 0.4.0 serves
+  it with the bridge method `editor.scene.read`; with an add-on that predates it the tool answers
+  `unsupported` and says to update it.
+* `project.batch.apply`, in the `editor` and `full` profiles, applies a batch to each of up to
+  16 scenes and resources in one Godot run and publishes every file in one transaction.
+* Two Android device tools, in the `runtime` and `full` profiles: `android.devices.list`
+  lists the devices the configured SDK's adb sees, and `android.deploy` installs and starts
+  the APK of an Android export on one of them, proving each phase.
+* Eight live-editor tools, in the `editor` and `full` profiles: `editor.camera.get`,
+  `editor.camera.set`, `editor.script.close`, `editor.dialogs.get`, `editor.dialog.respond`,
+  `editor.restart` ([ADR 0013](../contributor/adr/0013-editor-restart.md)),
+  `editor.performance.get` and `editor.resource.preview`. Add-on 0.4.0 serves a bridge method for
+  each and adds three optional fields to its session description, its process id and whether it
+  can move a 3D camera and close a script tab, and a `restart` record to the editor state it
+  reports. With an add-on that predates them each tool answers `unsupported` and says to update
+  it, and on a Godot build without the API a tool needs it answers `unsupported` naming the build.
+* `project.files.list` accepts an optional `glob`.
+* `project.export` accepts `kind` (`project`, `pack` or `patch`), `packFormat` and
+  `patches`, and exports Android presets as APKs, which a 0.3.0 server refused as
+  `unsupported`.
+* `project.settings.patch` accepts `set_setting` and `clear_setting` for any setting the typed
+  operations do not own, and `project.settings.get` accepts `settings` and `prefix` to select
+  entries.
+* A batch's `set_property`, `clear_property` and `set_subresource` take a property path
+  (`position:x`, `material:albedo_color`) as well as a name.
+* A `new_resource` argument may name any resource class or global script class except
+  `Script`, `GDExtension` and the classes that inherit them, and may carry initial properties.
+* `call_method` takes `repeat`, and its table of editing calls lists more classes: the
+  animation tree's state machine and blend nodes, `VisualShader`, `TileSet`,
+  `TileSetAtlasSource`, `MeshLibrary`, the navigation resources and `Control`.
+
+All of them are additions: a 0.3.0 client loses nothing, and a request it could send means
+what it meant. One answer changes: a write whose value the engine does not keep, such as a
+player's `bus` naming a bus the project's layout lacks, which Godot replaces with `Master`, is
+refused as `value_not_kept` and changes nothing, where a 0.3.0 server answered success for a
+file that held the other value.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an

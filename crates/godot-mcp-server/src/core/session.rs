@@ -402,6 +402,40 @@ impl PinnedSession<'_> {
         Ok(relative)
     }
 
+    /// Validate a caller-supplied project-relative path of any inventoried
+    /// file, without reading it.
+    ///
+    /// # Errors
+    /// Returns [`ErrorKind::InvalidInput`] for an empty, absolute or escaping
+    /// spelling and [`ErrorKind::NotFound`] for a path the snapshot does not
+    /// inventory.
+    pub fn resolve_inventory_path(&self, raw: &str) -> Result<String, OutcomeError> {
+        let relative = normalize_relative(raw)?;
+        if !self.workspace.inventory().contains(&relative) {
+            return Err(outcome_error(
+                ErrorKind::NotFound,
+                format!("{relative} is not part of the indexed project"),
+            ));
+        }
+        Ok(relative)
+    }
+
+    /// Read one inventoried file's bytes through the held lease, recording the
+    /// read for the consistency check.
+    ///
+    /// # Errors
+    /// Returns a classified [`OutcomeError`] when the lease refuses the path or
+    /// the read fails.
+    pub fn read_file(&self, relative: &str) -> Result<Vec<u8>, OutcomeError> {
+        let bytes = self
+            .session
+            .project
+            .read_source_file(Path::new(relative))
+            .map_err(|error| map_project_error(error, relative))?;
+        self.record_read(relative, &bytes);
+        Ok(bytes)
+    }
+
     /// Re-read and model one already-validated GDScript file.
     ///
     /// Todo 7 owns the grammar; this only forwards the bytes the lease returned.

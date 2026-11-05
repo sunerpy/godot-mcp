@@ -92,6 +92,10 @@ tree-sitter-gdscript = "=6.1.0"
 streaming-iterator = "=0.1.9"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 notify = "=8.2.1"
+# Bounded, linear-time pattern matching for `project.search` and glob filters.
+# Already in the locked graph with these features through tree-sitter, so
+# pinning it here adds no crate and no feature.
+regex = "=1.13.1"
 
 # --- Serialization / schema ---------------------------------------------
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -122,6 +126,12 @@ godot-mcp-analysis = { path = "crates/godot-mcp-analysis" }
 godot-mcp-engine = { path = "crates/godot-mcp-engine" }
 godot-mcp-bridge = { path = "crates/godot-mcp-bridge" }
 godot-mcp-server = { path = "crates/godot-mcp-server" }
+
+# Debug and test builds digest the configured Godot binary (about 145 MB) on
+# every engine call: the probe cache is keyed by its content. Unoptimized sha2
+# takes about six seconds for that; optimized, it does not show.
+[profile.dev.package.sha2]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

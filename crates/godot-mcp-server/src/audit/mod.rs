@@ -1,5 +1,5 @@
 //! Structured audit records, their append-only sink, and the structural proof
-//! that no arbitrary-execution surface exists.
+//! that the declared script tools are the only execution surface.
 //!
 //! The three concerns are one module because they are one guarantee: an operation
 //! is either recorded with enough non-sensitive facts to reconstruct who did what
@@ -12,8 +12,9 @@ pub mod event;
 pub mod sink;
 
 pub use absence::{
-    ConfigSurfaceProbe, ExecutionSurfaceAudit, RESERVED_UNSAFE_SCRIPT_CAPABILITY,
-    audit_execution_surface, config_surface_probe, scan_bytes_for_reserved_identifier,
+    ConfigSurfaceProbe, DECLARED_SCRIPT_TOOLS, ExecutionSurfaceAudit,
+    RESERVED_UNSAFE_SCRIPT_CAPABILITY, SCRIPT_SWITCH_KEY, audit_execution_surface,
+    config_surface_probe, scan_bytes_for_reserved_identifier,
 };
 pub use event::{
     AuditActorFacts, AuditBoundary, AuditCorrelationFacts, AuditDigest, AuditEffectFacts,

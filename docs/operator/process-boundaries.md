@@ -1,15 +1,16 @@
 # Process boundaries
 
 Some operations start a real Godot process: `project.import.run`, `project.run`,
-`project.test`, `script.check`, and the canonical writes `project.uid.update`,
-`resource.update` and `scene.save`. When one of them does start a process, that process is created inside a
+`project.test`, `script.check`, the engine reads `scene.read`, `resource.read` and
+`shader.check`, and the canonical writes `project.uid.update`, `resource.update` and
+`scene.save`. When one of them does start a process, that process is created inside a
 **containment boundary** whose identity is recorded durably before the process exists,
 so a crash never leaves a process nobody can account for. That guarantee holds
 unconditionally *once a launch begins* — it is not a configuration option and there is
 no flag that disables it.
 
 Whether a launch begins at all is a separate question, and it has preconditions. Read
-them before you rely on any of the seven operations above.
+them before you rely on any of the ten operations above.
 
 ## Preconditions for a Godot process to start
 
@@ -19,8 +20,9 @@ and nothing is launched.
 **1. The selected profile must advertise the tool.** The `core` profile grants `read`
 only and advertises no tool whose effect reaches the `process` plane, so no
 configuration makes it launch anything. `project.import.run`, `project.uid.update`,
-`resource.update` and `scene.save` are `editor` and `full` members; `project.run` and
-`project.test` and `script.check` are `runtime` and `full` members. See
+`resource.update` and `scene.save` are `editor` and `full` members; `project.run`,
+`project.test`, `script.check`, `scene.read`, `resource.read` and `shader.check` are
+`runtime` and `full` members. See
 [Profiles and outcomes](profiles-and-outcomes.md) for profile membership. The
 [What an answer means](profiles-and-outcomes.md#what-an-answer-means) section explains
 how `project.test` and `script.check` classify engine-backed validation results.
@@ -126,7 +128,10 @@ empty.
 
 This is a property of Godot, not of this server. A `@tool` script executes inside the
 editor, a `@tool` autoload runs as soon as the project loads, and `--import` implies
-editor mode. Godot's own documentation notes that the editor includes no protection
+editor mode. A headless run of a script, as each of the server's helpers is, starts every
+autoload of the project, `@tool` or not: measured on Godot 4.4.1 and 4.7.1, an autoload's
+`_enter_tree` and `_ready` run in such a run even when the script quits from its own
+`_init`. Godot's own documentation notes that the editor includes no protection
 against misuse of `@tool` scripts and that modifications made this way are permanent.
 
 So the honest question is never "is the code prevented from running" — it runs. The

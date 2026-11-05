@@ -31,13 +31,27 @@ const RETRY_SECONDS := 1.0
 const REFUSED_RETRY_SECONDS := 5.0
 const HANDSHAKE_SECONDS := 10.0
 const SILENCE_SECONDS := 20.0
+## Where a received request keeps when it arrived, in engine microseconds, and
+## the session it arrived in. Never sent: only the dispatcher and the answer
+## read the request back.
+const RECEIVED_KEY := "_godot_mcp_received"
 
 signal status_changed(text: String)
 ## The connection ended: closed, refused, lost or silent. Nothing queued runs.
 signal disconnected(reason: String)
+## A session opened. `summary` holds the server's version, the session id,
+## the project generation and the methods the server's capabilities listed.
+signal session_opened(summary: Dictionary)
+## A request was answered: the request envelope, the answer the dispatcher
+## gave, milliseconds from its arrival to its answer (-1 when unknown), and
+## whether the answer was handed to the socket.
+signal request_answered(request: Dictionary, answer: Dictionary, duration_ms: int, delivered: bool)
 
 var handlers = null
 var queue = null
+## What may hold mutations back before they start; handed to the dispatcher
+## when the client enters the tree. See command_queue.gd.
+var mutation_gate = null
 ## The version this peer reports in every envelope's identity.
 var client_version := ""
 ## Where the rendezvous file is: the path in this environment variable, or,
@@ -58,10 +72,14 @@ var _session_id := ""
 var _described := false
 var _drain_pending := false
 var _status := ""
+## Counts the sessions opened, so an answer finished after its session ended
+## is never sent to a later one, even one whose request has the same id.
+var _session_number := 0
 
 
 func _ready() -> void:
 	queue = CommandQueue.new(handlers)
+	queue.mutation_gate = mutation_gate
 	set_process(true)
 
 
@@ -77,6 +95,14 @@ func status() -> String:
 ## session described, which is when it starts sending work.
 func is_connected_to_server() -> bool:
 	return _phase == "ready" and _described
+
+
+## How many bytes sent to the server have not yet left for the socket; 0 when
+## there is no connection.
+func outbound_pending() -> int:
+	if _peer == null or _peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return 0
+	return _peer.get_current_outbound_buffered_amount()
 
 
 static func _now() -> float:
@@ -200,6 +226,14 @@ func close(reason: String) -> void:
 	_phase = "idle"
 	if was_serving:
 		disconnected.emit(reason)
+
+
+## Drop the session, if any, and dial again at once from a fresh read of the
+## rendezvous file.
+func reconnect_now() -> void:
+	close("the user asked the editor to reconnect")
+	_retry_at = 0.0
+	_set_status("reconnecting")
 
 
 func _lost(reason: String, retry: float = RETRY_SECONDS) -> void:
@@ -330,6 +364,8 @@ func _on_text(text: String) -> void:
 			_session_id = str(message.get("identity", {}).get("session_id", ""))
 			_described = false
 			_phase = "ready"
+			_session_number += 1
+			session_opened.emit(_session_summary(message))
 			_set_status("connected")
 		"error":
 			if _phase == "handshaking":
@@ -338,12 +374,13 @@ func _on_text(text: String) -> void:
 		"request":
 			if _phase != "ready":
 				return
+			message[RECEIVED_KEY] = [Time.get_ticks_usec(), _session_number]
 			_accept_request(message)
 		"cancel":
 			var correlation := str(message.get("correlation_id", ""))
 			var withdrawn: Dictionary = queue.cancel(correlation)
 			if not withdrawn.is_empty():
-				_reply(withdrawn, CommandQueue.refusal("cancelled", "the request was withdrawn before it started"))
+				_reply(withdrawn, CommandQueue.refused("cancelled", "the request was withdrawn before it started"))
 			elif handlers != null and handlers.has_method("cancel_running"):
 				# A request that already started and spans frames stops at its
 				# next step; it still answers, saying what it did.
@@ -358,13 +395,27 @@ func _on_text(text: String) -> void:
 			_lost("the server is stopping")
 
 
+func _session_summary(message: Dictionary) -> Dictionary:
+	var identity = message.get("identity")
+	var version = identity.get("server_version") if typeof(identity) == TYPE_DICTIONARY else null
+	var project = message.get("project")
+	var payload = message.get("payload")
+	var methods = payload.get("methods") if typeof(payload) == TYPE_DICTIONARY else null
+	return {
+		"server_version": version if typeof(version) == TYPE_STRING else "",
+		"session_id": _session_id,
+		"project_generation": str(project.get("generation", "")) if typeof(project) == TYPE_DICTIONARY else "",
+		"methods": methods if typeof(methods) == TYPE_ARRAY else [],
+	}
+
+
 func _accept_request(message: Dictionary) -> void:
 	if typeof(message.get("payload")) != TYPE_DICTIONARY:
-		_reply(message, CommandQueue.refusal("invalid_input", "a request payload must be an object"))
+		_reply(message, CommandQueue.refused("invalid_input", "a request payload must be an object"))
 		return
 	var refusal: String = queue.enqueue(message)
 	if refusal != "":
-		_reply(message, CommandQueue.refusal("unavailable", refusal))
+		_reply(message, CommandQueue.refused("unavailable", refusal))
 		return
 	_drain_pending = true
 
@@ -375,13 +426,21 @@ func _drain() -> void:
 
 
 ## Answer `request` with `answer` ({"ok", "payload"} or a refusal). An answer
-## that can no longer be delivered is dropped: the server already treats an
-## unanswered mutation as unresolved.
+## that can no longer be delivered, because the connection or the session it
+## arrived in ended, is dropped: the server already treats an unanswered
+## mutation as unresolved.
 func _reply(request: Dictionary, answer: Dictionary) -> void:
-	if _phase != "ready":
+	var id := str(request.get("message_id", ""))
+	var duration_ms := -1
+	var same_session := false
+	var received = request.get(RECEIVED_KEY)
+	if typeof(received) == TYPE_ARRAY and received.size() == 2:
+		duration_ms = int((Time.get_ticks_usec() - int(received[0])) / 1000.0)
+		same_session = int(received[1]) == _session_number
+	if _phase != "ready" or not same_session:
+		request_answered.emit(request, answer, duration_ms, false)
 		return
 	var mutation := str(request.get("operation_class", "")) == "mutation"
-	var id := str(request.get("message_id", ""))
 	var envelope: Dictionary
 	if answer.get("ok", false):
 		envelope = _blank("result")
@@ -404,7 +463,7 @@ func _reply(request: Dictionary, answer: Dictionary) -> void:
 		if mutation:
 			envelope["operation_class"] = "mutation"
 			envelope["mutation_status"] = str(answer.get("mutation_status", "not_started"))
-	_send(envelope)
+	request_answered.emit(request, answer, duration_ms, _send(envelope))
 
 
 ## Tell the server something happened, when it is being served.

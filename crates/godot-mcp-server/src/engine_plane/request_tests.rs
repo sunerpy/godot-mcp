@@ -116,7 +116,7 @@ fn operation_contracts() -> [(
     EngineOperation,
     &'static [&'static str],
     &'static [&'static str],
-); 11] {
+); 16] {
     [
         (
             EngineOperation::ImportProject,
@@ -192,8 +192,31 @@ fn operation_contracts() -> [(
             &["script", "deadline_ms"],
             &["script"],
         ),
+        (
+            EngineOperation::RunScript,
+            &["source", "context", "deadline_ms"],
+            &["source", "idempotencyId"],
+        ),
+        (
+            EngineOperation::SceneRead,
+            &["path", "calls"],
+            &["path", "calls"],
+        ),
+        (
+            EngineOperation::ResourceRead,
+            &["path", "calls"],
+            &["path", "calls"],
+        ),
+        (EngineOperation::ShaderCheck, &["path"], &["path"]),
+        (
+            EngineOperation::ProjectBatch,
+            &["files", "expectedRevision", "dryRun"],
+            &["files", "idempotencyId"],
+        ),
     ]
 }
+
+const RUN_SOURCE: &str = "extends RefCounted\n\nfunc run():\n\treturn 1\n";
 
 fn valid_arguments(operation: EngineOperation) -> Map<String, Value> {
     match operation {
@@ -206,6 +229,27 @@ fn valid_arguments(operation: EngineOperation) -> Map<String, Value> {
         EngineOperation::CheckScript => {
             Map::from_iter([("script".to_owned(), json!("scripts/main.gd"))])
         }
+        EngineOperation::RunScript => Map::from_iter([("source".to_owned(), json!(RUN_SOURCE))]),
+        EngineOperation::SceneRead => Map::from_iter([
+            ("path".to_owned(), json!("scenes/main.tscn")),
+            ("calls".to_owned(), json!([{ "method": "get_used_cells" }])),
+        ]),
+        EngineOperation::ResourceRead => Map::from_iter([
+            ("path".to_owned(), json!("data/value.tres")),
+            ("calls".to_owned(), json!([{ "method": "get_length" }])),
+        ]),
+        EngineOperation::ShaderCheck => {
+            Map::from_iter([("path".to_owned(), json!("fx/glow.gdshader"))])
+        }
+        EngineOperation::ProjectBatch => Map::from_iter([(
+            "files".to_owned(),
+            json!([{
+                "kind": "scene",
+                "path": "scenes/main.tscn",
+                "expectedSha256": "0".repeat(64),
+                "operations": [{ "op": "add_node", "name": "Child" }],
+            }]),
+        )]),
         EngineOperation::SceneCreate => {
             Map::from_iter([("path".to_owned(), json!("scenes/new.tscn"))])
         }
@@ -724,7 +768,8 @@ fn engine_deadlines_follow_json_schema_integer_semantics_and_bounds() {
             EngineOperation::ImportProject
             | EngineOperation::RunProject
             | EngineOperation::RunTests
-            | EngineOperation::CheckScript => {
+            | EngineOperation::CheckScript
+            | EngineOperation::RunScript => {
                 for literal in ["1.0", "600000"] {
                     let value: Value =
                         serde_json::from_str(&format!(r#"{{"deadline_ms":{literal}}}"#))
@@ -756,7 +801,11 @@ fn engine_deadlines_follow_json_schema_integer_semantics_and_bounds() {
             | EngineOperation::SceneCreate
             | EngineOperation::SceneBatch
             | EngineOperation::ResourceCreate
-            | EngineOperation::ResourceBatch => assert!(
+            | EngineOperation::ResourceBatch
+            | EngineOperation::SceneRead
+            | EngineOperation::ResourceRead
+            | EngineOperation::ShaderCheck
+            | EngineOperation::ProjectBatch => assert!(
                 !operation.input_schema()["properties"]
                     .as_object()
                     .expect("properties object")
@@ -875,6 +924,110 @@ fn advertised_defaults_equal_runtime_defaults_for_all_engine_operations() {
                     }
                 );
             }
+            EngineOperation::RunScript => {
+                assert_eq!(schema["properties"]["context"]["default"], json!("project"));
+                assert_eq!(
+                    schema["properties"]["deadline_ms"]["default"],
+                    json!(super::default_script_run_deadline_ms())
+                );
+                assert_eq!(
+                    EngineRequest::parse(operation, valid_arguments(operation))
+                        .expect("runtime defaults"),
+                    EngineRequest::RunScript {
+                        source: RUN_SOURCE.to_owned(),
+                        context: super::ScriptContext::Project,
+                        deadline_ms: super::default_script_run_deadline_ms(),
+                    }
+                );
+            }
+            EngineOperation::ShaderCheck => {
+                assert!(schema["properties"]["path"].get("default").is_none());
+                assert!(matches!(
+                    EngineRequest::parse(operation, valid_arguments(operation))
+                        .expect("a shader check parses"),
+                    EngineRequest::CheckShader(_)
+                ));
+            }
+            EngineOperation::SceneRead | EngineOperation::ResourceRead => {
+                for property in ["path", "calls"] {
+                    assert!(
+                        schema["properties"][property].get("default").is_none(),
+                        "{}.{property} has no default",
+                        operation.tool_name()
+                    );
+                }
+                assert!(matches!(
+                    EngineRequest::parse(operation, valid_arguments(operation))
+                        .expect("a read parses"),
+                    EngineRequest::Read(_)
+                ));
+            }
+            EngineOperation::ProjectBatch => {
+                assert!(
+                    schema["properties"]["dryRun"].get("default").is_none(),
+                    "an absent dryRun means a real write"
+                );
+                let EngineRequest::Batches(batches) =
+                    EngineRequest::parse(operation, valid_arguments(operation))
+                        .expect("a multi-file batch parses")
+                else {
+                    panic!("project.batch.apply must parse into a multi-file batch");
+                };
+                assert!(!batches.dry_run);
+                assert_eq!(batches.expected_revision, None);
+            }
         }
+    }
+}
+
+/// The `script.run` schema and the parser give the same verdict on every
+/// case, and it is the intended one: a source of 1 to the most characters,
+/// one of the two contexts and a deadline in range. The bound counts
+/// characters, as a schema does.
+#[test]
+fn the_script_run_schema_and_the_parser_agree() {
+    let longest = "é".repeat(super::MAX_SCRIPT_SOURCE_CHARS);
+    let too_long = format!("{longest}x");
+    let cases = [
+        (json!({ "source": RUN_SOURCE }), true),
+        (json!({ "source": RUN_SOURCE, "context": "copy" }), true),
+        (
+            json!({ "source": RUN_SOURCE, "context": "project", "deadline_ms": 1 }),
+            true,
+        ),
+        (json!({ "source": longest }), true),
+        (json!({ "source": "" }), false),
+        (json!({ "source": too_long }), false),
+        (
+            json!({ "source": RUN_SOURCE, "context": "elsewhere" }),
+            false,
+        ),
+        (json!({ "source": RUN_SOURCE, "context": 1 }), false),
+        (json!({ "source": RUN_SOURCE, "deadline_ms": 0 }), false),
+        (json!({ "source": 5 }), false),
+        (json!({ "context": "copy" }), false),
+    ];
+    let mut schema = advertised_schema(EngineOperation::RunScript);
+    // The kernel takes the idempotency identifier off before the handler
+    // parses; the schema is checked on what the handler sees.
+    schema["required"] = json!(["source"]);
+    let schema = Value::Object(schema);
+    for (case, expected) in &cases {
+        assert_eq!(
+            crate::schema::conformance::conforms(&schema, case),
+            *expected,
+            "the schema's verdict on {}",
+            case.to_string().chars().take(120).collect::<String>()
+        );
+        assert_eq!(
+            EngineRequest::parse(
+                EngineOperation::RunScript,
+                case.as_object().expect("arguments").clone()
+            )
+            .is_ok(),
+            *expected,
+            "the parser's verdict on {}",
+            case.to_string().chars().take(120).collect::<String>()
+        );
     }
 }

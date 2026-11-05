@@ -494,6 +494,33 @@ fn a_connected_editor_owns_project_godot_in(binary: &Path) {
             editor.binary
         );
     }
+    // Removing the autoload goes through the editor as well, and stays removed.
+    let sha = settings_sha(&mut session, &mut ids, &editor.context());
+    let removed = ok(
+        &session.call_tool(
+            ids.next(),
+            "project.settings.patch",
+            json!({
+                "expectedSha256": sha,
+                "operations": [{ "op": "remove_autoload", "name": "Game" }],
+                "idempotencyId": "live-remove-autoload"
+            }),
+        ),
+        &editor.context(),
+    );
+    assert_eq!(removed["backend"], "editor", "{removed}");
+    let settings = ok(
+        &session.call_tool(ids.next(), "project.settings.get", json!({})),
+        &editor.context(),
+    );
+    assert_eq!(settings["autoloads"], json!([]), "{settings}");
+    editor_saves_settings(&tree, &editor);
+    assert!(
+        !manifest(&tree).contains("Game="),
+        "{}: the removed autoload came back:\n{}",
+        editor.binary,
+        manifest(&tree)
+    );
     editor.assert_no_errors_since(mark, "changing project settings");
     let _ = session.finish();
     drop(editor);
@@ -701,6 +728,60 @@ fn the_editor_reads_nodes_and_classes_in(binary: &Path) {
     )["editor"]["history"]
         .clone();
     assert_eq!(history_after, history_before, "reads add no undo history");
+
+    // The selection is set, read back from the editor's status and cleared.
+    let sorted = |value: &Value| -> Vec<String> {
+        let mut paths: Vec<String> = value
+            .as_array()
+            .unwrap_or_else(|| panic!("a selection list: {value}"))
+            .iter()
+            .filter_map(|path| path.as_str().map(str::to_owned))
+            .collect();
+        paths.sort();
+        paths
+    };
+    let selected = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.selection.set",
+            json!({ "nodes": ["Player/Sprite", "Player"], "idempotencyId": "live-select" }),
+        ),
+        &context,
+    );
+    assert_eq!(
+        sorted(&selected["selection"]),
+        ["Player", "Player/Sprite"],
+        "{selected}"
+    );
+    let status = ok(
+        &session.call_tool(ids.next(), "editor.status.get", json!({})),
+        &context,
+    );
+    assert_eq!(
+        sorted(&status["editor"]["selection"]),
+        ["Player", "Player/Sprite"],
+        "{status}"
+    );
+    let cleared = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.selection.set",
+            json!({ "nodes": [], "idempotencyId": "live-clear" }),
+        ),
+        &context,
+    );
+    assert_eq!(cleared["selection"], json!([]), "{cleared}");
+    let status = ok(
+        &session.call_tool(ids.next(), "editor.status.get", json!({})),
+        &context,
+    );
+    assert_eq!(status["editor"]["selection"], json!([]), "{status}");
+    let nobody = session.call_tool(
+        ids.next(),
+        "editor.selection.set",
+        json!({ "nodes": ["Nobody"], "idempotencyId": "live-select-nobody" }),
+    );
+    assert_eq!(error_code(&nobody), json!("not_found"), "{nobody}");
     editor.assert_no_errors_since(mark, "reading nodes and classes");
     let _ = session.finish();
     drop(editor);
@@ -3218,6 +3299,25 @@ fn the_editor_closes_only_a_scene_it_holds_saved_in(binary: &Path) {
     );
     assert_eq!(open_scene_paths(&state), ["res://a.tscn", "res://b.tscn"]);
 
+    // A scene the editor holds open, saved or not, is not deleted under it.
+    for path in ["a.tscn", "b.tscn"] {
+        let bytes = std::fs::read(tree.root.join(path)).expect("scene bytes");
+        let deleted = session.call_tool(
+            ids.next(),
+            "file.delete",
+            json!({
+                "path": path,
+                "expectedSha256": sha256_hex(&bytes),
+                "idempotencyId": format!("close-delete-open-{path}")
+            }),
+        );
+        assert_eq!(error_code(&deleted), json!("conflict"), "{path}: {deleted}");
+        assert!(
+            tree.root.join(path).is_file(),
+            "{path} is still there after the refusal"
+        );
+    }
+
     // Undone, it closes, and the edited scene stays.
     open(&mut session, &mut ids, "a.tscn");
     ok(
@@ -3238,6 +3338,23 @@ fn the_editor_closes_only_a_scene_it_holds_saved_in(binary: &Path) {
     assert_eq!(last["edited_scene"], Value::Null, "{last}");
     let none = close(&mut session, &mut ids, None);
     assert_eq!(error_code(&none), json!("not_found"), "{none}");
+
+    // Closed, a scene is deleted like any other file.
+    let bytes = std::fs::read(tree.root.join("b.tscn")).expect("scene bytes");
+    let deleted = ok(
+        &session.call_tool(
+            ids.next(),
+            "file.delete",
+            json!({
+                "path": "b.tscn",
+                "expectedSha256": sha256_hex(&bytes),
+                "idempotencyId": "close-delete-closed"
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(deleted["operation"], "delete", "{deleted}");
+    assert!(!tree.root.join("b.tscn").exists(), "b.tscn was deleted");
     editor.assert_no_errors_since(mark, "closing scenes");
     let _ = session.finish();
     drop(editor);
@@ -4453,4 +4570,383 @@ fn a_managed_game_reports_its_performance_monitors_in(binary: &Path) {
         &context,
     );
     let _ = session.finish();
+}
+
+/// A test-only editor plugin that reads and works the godot_mcp panel as a
+/// user does: `probe_panel` writes what the bottom panel and the dock show to
+/// `probe_panel_dump`; `probe_pause` and `probe_resume` turn the dock's
+/// "Pause agent edits" switch on and off; `probe_reconnect` presses the
+/// dock's "Reconnect now".
+const PANEL_PROBE: &str = r#"@tool
+extends EditorPlugin
+
+func _find(name: String) -> Node:
+	return EditorInterface.get_base_control().find_child(name, true, false)
+
+func _done(marker: String, text: String) -> void:
+	var part := ProjectSettings.globalize_path("res://%s.part" % marker)
+	FileAccess.open(part, FileAccess.WRITE).store_string(text)
+	DirAccess.rename_absolute(part, ProjectSettings.globalize_path("res://%s" % marker))
+
+func _process(_delta: float) -> void:
+	if FileAccess.file_exists("res://probe_panel"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("res://probe_panel"))
+		var panel := _find("GodotMcpPanel")
+		var dock := _find("GodotMcp")
+		_done("probe_panel_dump", JSON.stringify({
+			"panel": panel.snapshot() if panel != null else null,
+			"dock": dock.snapshot() if dock != null else null,
+		}))
+	for switch in [["probe_pause", true], ["probe_resume", false]]:
+		if FileAccess.file_exists("res://%s" % switch[0]):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path("res://%s" % switch[0]))
+			_find("GodotMcp").set_paused(switch[1])
+			_done("%s_done" % switch[0], "done")
+	if FileAccess.file_exists("res://probe_reconnect"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("res://probe_reconnect"))
+		_find("GodotMcp").find_child("ReconnectNow", true, false).pressed.emit()
+		_done("probe_reconnect_done", "done")
+"#;
+
+/// What the godot_mcp panel and dock show now, through the panel probe.
+fn panel_dump(tree: &ProjectTree, editor: &Editor) -> Value {
+    let dump = tree.root.join("probe_panel_dump");
+    let _ = std::fs::remove_file(&dump);
+    std::fs::write(tree.root.join("probe_panel"), b"dump").expect("panel marker");
+    wait_for_file(&dump, editor);
+    let text = std::fs::read_to_string(&dump).expect("panel dump");
+    serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("{}: the panel dump {text:?}: {error}", editor.binary))
+}
+
+/// Turn the dock's "Pause agent edits" switch, as a user clicking it does.
+fn switch_pause(tree: &ProjectTree, editor: &Editor, paused: bool) {
+    let marker = if paused {
+        "probe_pause"
+    } else {
+        "probe_resume"
+    };
+    let done = tree.root.join(format!("{marker}_done"));
+    let _ = std::fs::remove_file(&done);
+    std::fs::write(tree.root.join(marker), b"switch").expect("switch marker");
+    wait_for_file(&done, editor);
+}
+
+fn add_node_batch(session: &mut StdioSession, ids: &mut Ids, sha: &str, name: &str) -> Value {
+    session.call_tool(
+        ids.next(),
+        "scene.batch.apply",
+        json!({
+            "path": "main.tscn",
+            "expectedSha256": sha,
+            "operations": [{ "op": "add_node", "parent": ".", "name": name, "type": "Node2D" }],
+            "idempotencyId": format!("panel-batch-{name}")
+        }),
+    )
+}
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn the_panel_shows_the_server_and_pauses_agent_edits() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        the_panel_shows_the_server_and_pauses_agent_edits_in(binary);
+    }
+}
+
+fn the_panel_shows_the_server_and_pauses_agent_edits_in(binary: &Path) {
+    let (tree, mut session, mut ids) = project_with_probe(
+        "live-panel",
+        "panel_probe",
+        PANEL_PROBE,
+        &[("main.tscn", EDIT_SCENE)],
+    );
+    let launched = Instant::now();
+    let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
+    wait_connected(&mut session, &mut ids, &editor);
+    let connected = launched.elapsed();
+    let mark = editor.mark();
+    let context = editor.context();
+
+    // The Tools tab lists exactly what the server serves, grouped by need.
+    let listed = session.request(ids.next(), "tools/list", json!({}));
+    let tools = listed["result"]["tools"].as_array().expect("tools").len();
+    let mut shown = panel_dump(&tree, &editor);
+    while shown["panel"]["tools"].as_u64().unwrap_or(0) == 0 {
+        assert!(
+            launched.elapsed() < Duration::from_secs(90),
+            "{}: the Tools tab was never populated: {shown}\n{}",
+            editor.binary,
+            editor.output()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        shown = panel_dump(&tree, &editor);
+    }
+    let populated = launched.elapsed();
+    let panel = &shown["panel"];
+    eprintln!(
+        "{}: connected {} ms after launch; the Tools tab was seen populated {} ms after launch; \
+         the panel took the server status {} ms after the engine started",
+        editor.binary,
+        connected.as_millis(),
+        populated.as_millis(),
+        panel["first_status_ticks_msec"]
+    );
+    assert_eq!(panel["tools_state"], "described", "{shown}");
+    assert_eq!(panel["tools"], json!(tools), "{shown}");
+    assert!(panel["tool_groups"].as_u64() >= Some(3), "{shown}");
+    assert!(
+        panel["tools_note"]
+            .as_str()
+            .is_some_and(|note| note.contains("full profile")),
+        "{shown}"
+    );
+    assert_eq!(
+        panel["tabs"],
+        json!(["Status", "Activity", "Tools", "Add-on", "Controls"]),
+        "{shown}"
+    );
+    assert_eq!(
+        panel["status"]["server"],
+        env!("CARGO_PKG_VERSION"),
+        "{shown}"
+    );
+    assert!(panel["addon_methods"].as_u64() > Some(20), "{shown}");
+    assert_eq!(shown["dock"]["paused_banner"], json!(false), "{shown}");
+
+    // A mutation is allowed until the user pauses agent edits.
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": "main.tscn", "idempotencyId": "panel-open" }),
+        ),
+        &context,
+    );
+    let digest = digest_of(&mut session, &mut ids, &context);
+    let sha = sha256_hex(&std::fs::read(tree.root.join("main.tscn")).expect("scene"));
+
+    switch_pause(&tree, &editor, true);
+    let paused = panel_dump(&tree, &editor);
+    assert_eq!(paused["dock"]["paused_banner"], json!(true), "{paused}");
+    assert_eq!(paused["panel"]["paused"], json!(true), "{paused}");
+
+    // Paused, a scene batch the editor would save is refused before it
+    // starts, and nothing reaches the file or the editor's scene.
+    let refused = add_node_batch(&mut session, &mut ids, &sha, "WhilePaused");
+    assert_eq!(error_code(&refused), json!("unavailable"), "{refused}");
+    assert!(
+        refused.to_string().contains("paused"),
+        "the refusal says edits are paused: {refused}"
+    );
+    assert!(
+        refused.to_string().contains("not_started"),
+        "nothing started: {refused}"
+    );
+    let live = session.call_tool(
+        ids.next(),
+        "editor.scene.edit",
+        json!({
+            "expectedDigest": digest,
+            "operations": [{ "op": "add_node", "parent": ".", "name": "LivePaused", "type": "Node2D" }],
+            "idempotencyId": "panel-edit-paused"
+        }),
+    );
+    assert_eq!(error_code(&live), json!("unavailable"), "{live}");
+    assert_eq!(
+        sha256_hex(&std::fs::read(tree.root.join("main.tscn")).expect("scene")),
+        sha,
+        "{}: a paused editor changed the file",
+        editor.binary
+    );
+    // The editor carries out project settings changes while it is connected,
+    // so they are paused too.
+    let settings_before = manifest(&tree);
+    let sha_settings = settings_sha(&mut session, &mut ids, &context);
+    let settings = session.call_tool(
+        ids.next(),
+        "project.settings.patch",
+        json!({
+            "expectedSha256": sha_settings,
+            "operations": [{ "op": "set_value", "setting": "application/config/name", "value": "Paused" }],
+            "idempotencyId": "panel-settings-paused"
+        }),
+    );
+    assert_eq!(error_code(&settings), json!("unavailable"), "{settings}");
+    assert_eq!(manifest(&tree), settings_before, "{}", editor.binary);
+    // Reads still work while paused.
+    assert_eq!(digest_of(&mut session, &mut ids, &context), digest);
+
+    // Unpaused, the same batch goes through and the editor saves it.
+    switch_pause(&tree, &editor, false);
+    let applied = ok(
+        &add_node_batch(&mut session, &mut ids, &sha, "AfterResume"),
+        &context,
+    );
+    assert_eq!(applied["backend"], "editor", "{applied}");
+    let text = std::fs::read_to_string(tree.root.join("main.tscn")).expect("scene");
+    assert!(
+        text.contains("name=\"AfterResume\"") && !text.contains("WhilePaused"),
+        "{}: {text}",
+        editor.binary
+    );
+
+    // The Activity tab holds the requests, the refusal among them, and no
+    // argument value.
+    let after = panel_dump(&tree, &editor);
+    let rows = after["panel"]["activity"]
+        .as_array()
+        .expect("activity rows");
+    let batches: Vec<&Value> = rows
+        .iter()
+        .filter(|row| row[1] == "editor.scene.batch")
+        .collect();
+    assert_eq!(batches.len(), 2, "{after}");
+    // Newest first: the batch that went through, then the refused one.
+    assert_eq!(batches[0][3], "res://main.tscn", "{after}");
+    assert_eq!(batches[0][4], "ok", "{after}");
+    assert_eq!(batches[0][5], "committed", "{after}");
+    assert_eq!(batches[1][4], "unavailable", "{after}");
+    assert_eq!(batches[1][5], "not_started", "{after}");
+    assert!(
+        rows.iter()
+            .any(|row| row[1] == "editor.scene.tree" && row[2] == "read"),
+        "{after}"
+    );
+    assert!(after["panel"]["refused"].as_u64() >= Some(2), "{after}");
+    assert!(after["panel"]["served"].as_u64() >= Some(3), "{after}");
+    assert!(
+        !after.to_string().contains("WhilePaused") && !after.to_string().contains("AfterResume"),
+        "the panel shows no argument value: {after}"
+    );
+
+    // "Reconnect now" drops the session and dials again at once: the server
+    // describes a second session, and the panel shows why the first ended
+    // and the tools again.
+    let described = |dump: &Value| {
+        dump["panel"]["activity"].as_array().map_or(0, |rows| {
+            rows.iter()
+                .filter(|row| row[1] == "bridge.describe_session")
+                .count()
+        })
+    };
+    assert_eq!(described(&after), 1, "{after}");
+    let done = tree.root.join("probe_reconnect_done");
+    std::fs::write(tree.root.join("probe_reconnect"), b"reconnect").expect("reconnect marker");
+    wait_for_file(&done, &editor);
+    let started = Instant::now();
+    let mut again = panel_dump(&tree, &editor);
+    while described(&again) < 2 || again["panel"]["tools_state"] != "described" {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{}: the editor never reconnected: {again}\n{}",
+            editor.binary,
+            editor.output()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        again = panel_dump(&tree, &editor);
+    }
+    assert_eq!(
+        again["panel"]["status"]["connection"], "connected",
+        "{again}"
+    );
+    assert!(
+        again["panel"]["status"]["last_disconnect"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("reconnect")),
+        "{again}"
+    );
+    wait_connected(&mut session, &mut ids, &editor);
+    assert_eq!(digest_of(&mut session, &mut ids, &context).len(), 64);
+    editor.assert_no_errors_since(mark, "showing the panel, pausing edits and reconnecting");
+    let _ = session.finish();
+    drop(editor);
+}
+
+/// The add-on panel's own cases, kept beside the add-on: they drive its state,
+/// dispatcher, bridge client, bottom panel and dock as the plugin wires them,
+/// headless, with no editor and no server.
+const PANEL_CASES: &str =
+    include_str!("../../godot-mcp-bridge/tests/fixtures/addon/panel_cases.gd");
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn the_panel_cases_pass_against_the_shipped_add_on() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        the_panel_cases_pass_against_the_shipped_add_on_in(binary);
+    }
+}
+
+fn the_panel_cases_pass_against_the_shipped_add_on_in(binary: &Path) {
+    let tree = ProjectTree::new("live-panel-cases");
+    tree.write(
+        "project.godot",
+        "config_version=5\n\n[application]\n\nconfig/name=\"Panel cases\"\n",
+    );
+    for file in godot_mcp_bridge::addon::FILES {
+        let path = tree
+            .root
+            .join(godot_mcp_bridge::addon::ADDON_DIRECTORY)
+            .join(file.name);
+        std::fs::create_dir_all(path.parent().expect("add-on directory")).expect("add-on dir");
+        std::fs::write(&path, file.bytes).expect("add-on file");
+    }
+    tree.write("panel_cases.gd", PANEL_CASES);
+    let mut run = Editor::launch_with(
+        binary,
+        &tree.root,
+        &tree.base.join("home"),
+        &["--headless", "--script", "res://panel_cases.gd", "--path"],
+    );
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = run.child.try_wait().expect("wait for Godot") {
+            break status;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "{}: the panel cases never finished\n{}",
+            run.binary,
+            run.output()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let printed = run.output();
+    let context = format!("{}\n{printed}", run.binary);
+    let declared = PANEL_CASES
+        .lines()
+        .skip_while(|line| !line.starts_with("const CASES := ["))
+        .skip(1)
+        .take_while(|line| !line.starts_with(']'))
+        .count();
+    assert!(declared > 0, "the cases runner declares its cases");
+    let failures: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.starts_with("panel_case FAIL"))
+        .collect();
+    assert!(failures.is_empty(), "{failures:#?}\n{context}");
+    let passed = printed
+        .lines()
+        .filter(|line| line.starts_with("panel_case ok "))
+        .count();
+    assert_eq!(passed, declared, "every declared case ran\n{context}");
+    assert!(
+        printed.contains(&format!("panel_cases: {declared}/{declared} passed")),
+        "{context}"
+    );
+    let noise: Vec<&str> = printed
+        .lines()
+        .filter(|line| {
+            line.contains("ERROR")
+                || line.contains("Parse Error")
+                || line.contains("WARNING")
+                || line.contains("leaked")
+        })
+        .collect();
+    assert!(
+        noise.is_empty(),
+        "the cases print no engine error or warning: {noise:#?}\n{context}"
+    );
+    assert!(status.success(), "the cases exit 0: {status}\n{context}");
 }

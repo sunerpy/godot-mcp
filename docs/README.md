@@ -29,6 +29,7 @@ Start here:
 | [Configuration](operator/configuration.md) | Layered loading, keys, invariants |
 | [MCP clients](operator/mcp-clients.md) | Client wiring examples |
 | [Profiles and tool outcomes](operator/profiles-and-outcomes.md) | Membership, availability, uncertainty |
+| [Project-wide analysis](operator/project-analysis.md) | Unused files, cycles, signal flow, metrics, search, UIDs, node and export queries |
 | [HTTP: `trusted_local`](operator/http-trusted-local.md) | Launch-secret-authenticated loopback HTTP |
 | [HTTP: `proxied_oidc`](operator/http-proxied-oidc.md) | Reverse proxy hop plus one end-user principal |
 | [Artifacts](operator/artifacts.md) | Opaque artifact resources |
@@ -36,6 +37,7 @@ Start here:
 | [Process boundaries](operator/process-boundaries.md) | Weak trusted, strong untrusted |
 | [Recovery](operator/recovery.md) | Restart survivors, quarantine, operator repair |
 | [Editor bridge](operator/editor-bridge.md) | What ships, and what does not |
+| [Recipes](operator/recipes.md) | Common setups as typed operations, applied on every locked build |
 | [Managed sessions](operator/managed-sessions.md) | Game and editor sessions, input, captures, debugging |
 | [Exports](operator/exports.md) | Presets, exact templates, managed exports and their artifacts |
 | [Godot compatibility matrix](operator/version-matrix.md) | Exact locked versions |

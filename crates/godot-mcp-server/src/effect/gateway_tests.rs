@@ -702,6 +702,289 @@ fn a_delete_without_a_proven_removal_is_never_executed() {
     );
 }
 
+/// Publishes through the held root but refuses every write to the paths it
+/// names, as a full disk or a read-only file would.
+struct RefusingFileBoundary {
+    inner: SafeRootFileBoundary,
+    refused: Vec<String>,
+    /// Paths that take one write and refuse every later one, so the write that
+    /// would undo the first fails too.
+    single_write: Vec<String>,
+    writes: Arc<Mutex<Vec<String>>>,
+}
+
+impl RefusingFileBoundary {
+    fn check(&self, path: &str) -> Result<(), SafeRootError> {
+        let mut writes = self.writes.lock().expect("write log");
+        let earlier = writes.iter().filter(|written| *written == path).count();
+        writes.push(path.to_owned());
+        if self.refused.iter().any(|refused| refused == path)
+            || (earlier > 0 && self.single_write.iter().any(|single| single == path))
+        {
+            return Err(SafeRootError::Io(format!(
+                "{path}: no space left on device"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl FileEffectBoundary for RefusingFileBoundary {
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn publish(&self, ticket: &EffectTicket, write: &FileWrite) -> Result<(), SafeRootError> {
+        self.check(&write.path)?;
+        self.inner.publish(ticket, write)
+    }
+
+    fn delete(
+        &self,
+        ticket: &EffectTicket,
+        path: &str,
+        expected: &[u8],
+    ) -> Result<(), SafeRootError> {
+        self.check(path)?;
+        self.inner.delete(ticket, path, expected)
+    }
+}
+
+/// A fixture whose file boundary refuses `refused` and lets `single_write`
+/// take one write only, with the log of every write it was asked for.
+fn refusing_fixture(
+    refused: &[&str],
+    single_write: &[&str],
+) -> (GatewayFixture, Arc<Mutex<Vec<String>>>) {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let fixture = GatewayFixture::new({
+        let writes = Arc::clone(&writes);
+        let refused = refused.iter().map(|path| (*path).to_owned()).collect();
+        let single_write = single_write.iter().map(|path| (*path).to_owned()).collect();
+        move |lease| EffectBoundaries {
+            file: Box::new(RefusingFileBoundary {
+                inner: SafeRootFileBoundary::new(lease.safe_root()),
+                refused,
+                single_write,
+                writes,
+            }),
+            process: Box::new(UnavailableBoundaries),
+            lsp_dap: Box::new(UnavailableBoundaries),
+            editor: Box::new(UnavailableBoundaries),
+            runtime: Box::new(UnavailableBoundaries),
+        }
+    });
+    (fixture, writes)
+}
+
+fn update(path: &str, before: &[u8], after: &[u8]) -> PlannedWrite {
+    PlannedWrite {
+        path: path.to_owned(),
+        operation: FileOperation::Update,
+        bytes: Some(after.to_vec()),
+        precondition: WritePrecondition::Sha256(crate::journal::hex_sha256(before)),
+    }
+}
+
+#[test]
+fn a_write_that_fails_part_way_undoes_the_files_it_already_wrote() {
+    // Contract: a transaction writing several files lands all of them or none.
+    // A later write the boundary refuses puts every earlier file back to its
+    // recorded bytes, and the transaction is proven compensated.
+    let (fixture, writes) = refusing_fixture(&["scenes/b.tscn"], &[]);
+    let transaction_id = "00000000-0000-4000-8000-00000000a201";
+    std::fs::write(fixture.root.join("scenes/a.tscn"), b"a before\n").expect("seed a");
+    std::fs::write(fixture.root.join("scenes/b.tscn"), b"b before\n").expect("seed b");
+    let mut intent =
+        fixture.file_intent(transaction_id, "scenes/a.tscn", FileOperation::Update, None);
+    intent.writes = vec![
+        update("scenes/a.tscn", b"a before\n", b"a after\n"),
+        update("scenes/b.tscn", b"b before\n", b"b after\n"),
+    ];
+    fixture.open_staged_file(&intent);
+
+    let outcome = fixture
+        .gateway
+        .execute_file_effect(&project_write_permit(&fixture, transaction_id))
+        .expect("the refused write settles");
+
+    assert_eq!(
+        outcome.conclusion,
+        Conclusion::ProvenPreState,
+        "{outcome:?}"
+    );
+    assert_eq!(outcome.phase, Phase::Compensated);
+    assert!(
+        outcome.reason.contains("no space left on device"),
+        "{}",
+        outcome.reason
+    );
+    assert!(outcome.reason.contains("undid"), "{}", outcome.reason);
+    assert_eq!(
+        std::fs::read(fixture.root.join("scenes/a.tscn")).expect("a"),
+        b"a before\n",
+        "the file written first holds its recorded bytes again"
+    );
+    assert_eq!(
+        std::fs::read(fixture.root.join("scenes/b.tscn")).expect("b"),
+        b"b before\n"
+    );
+    assert_eq!(
+        *writes.lock().expect("write log"),
+        ["scenes/a.tscn", "scenes/b.tscn", "scenes/a.tscn"],
+        "a is written, b is refused, a is written back"
+    );
+    let record = fixture.store.load(transaction_id).expect("durable record");
+    assert_eq!(record.phase, Phase::Compensated);
+}
+
+#[test]
+fn a_move_whose_removal_fails_removes_the_destination_again() {
+    // Contract: undoing a create removes the file it created, so a move that
+    // cannot remove its source leaves the project as it was.
+    let (fixture, _writes) = refusing_fixture(&["scenes/old.tscn"], &[]);
+    let transaction_id = "00000000-0000-4000-8000-00000000a202";
+    let source = "scenes/old.tscn";
+    let destination = "scenes/new.tscn";
+    std::fs::write(fixture.root.join(source), b"[gd_scene format=3]\n").expect("seed");
+    let mut intent = fixture.file_intent(
+        transaction_id,
+        destination,
+        FileOperation::Create,
+        Some(b"[gd_scene format=3]\n"),
+    );
+    intent.writes[0].precondition = WritePrecondition::Absent;
+    intent.writes.push(PlannedWrite {
+        path: source.to_owned(),
+        operation: FileOperation::Delete,
+        bytes: None,
+        precondition: WritePrecondition::Sha256(crate::journal::hex_sha256(
+            b"[gd_scene format=3]\n",
+        )),
+    });
+    fixture.open_staged_file(&intent);
+
+    let outcome = fixture
+        .gateway
+        .execute_file_effect_removing(
+            &project_write_permit(&fixture, transaction_id),
+            &[source.to_owned()],
+        )
+        .expect("the refused removal settles");
+
+    assert_eq!(
+        outcome.conclusion,
+        Conclusion::ProvenPreState,
+        "{outcome:?}"
+    );
+    assert!(
+        !fixture.root.join(destination).exists(),
+        "the destination is gone again"
+    );
+    assert_eq!(
+        std::fs::read(fixture.root.join(source)).expect("source"),
+        b"[gd_scene format=3]\n"
+    );
+}
+
+#[test]
+fn undoing_a_removal_writes_the_removed_file_back() {
+    let (fixture, _writes) = refusing_fixture(&["scenes/b.tscn"], &[]);
+    let transaction_id = "00000000-0000-4000-8000-00000000a203";
+    std::fs::write(fixture.root.join("scenes/a.tscn"), b"a before\n").expect("seed a");
+    std::fs::write(fixture.root.join("scenes/b.tscn"), b"b before\n").expect("seed b");
+    let mut intent =
+        fixture.file_intent(transaction_id, "scenes/a.tscn", FileOperation::Delete, None);
+    intent.writes[0].precondition =
+        WritePrecondition::Sha256(crate::journal::hex_sha256(b"a before\n"));
+    intent
+        .writes
+        .push(update("scenes/b.tscn", b"b before\n", b"b after\n"));
+    fixture.open_staged_file(&intent);
+
+    let outcome = fixture
+        .gateway
+        .execute_file_effect_removing(
+            &project_write_permit(&fixture, transaction_id),
+            &["scenes/a.tscn".to_owned()],
+        )
+        .expect("the refused write settles");
+
+    assert_eq!(
+        outcome.conclusion,
+        Conclusion::ProvenPreState,
+        "{outcome:?}"
+    );
+    assert_eq!(
+        std::fs::read(fixture.root.join("scenes/a.tscn")).expect("a is back"),
+        b"a before\n"
+    );
+}
+
+#[test]
+fn an_undo_that_fails_quarantines_the_transaction() {
+    // Contract: when a file already written cannot be written back, neither
+    // state holds and the transaction is quarantined, never reported undone.
+    let (fixture, _writes) = refusing_fixture(&["scenes/b.tscn"], &["scenes/a.tscn"]);
+    let transaction_id = "00000000-0000-4000-8000-00000000a204";
+    std::fs::write(fixture.root.join("scenes/a.tscn"), b"a before\n").expect("seed a");
+    std::fs::write(fixture.root.join("scenes/b.tscn"), b"b before\n").expect("seed b");
+    let mut intent =
+        fixture.file_intent(transaction_id, "scenes/a.tscn", FileOperation::Update, None);
+    intent.writes = vec![
+        update("scenes/a.tscn", b"a before\n", b"a after\n"),
+        update("scenes/b.tscn", b"b before\n", b"b after\n"),
+    ];
+    fixture.open_staged_file(&intent);
+
+    let outcome = fixture
+        .gateway
+        .execute_file_effect(&project_write_permit(&fixture, transaction_id))
+        .expect("the failed undo settles");
+
+    assert_eq!(outcome.conclusion, Conclusion::Quarantine, "{outcome:?}");
+    assert_eq!(outcome.phase, Phase::Quarantined);
+    assert_eq!(
+        std::fs::read(fixture.root.join("scenes/a.tscn")).expect("a"),
+        b"a after\n",
+        "the write that could not be undone stays visible to the operator"
+    );
+}
+
+#[test]
+fn a_changed_later_file_is_found_before_any_file_is_written() {
+    // Contract: every recorded pre-state is re-read before the first write, so
+    // a file changed while the transaction was queued refuses the whole
+    // transaction with nothing written.
+    let (fixture, writes) = refusing_fixture(&[], &[]);
+    let transaction_id = "00000000-0000-4000-8000-00000000a205";
+    std::fs::write(fixture.root.join("scenes/a.tscn"), b"a before\n").expect("seed a");
+    std::fs::write(fixture.root.join("scenes/b.tscn"), b"b before\n").expect("seed b");
+    let mut intent =
+        fixture.file_intent(transaction_id, "scenes/a.tscn", FileOperation::Update, None);
+    intent.writes = vec![
+        update("scenes/a.tscn", b"a before\n", b"a after\n"),
+        update("scenes/b.tscn", b"b before\n", b"b after\n"),
+    ];
+    fixture.open_staged_file(&intent);
+    std::fs::write(fixture.root.join("scenes/b.tscn"), b"concurrent edit\n").expect("diverge b");
+
+    let outcome = fixture
+        .gateway
+        .execute_file_effect(&project_write_permit(&fixture, transaction_id))
+        .expect("the divergence settles");
+
+    assert!(
+        writes.lock().expect("write log").is_empty(),
+        "nothing reached the boundary"
+    );
+    assert_eq!(
+        std::fs::read(fixture.root.join("scenes/a.tscn")).expect("a"),
+        b"a before\n"
+    );
+    assert_eq!(outcome.conclusion, Conclusion::Quarantine, "{outcome:?}");
+}
+
 #[test]
 fn a_failed_precondition_opens_no_transaction() {
     let fixture = GatewayFixture::with_defaults();

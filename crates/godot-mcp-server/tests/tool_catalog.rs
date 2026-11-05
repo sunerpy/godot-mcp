@@ -13,20 +13,27 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 use support::{ProjectTree, Spawn, StdioSession};
 
-const CORE: [&str; 15] = [
+const CORE: [&str; 22] = [
     "capabilities.get",
     "gdscript.diagnostics.get",
     "gdscript.impact.get",
     "gdscript.references.get",
     "gdscript.symbols.get",
     "health.get",
+    "project.dependencies.audit",
     "project.dependencies.get",
     "project.discover",
     "project.info.get",
+    "project.metrics.get",
+    "project.search",
+    "project.signals.get",
+    "project.uid.get",
     "project.validate",
     "resource.dependencies.get",
     "resource.tree.get",
     "scene.dependencies.get",
+    "scene.exports.get",
+    "scene.nodes.find",
     "scene.tree.get",
     "script.validate",
 ];
@@ -91,6 +98,29 @@ const EDITOR_PLANE: [&str; 26] = [
     "editor.undo",
 ];
 
+/// Contract 0.4 live-editor additions: the editor profiles.
+const EDITOR_MORE: [&str; 9] = [
+    "editor.camera.get",
+    "editor.camera.set",
+    "editor.dialog.respond",
+    "editor.dialogs.get",
+    "editor.performance.get",
+    "editor.resource.preview",
+    "editor.restart",
+    "editor.scene.read",
+    "editor.script.close",
+];
+
+/// Contract 0.4 declared script execution (ADR 0012): the editor profiles.
+const SCRIPT_EXECUTION: [&str; 2] = ["editor.script.run", "script.run"];
+/// ADR 0012's script tool for a running game: the profiles that run the project.
+const RUNTIME_SCRIPT: [&str; 1] = ["runtime.script.run"];
+/// Contract 0.4 authoring mutations: the write-capable profiles.
+const AUTHORING_WRITES_0_4: [&str; 1] = ["project.batch.apply"];
+/// Contract 0.4 engine reads: a headless helper run starts the project's
+/// autoloads, so the profiles that run the project.
+const ENGINE_READS: [&str; 3] = ["resource.read", "scene.read", "shader.check"];
+
 /// Running the project in the connected editor: the profiles that run it.
 const EDITOR_PLAY: [&str; 2] = ["editor.play.start", "editor.play.stop"];
 /// Contract 0.2 managed game sessions: the profiles that run the project.
@@ -111,6 +141,27 @@ const RUNTIME_PLANE: [&str; 15] = [
     "runtime.tree.get",
     "runtime.ui.get",
 ];
+/// Contract 0.3 typed control and observation of a managed game session.
+const RUNTIME_CONTROL: [&str; 11] = [
+    "input.recording.start",
+    "input.recording.stop",
+    "input.replay",
+    "runtime.navigation.path.get",
+    "runtime.node.move",
+    "runtime.nodes.find",
+    "runtime.properties.batch.get",
+    "runtime.properties.set",
+    "runtime.sample",
+    "runtime.ui.press",
+    "runtime.wait",
+];
+/// Contract 0.4 game speed, image comparison and test scenarios of a managed
+/// game session.
+const RUNTIME_SCENARIO: [&str; 3] = [
+    "runtime.image.compare",
+    "runtime.time_scale.set",
+    "test.scenario.run",
+];
 /// Contract 0.2.0 managed editor sessions and their receipt-bound language
 /// server and debug adapter.
 const DEBUG_PLANE: [&str; 4] = [
@@ -126,20 +177,30 @@ const EXPORT_PLANE: [&str; 4] = [
     "project.export.cancel",
     "project.export.status",
 ];
+/// Contract 0.4.0 Android devices: listing them and deploying an export.
+const ANDROID_DEVICES: [&str; 2] = ["android.deploy", "android.devices.list"];
 
 fn expected(profile: &str) -> BTreeSet<String> {
     let mut tools: BTreeSet<String> = CORE.iter().map(|tool| (*tool).to_owned()).collect();
     if matches!(profile, "editor" | "full") {
         tools.extend(EDITOR_ONLY.iter().map(|tool| (*tool).to_owned()));
         tools.extend(AUTHORING_WRITES.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(AUTHORING_WRITES_0_4.iter().map(|tool| (*tool).to_owned()));
         tools.extend(EDITOR_PLANE.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(EDITOR_MORE.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(SCRIPT_EXECUTION.iter().map(|tool| (*tool).to_owned()));
     }
     if matches!(profile, "runtime" | "full") {
         tools.extend(RUNTIME_ONLY.iter().map(|tool| (*tool).to_owned()));
         tools.extend(RUNTIME_PLANE.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(RUNTIME_CONTROL.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(RUNTIME_SCENARIO.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(RUNTIME_SCRIPT.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(ENGINE_READS.iter().map(|tool| (*tool).to_owned()));
         tools.extend(EDITOR_PLAY.iter().map(|tool| (*tool).to_owned()));
         tools.extend(DEBUG_PLANE.iter().map(|tool| (*tool).to_owned()));
         tools.extend(EXPORT_PLANE.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(ANDROID_DEVICES.iter().map(|tool| (*tool).to_owned()));
     }
     if profile != "core" {
         tools.extend(AUTHORING_READS.iter().map(|tool| (*tool).to_owned()));
@@ -216,10 +277,10 @@ fn discovery_lists_only_implemented_tools_with_strict_descriptions() {
     }
 }
 
-/// The capability report carries the 0.3.0 contract and the same tool sets
+/// The capability report carries the 0.4.0 contract and the same tool sets
 /// discovery lists.
 #[test]
-fn the_capability_report_is_contract_0_3_0_and_matches_discovery() {
+fn the_capability_report_is_contract_0_4_0_and_matches_discovery() {
     let tree = ProjectTree::new("m1-capabilities");
     let mut session = StdioSession::initialized(&Spawn {
         project: &tree.root,
@@ -233,7 +294,7 @@ fn the_capability_report_is_contract_0_3_0_and_matches_discovery() {
         let manifest = &manifests[profile];
         assert_eq!(
             manifest["schema_version"],
-            json!("0.3.0"),
+            json!("0.4.0"),
             "{profile} manifest version: {manifest}"
         );
         let tools: BTreeSet<String> = manifest["tools"]

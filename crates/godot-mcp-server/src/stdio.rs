@@ -109,6 +109,10 @@ pub struct StdioOptions {
     /// Which boundary contains every Godot launch, and whether the project is
     /// trusted.
     pub process: godot_mcp_domain::config::ProcessConfig,
+    /// Whether the script tools run caller-written GDScript (ADR 0012).
+    pub allow_scripts: bool,
+    /// The Android SDK and JDK an Android export and a device deploy use.
+    pub android: godot_mcp_domain::config::AndroidConfig,
 }
 
 /// A stdio startup failure. No message carries project source text or secrets.
@@ -271,18 +275,26 @@ impl ProjectRuntime {
             .capabilities
             .contains(&godot_mcp_domain::contracts::Capability::RuntimeExecute)
             .then(|| {
-                Arc::new(SessionManager::new(
-                    Arc::clone(&store),
-                    &state_dir,
-                    context.display_root(),
-                    ProjectClaim {
-                        object_identity: held.object_identity.clone(),
-                        root_object: held.root_object.clone(),
-                        file_object: held.file_object.clone(),
-                        generation: held.generation,
-                    },
-                    Arc::clone(&providers),
-                ))
+                Arc::new(
+                    SessionManager::new(
+                        Arc::clone(&store),
+                        &state_dir,
+                        context.display_root(),
+                        ProjectClaim {
+                            object_identity: held.object_identity.clone(),
+                            root_object: held.root_object.clone(),
+                            file_object: held.file_object.clone(),
+                            generation: held.generation,
+                        },
+                        Arc::clone(&providers),
+                    )
+                    .allowing_scripts(options.allow_scripts)
+                    .with_android(
+                        crate::engine_plane::session::android::AndroidTools::from_config(
+                            &options.android,
+                        ),
+                    ),
+                )
             });
         // Editor sessions' language servers and debug adapters are reached
         // only through their launch receipts in this journal.
@@ -328,6 +340,7 @@ impl ProjectRuntime {
                         file_object: held.file_object.clone(),
                         generation: held.generation,
                     },
+                    options.allow_scripts,
                 )
                 .map_err(StdioError::Analysis)?,
             )
@@ -472,6 +485,17 @@ impl ProjectRuntime {
             )
             .with_process_boundary(Arc::clone(&providers)),
         );
+        // A connected editor's add-on shows what this server serves, from the
+        // same facts `health.get` reports. The bridge holds the diagnostics
+        // weakly: they hold the router, which holds the bridge.
+        if let Some(bridge) = &editor_bridge {
+            let diagnostics = Arc::downgrade(&diagnostics);
+            bridge.attach_status_source(Arc::new(move || {
+                diagnostics
+                    .upgrade()
+                    .map(|diagnostics| diagnostics.editor_status_value())
+            }));
+        }
         let mut kernel = ServiceKernel::new(options.profile)
             .with_scheduler(Arc::clone(&scheduler))
             .with_diagnostics(diagnostics)
@@ -496,6 +520,7 @@ impl ProjectRuntime {
             workspace: Arc::clone(&workspace),
             editor: editor_bridge.clone(),
             providers: Arc::clone(&providers),
+            allow_scripts: options.allow_scripts,
         }));
         register_engine_tools(&mut kernel, Arc::clone(&engine_runtime))
             .map_err(|error| StdioError::Analysis(error.to_string()))?;
@@ -522,6 +547,8 @@ impl ProjectRuntime {
                     workspace: Arc::clone(&workspace),
                     root: lease.safe_root(),
                     trust: options.process.trust,
+                    allow_scripts: options.allow_scripts,
+                    sessions: sessions.clone(),
                 }),
             )
             .map_err(|error| StdioError::Analysis(error.to_string()))?;

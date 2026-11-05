@@ -71,6 +71,13 @@ operations! {
         ResourceTree,
         ResourceDependencies,
         Health,
+        ProjectAudit,
+        ProjectMetrics,
+        ProjectSearch,
+        ProjectSignals,
+        ProjectUid,
+        SceneExports,
+        SceneNodes,
     }
 }
 
@@ -88,6 +95,11 @@ operations! {
         RunProject,
         RunTests,
         CheckScript,
+        RunScript,
+        SceneRead,
+        ResourceRead,
+        ShaderCheck,
+        ProjectBatch,
     }
 }
 
@@ -141,11 +153,22 @@ operations! {
         Undo,
         Redo,
         AddonReload,
+        ScriptRun,
+        CameraGet,
+        CameraSet,
+        ScriptClose,
+        DialogsGet,
+        DialogRespond,
+        Restart,
+        PerformanceGet,
+        ResourcePreview,
+        SceneRead,
     }
 }
 
 operations! {
-    /// Managed game, editor and export sessions and what runs in them.
+    /// Managed game, editor and export sessions, what runs in them, and the
+    /// Android devices an export is deployed to.
     SessionOperation => Session {
         RunStart,
         RunStatus,
@@ -156,10 +179,21 @@ operations! {
         SignalsGet,
         UiGet,
         PerformanceGet,
+        PropertiesBatchGet,
+        NodesFind,
+        NavigationPathGet,
+        Wait,
+        Sample,
         ActionSend,
         KeySend,
         MouseSend,
         SequenceSend,
+        InputRecordingStart,
+        InputRecordingStop,
+        InputReplay,
+        UiPress,
+        PropertiesSet,
+        NodeMove,
         ScreenshotCapture,
         RecordingCapture,
         EditorStart,
@@ -170,6 +204,12 @@ operations! {
         ExportStart,
         ExportStatus,
         ExportCancel,
+        ScriptRun,
+        AndroidDevicesList,
+        AndroidDeploy,
+        TimeScaleSet,
+        ImageCompare,
+        ScenarioRun,
     }
 }
 

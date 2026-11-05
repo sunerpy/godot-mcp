@@ -12,6 +12,7 @@ use std::sync::Arc;
 use godot_mcp_bridge::protocol::mutation::MutationStatus;
 use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::contracts::{Capability, OutcomeError};
+use godot_mcp_domain::safe_root::SafeRootError;
 use godot_mcp_engine::supervision::protocol::TerminationKind;
 
 use super::boundary::{
@@ -694,7 +695,29 @@ impl EffectGateway {
         permit: &EffectPermit,
         command: &EditorMutation,
     ) -> Result<EditorEffectOutcome, EffectError> {
-        self.execute_bridge_effect(permit, command, EffectBoundaryKind::Process)
+        self.execute_bridge_effect(permit, command, EffectBoundaryKind::Process, false)
+    }
+
+    /// Journal one deploy to a device, exactly as a session stop is
+    /// journaled: a process effect that touches no project file.
+    pub(crate) fn open_device_transaction(
+        &self,
+        intent: &EditorEffectIntent,
+    ) -> Result<TransactionRecord, EffectError> {
+        self.open_bridge_transaction(intent, EffectBoundaryKind::Process)
+    }
+
+    /// Carry out one journaled deploy to a device under a validated permit
+    /// and settle it from the deploy's three-state answer: nothing sent to
+    /// the device is compensated, an install the device reported is
+    /// committed — failed when a later phase failed — and an install whose
+    /// outcome adb never reported is unresolved.
+    pub(crate) fn execute_device_effect(
+        &self,
+        permit: &EffectPermit,
+        command: &EditorMutation,
+    ) -> Result<EditorEffectOutcome, EffectError> {
+        self.execute_bridge_effect(permit, command, EffectBoundaryKind::Process, true)
     }
 
     /// Journal one LSP/DAP command to a managed editor session, exactly as a
@@ -799,7 +822,7 @@ impl EffectGateway {
         permit: &EffectPermit,
         mutation: &EditorMutation,
     ) -> Result<EditorEffectOutcome, EffectError> {
-        self.execute_bridge_effect(permit, mutation, EffectBoundaryKind::Editor)
+        self.execute_bridge_effect(permit, mutation, EffectBoundaryKind::Editor, false)
     }
 
     /// Carry out one journaled runtime command under a validated permit and
@@ -810,7 +833,7 @@ impl EffectGateway {
         permit: &EffectPermit,
         command: &EditorMutation,
     ) -> Result<EditorEffectOutcome, EffectError> {
-        self.execute_bridge_effect(permit, command, EffectBoundaryKind::Runtime)
+        self.execute_bridge_effect(permit, command, EffectBoundaryKind::Runtime, false)
     }
 
     /// Carry out one journaled LSP/DAP command under a validated permit and
@@ -821,7 +844,7 @@ impl EffectGateway {
         permit: &EffectPermit,
         command: &EditorMutation,
     ) -> Result<EditorEffectOutcome, EffectError> {
-        self.execute_bridge_effect(permit, command, EffectBoundaryKind::LspDap)
+        self.execute_bridge_effect(permit, command, EffectBoundaryKind::LspDap, false)
     }
 
     fn execute_bridge_effect(
@@ -829,8 +852,10 @@ impl EffectGateway {
         permit: &EffectPermit,
         mutation: &EditorMutation,
         boundary: EffectBoundaryKind,
+        device: bool,
     ) -> Result<EditorEffectOutcome, EffectError> {
         let (peer, change, command) = match boundary {
+            EffectBoundaryKind::Process if device => ("the device", "the deploy", "the deploy"),
             EffectBoundaryKind::Runtime => (
                 "the game session",
                 "the game-session change",
@@ -871,6 +896,9 @@ impl EffectGateway {
         let applied = match boundary {
             EffectBoundaryKind::Runtime => self.runtime.apply(&ticket, mutation),
             EffectBoundaryKind::LspDap => self.lsp_dap.apply(&ticket, mutation),
+            EffectBoundaryKind::Process if device => {
+                self.process.deploy_to_device(&ticket, mutation)
+            }
             EffectBoundaryKind::Process => self.process.stop_session(&ticket, mutation),
             _ => self.editor.apply(&ticket, mutation),
         };
@@ -1029,7 +1057,11 @@ impl EffectGateway {
             None,
         )?;
 
+        // Every recorded pre-state is re-read before the first write, so a
+        // file that changed while the transaction was queued refuses the whole
+        // transaction with nothing written.
         let mut boundary_error = None;
+        let mut steps = Vec::with_capacity(record.intended_post_hashes.len());
         for intended in &record.intended_post_hashes {
             let Some(staged) = record
                 .staged_write_set
@@ -1045,12 +1077,10 @@ impl EffectGateway {
                 }
                 match self.recorded_preimage(&record, &intended.path) {
                     PreimageOutcome::Absent => {}
-                    PreimageOutcome::Matched(expected) => {
-                        if let Err(error) = self.file.delete(&ticket, &intended.path, &expected) {
-                            boundary_error = Some(error.to_string());
-                            break;
-                        }
-                    }
+                    PreimageOutcome::Matched(expected) => steps.push(FileStep::Remove {
+                        path: intended.path.clone(),
+                        expected,
+                    }),
                     PreimageOutcome::Diverged => {
                         boundary_error = Some(format!(
                             "recorded pre-state for {} no longer holds; the delete is refused",
@@ -1075,18 +1105,84 @@ impl EffectGateway {
                     break;
                 }
             };
-            let write = FileWrite {
+            steps.push(FileStep::Write(FileWrite {
                 path: intended.path.clone(),
                 expected,
                 bytes,
-            };
-            if let Err(error) = self.file.publish(&ticket, &write) {
-                boundary_error = Some(error.to_string());
-                break;
+            }));
+        }
+
+        if boundary_error.is_none() {
+            for (done, step) in steps.iter().enumerate() {
+                if let Err(error) = self.apply_step(&ticket, step) {
+                    boundary_error = Some(self.undo_steps(&ticket, &steps[..done], &error));
+                    break;
+                }
             }
         }
 
         self.settle(&record, boundary_error)
+    }
+
+    /// Carry out one write or removal of a file effect.
+    fn apply_step(&self, ticket: &EffectTicket, step: &FileStep) -> Result<(), SafeRootError> {
+        match step {
+            FileStep::Write(write) => self.file.publish(ticket, write),
+            FileStep::Remove { path, expected } => self.file.delete(ticket, path, expected),
+        }
+    }
+
+    /// Undo the steps already carried out, newest first, after `failure`
+    /// stopped the effect, and say what was done.
+    ///
+    /// Each undo is a compare-and-swap against the bytes this effect wrote, so
+    /// a file someone changed in the meantime is never overwritten. The settle
+    /// step then proves whichever state holds: every undo landed and the
+    /// recorded pre-state is back, or it is not and the transaction is
+    /// quarantined. A crash part way leaves the same quarantine, found at the
+    /// next startup.
+    fn undo_steps(
+        &self,
+        ticket: &EffectTicket,
+        done: &[FileStep],
+        failure: &SafeRootError,
+    ) -> String {
+        let mut undone = 0_usize;
+        for step in done.iter().rev() {
+            let undo = match step {
+                FileStep::Write(write) => match &write.expected {
+                    Some(original) => self.file.publish(
+                        ticket,
+                        &FileWrite {
+                            path: write.path.clone(),
+                            expected: Some(write.bytes.clone()),
+                            bytes: original.clone(),
+                        },
+                    ),
+                    None => self.file.delete(ticket, &write.path, &write.bytes),
+                },
+                FileStep::Remove { path, expected } => self.file.publish(
+                    ticket,
+                    &FileWrite {
+                        path: path.clone(),
+                        expected: None,
+                        bytes: expected.clone(),
+                    },
+                ),
+            };
+            if let Err(error) = undo {
+                return format!(
+                    "{failure}; undoing the change already made to {} failed: {error}",
+                    step.path()
+                );
+            }
+            undone += 1;
+        }
+        match undone {
+            0 => failure.to_string(),
+            1 => format!("{failure}; undid the change already made to 1 file"),
+            count => format!("{failure}; undid the changes already made to {count} files"),
+        }
     }
 
     /// Re-derive the typed proof and journal exactly one terminal record.
@@ -1585,6 +1681,23 @@ fn is_ambiguous_survivor_phase(record: &TransactionRecord) -> bool {
             record.phase,
             Phase::EffectStartedFsynced | Phase::CommittedFsynced
         )
+}
+
+/// One step of a file effect, with what undoing it needs.
+enum FileStep {
+    /// A compare-and-swap publication; `expected` is `None` for a create.
+    Write(FileWrite),
+    /// A removal through the recorded preimage.
+    Remove { path: String, expected: Vec<u8> },
+}
+
+impl FileStep {
+    fn path(&self) -> &str {
+        match self {
+            Self::Write(write) => &write.path,
+            Self::Remove { path, .. } => path,
+        }
+    }
 }
 
 /// Whether a compare-and-swap preimage is available and still matches.

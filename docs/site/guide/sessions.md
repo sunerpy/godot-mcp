@@ -45,6 +45,48 @@ object and node counts, memory, rendering, physics, audio and navigation figures
 your Godot build gives them, such as `TIME_FPS` and `OBJECT_NODE_COUNT`, with the project's own
 custom monitors. Name `monitors` to read only those; a name the build does not have is refused.
 
+## Drive and watch the game
+
+`runtime.properties.set` writes properties of a node, or the Engine's `time_scale`,
+`physics_ticks_per_second` and `max_fps`, as tagged values. A value is converted to the
+property's type only where nothing is lost — 1.5 is never written to an `int` — and a write that
+cannot be made changes nothing. Every property is read back afterwards, so a setter that clamps or
+ignores the value shows as `matched: false`. `runtime.properties.batch.get` reads several nodes,
+and the Engine, in one call.
+
+`runtime.wait` waits, at most 30 seconds, until a node exists or is gone, a property compares with
+a value (`==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, or `approx` within a tolerance), a signal
+has fired a number of times, or a control shows a text. It answers what it saw last, whether the
+condition held or the time ran out. `runtime.sample` reads properties and performance monitors at
+an interval for at most 10 seconds and answers each series with its minimum, maximum, mean and
+last value, and whether the game was paused at each sample.
+
+`runtime.nodes.find` finds nodes by class (inherited ones included), script, group, name pattern
+and distance, nearest first. `runtime.navigation.path.get` asks the navigation map a node uses for
+a path; `runtime.node.move` puts a node at a point or walks it along that path. A move sets the
+node's position directly: the game's own movement code and its collisions do not run for it.
+
+`runtime.ui.press` clicks a button, named by its path or by its text, with a left click at its
+centre and answers whether its `pressed` signal fired. A headless session's window is 64 by 64
+pixels, so a button outside that area needs a windowed session.
+
+`input.recording.start` and `input.recording.stop` record the input the game receives, marking
+which events the server sent and which came from elsewhere, and keep the recording as an artifact.
+`input.replay` sends recorded events again at their original times and releases whatever it still
+holds when it ends.
+
+The probe runs one request at a time, so a long wait, sample, walk or replay holds back the
+session's other requests, and commands also wait for one another across the project. Cancel the
+call to end it at once; `project.run.stop` ends whatever runs before it stops the game.
+
+`runtime.script.run` runs GDScript an agent writes in the running game, once you start the server
+with `--allow-scripts`. The script sees the current scene, the autoloads and every engine API, and
+the answer gives what its `run()` returned, what it printed and the errors it raised with their
+line (from Godot 4.5.1 on), and every project file that differs afterwards. Godot cannot stop a
+script part way through: when the server stops waiting — after `deadline_ms` and two seconds
+more, or when the call is cancelled — the answer is `uncertain` and the code goes on in the game.
+Stopping the session ends it.
+
 ## Capture
 
 `runtime.screenshot.capture` captures the root viewport as a PNG; `runtime.recording.capture`
@@ -52,6 +94,29 @@ records up to 10 seconds at up to 30 frames per second as an animated PNG. Each 
 against the digest the probe reported, and the answer names the capture as an artifact — an
 opaque URI with its media type, size and SHA-256 — that the client reads with `resources/read`.
 In a headless session a capture answers `unavailable`: the session renders nothing.
+
+## Test the game
+
+`runtime.time_scale.set` speeds the running game up or slows it down: it sets `Engine.time_scale`
+(0 to 100; 1 is real time, 0 stops game time) and reads it back. The change lives in the running
+game only, nothing is written to the project, and it holds until you change it again or the
+session ends.
+
+`runtime.image.compare` captures the game after its next frame and compares it with a PNG in the
+project, pixel by pixel. It answers whether the images match, how many pixels differ by more than
+`tolerance` in a colour channel and what share of the image that is, the largest difference and
+the rectangle around the differences, with the capture and a difference image as artifacts. Two
+images of different sizes do not match; nothing is resized. It needs a windowed session.
+
+`test.scenario.run` runs a list of up to 64 steps in one call and answers a report: input, waits,
+property writes, button presses, time-scale changes, assertions on a property or on a control's
+text, screenshots, image comparisons, and stress steps that add up to 1000 instances of a scene,
+watch the frame rate and the node count, and check that every instance is freed afterwards. Each
+step is `passed`, `failed` (with what was expected and what was found), `error`, `skipped` or
+`uncertain`. After the first failure the rest are skipped unless `stopOnFailure` is `false`, a
+step whose outcome cannot be decided ends the run, and `maxDurationMs` bounds the whole of it.
+The verdict is `passed` only when every step passed, and the report is also kept as a JSON
+artifact. A text assertion reads the control's `text` property; nothing reads the screen as text.
 
 ## Debug
 

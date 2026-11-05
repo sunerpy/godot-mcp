@@ -66,14 +66,18 @@ fn effective_process_deadline(
         EngineRequest::ImportProject { deadline_ms, .. }
         | EngineRequest::RunProject { deadline_ms, .. }
         | EngineRequest::RunTests { deadline_ms, .. }
-        | EngineRequest::CheckScript { deadline_ms, .. } => Some(
+        | EngineRequest::CheckScript { deadline_ms, .. }
+        | EngineRequest::RunScript { deadline_ms, .. } => Some(
             Duration::from_millis(*deadline_ms)
                 .min(Duration::from_millis(operation_deadline.run_budget_ms())),
         ),
         EngineRequest::UpdateUid(_)
         | EngineRequest::Author(_)
         | EngineRequest::UpdateResource(_)
-        | EngineRequest::SaveScene(_) => None,
+        | EngineRequest::SaveScene(_)
+        | EngineRequest::Read(_)
+        | EngineRequest::CheckShader(_)
+        | EngineRequest::Batches(_) => None,
     }
 }
 
@@ -388,6 +392,59 @@ impl KernelToolHandler for EngineHandler {
                 );
                 let report = check_script(&runner, &request).map_err(run_error)?;
                 Ok(script_check_value(report))
+            }
+            EngineRequest::RunScript {
+                source,
+                context,
+                deadline_ms: _,
+            } => {
+                self.runtime
+                    .run_script(
+                        super::script_run::ScriptRun {
+                            source,
+                            context,
+                            deadline: process_deadline
+                                .expect("a script run is a process operation"),
+                        },
+                        canonical_arguments,
+                        &call.access,
+                        idempotency_id.as_deref(),
+                        call.audit.clone(),
+                        cancellation.clone(),
+                    )
+                    .await
+            }
+            EngineRequest::CheckShader(check) => {
+                self.runtime
+                    .execute_shader_check(
+                        check,
+                        &canonical_arguments,
+                        &call.access,
+                        idempotency_id.as_deref(),
+                    )
+                    .await
+            }
+            EngineRequest::Read(read) => {
+                self.runtime
+                    .execute_read(
+                        read,
+                        &canonical_arguments,
+                        &call.access,
+                        idempotency_id.as_deref(),
+                    )
+                    .await
+            }
+            EngineRequest::Batches(batches) => {
+                self.runtime
+                    .execute_batches(
+                        batches,
+                        canonical_arguments,
+                        &call.access,
+                        idempotency_id.as_deref(),
+                        call.audit.clone(),
+                        cancellation.clone(),
+                    )
+                    .await
             }
             EngineRequest::Author(author) => {
                 self.runtime

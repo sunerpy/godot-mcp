@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://benemyscene01"]
+
+[ext_resource type="Script" path="res://scripts/enemy.gd" id="1_enemy"]
+
+[node name="Enemy" type="CharacterBody2D" groups=["foes"]]
+script = ExtResource("1_enemy")
+speed = 90.0
+
+[node name="Sprite" type="Sprite2D" parent="."]

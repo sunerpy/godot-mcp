@@ -15,10 +15,14 @@ convenience setting, and the safe choice is the default.
 `full` is exactly `core`, `editor` and `runtime` together. Every tool and the profiles that list it
 are in the generated [tool inventory](../../protocol/tool-inventory.md).
 
-No profile has a tool that executes arbitrary GDScript or calls an arbitrary engine method. That
-is the largest deliberate difference from servers that expose an "execute this script" entry
-point: loading a Godot project already runs its code, and a direct execution tool on top of that
-would remove what makes the surface reviewable.
+Three tools run an agent's own GDScript: `script.run` in a headless Godot, `editor.script.run` in
+the open editor and `runtime.script.run` in a running game. Every profile that holds them lists
+them, and they answer `permission_denied` until you start the server with `--allow-scripts`. With
+the switch on, nothing confines a script: it runs with your privileges, and nothing it does is
+undone. Where a typed tool fits, it stays the better choice, because it checks a change before it
+writes it and the editor can undo it.
+[Profiles and tool outcomes](../../operator/profiles-and-outcomes.md#script-execution) says what a
+run answers and what ends it.
 
 ## Membership is not availability
 

@@ -241,8 +241,12 @@ fn is_project_distribution_url(after_scheme: &str) -> bool {
     })
 }
 
+/// Godot's schemes for the files of a project: what follows them is a path,
+/// never a network host.
+pub const PROJECT_PATH_SCHEMES: &[&str] = &["res", "user", "uid"];
+
 /// Every `scheme://host` host appearing on a line, except this project's own
-/// repository and release downloads.
+/// repository and release downloads and Godot's project paths.
 fn extract_hosts(line: &str) -> Vec<String> {
     let mut hosts = Vec::new();
     let mut rest = line;
@@ -251,7 +255,11 @@ fn extract_hosts(line: &str) -> Vec<String> {
         let end = after
             .find(['/', '"', '\'', ' ', ')', '>', ',', ';', '\\'])
             .unwrap_or(after.len());
-        if is_project_distribution_url(after) {
+        let scheme = rest[..position]
+            .rsplit(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')))
+            .next()
+            .unwrap_or_default();
+        if is_project_distribution_url(after) || PROJECT_PATH_SCHEMES.contains(&scheme) {
             rest = &after[end..];
             continue;
         }
@@ -669,6 +677,23 @@ mod tests {
         ));
         assert!(!triggers(
             "```sh\ncurl http://127.0.0.1:8765/mcp\n```\n",
+            "example-host"
+        ));
+    }
+
+    /// `res://`, `user://` and `uid://` name files of a Godot project, not
+    /// network hosts; a network scheme on the same line is still checked.
+    #[test]
+    fn godot_project_paths_are_not_example_hosts() {
+        for local in [
+            "```json\n{ \"resource\": \"res://audio/step.wav\" }\n```\n",
+            "```gdscript\nvar save := FileAccess.open(\"user://saves/slot.dat\", FileAccess.READ)\n```\n",
+            "```json\n{ \"uid\": \"uid://b6x4yhkt3q2p1\" }\n```\n",
+        ] {
+            assert!(!triggers(local, "example-host"), "{local}");
+        }
+        assert!(triggers(
+            "```json\n{ \"resource\": \"res://ui/theme.tres\", \"from\": \"https://cdn.internal.example.com/x\" }\n```\n",
             "example-host"
         ));
     }

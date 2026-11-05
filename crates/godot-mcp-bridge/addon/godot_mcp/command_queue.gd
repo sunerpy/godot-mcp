@@ -22,10 +22,17 @@ extends RefCounted
 ## with `not_started`, a call made from any other thread. A queued request that
 ## has not started when the connection is lost is dropped, never run later, and
 ## a dropped mutation is never replayed by this side.
+##
+## A refusal made before the handler ran carries `"refused": true`, which is
+## never sent; it tells the editor panel's counts a refusal from a failure.
 
 const MAX_QUEUED := 64
 
 var handlers = null
+## What may hold every mutation back before it starts: an object answering
+## `mutations_paused()` and `paused_message()`, or null. The editor plugin
+## sets it to its panel, whose "Pause agent edits" switch it reports.
+var mutation_gate = null
 var _queue: Array = []
 var _draining := false
 
@@ -89,6 +96,13 @@ static func refusal(kind: String, message: String, status: String = "not_started
 	return {"ok": false, "error_kind": kind, "message": message, "mutation_status": status}
 
 
+## A refusal made before the request's handler ran.
+static func refused(kind: String, message: String, status: String = "not_started") -> Dictionary:
+	var answer := refusal(kind, message, status)
+	answer["refused"] = true
+	return answer
+
+
 ## Execute one request envelope whose handler answers at once. Returns
 ## {"ok": true, "payload": {...}, "mutation_status": ...} or a refusal
 ## {"ok": false, "error_kind", "message", "mutation_status"}.
@@ -109,25 +123,28 @@ func run(envelope: Dictionary) -> Dictionary:
 
 
 ## The checks every request passes before its handler runs: the main thread,
-## its deadline, a typed payload, an implemented method and the right
-## operation class. Returns {"refusal": ...} or what the handler needs.
+## its deadline, a typed payload, an implemented method, the right operation
+## class and, for a mutation, that edits are not paused. Returns
+## {"refusal": ...} or what the handler needs.
 func _admit(envelope: Dictionary) -> Dictionary:
 	if not is_main_thread():
-		return {"refusal": refusal("internal", "editor bridge work runs only on the editor main thread")}
+		return {"refusal": refused("internal", "editor bridge work runs only on the editor main thread")}
 	var deadline: int = int(str(envelope.get("deadline_unix_ms", "0")))
 	if deadline > 0 and now_unix_ms() >= deadline:
-		return {"refusal": refusal("timeout", "the request's deadline passed before it started")}
+		return {"refusal": refused("timeout", "the request's deadline passed before it started")}
 	if handlers == null:
-		return {"refusal": refusal("unavailable", "the editor bridge has no handlers")}
+		return {"refusal": refused("unavailable", "the editor bridge has no handlers")}
 	var method: String = str(envelope.get("method", ""))
 	var payload = envelope.get("payload")
 	if typeof(payload) != TYPE_DICTIONARY:
-		return {"refusal": refusal("invalid_input", "a request payload must be an object")}
+		return {"refusal": refused("invalid_input", "a request payload must be an object")}
 	var mutation: bool = str(envelope.get("operation_class", "")) == "mutation"
 	if not handlers.supports(method):
-		return {"refusal": refusal("unsupported", "the editor bridge does not implement %s" % method)}
+		return {"refusal": refused("unsupported", "the editor bridge does not implement %s" % method)}
 	if handlers.is_mutation(method) != mutation:
-		return {"refusal": refusal("invalid_input", "%s was sent with the wrong operation class" % method)}
+		return {"refusal": refused("invalid_input", "%s was sent with the wrong operation class" % method)}
+	if mutation and mutation_gate != null and mutation_gate.mutations_paused():
+		return {"refusal": refused("unavailable", str(mutation_gate.paused_message()))}
 	return {
 		"method": method,
 		"payload": payload,

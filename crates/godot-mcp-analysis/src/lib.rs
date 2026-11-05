@@ -27,6 +27,7 @@
 pub mod gdscript;
 pub mod graph;
 pub mod index;
+pub mod insight;
 pub mod project;
 pub mod scene;
 

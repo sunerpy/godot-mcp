@@ -141,18 +141,41 @@ pub struct Diagnostic {
     pub raw: String,
 }
 
+/// What an error-type prefix says reported the diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reporter {
+    /// A script: `SCRIPT ERROR`.
+    Script,
+    /// The shader compiler: `SHADER ERROR`.
+    Shader,
+    /// The engine itself: `ERROR`, `WARNING`.
+    Engine,
+}
+
 /// The engine error-type prefixes, exactly as `Logger::log_error` spells them.
 /// Ordered longest-first so `USER SCRIPT ERROR` is matched before `USER`-less
 /// `SCRIPT ERROR` and before `ERROR`.
-const TYPE_PREFIXES: [(&str, DiagnosticSeverity, bool); 8] = [
-    ("USER SCRIPT ERROR", DiagnosticSeverity::Error, true),
-    ("USER SHADER ERROR", DiagnosticSeverity::Error, false),
-    ("USER WARNING", DiagnosticSeverity::Warning, false),
-    ("USER ERROR", DiagnosticSeverity::Error, false),
-    ("SCRIPT ERROR", DiagnosticSeverity::Error, true),
-    ("SHADER ERROR", DiagnosticSeverity::Error, false),
-    ("WARNING", DiagnosticSeverity::Warning, false),
-    ("ERROR", DiagnosticSeverity::Error, false),
+const TYPE_PREFIXES: [(&str, DiagnosticSeverity, Reporter); 8] = [
+    (
+        "USER SCRIPT ERROR",
+        DiagnosticSeverity::Error,
+        Reporter::Script,
+    ),
+    (
+        "USER SHADER ERROR",
+        DiagnosticSeverity::Error,
+        Reporter::Shader,
+    ),
+    (
+        "USER WARNING",
+        DiagnosticSeverity::Warning,
+        Reporter::Engine,
+    ),
+    ("USER ERROR", DiagnosticSeverity::Error, Reporter::Engine),
+    ("SCRIPT ERROR", DiagnosticSeverity::Error, Reporter::Script),
+    ("SHADER ERROR", DiagnosticSeverity::Error, Reporter::Shader),
+    ("WARNING", DiagnosticSeverity::Warning, Reporter::Engine),
+    ("ERROR", DiagnosticSeverity::Error, Reporter::Engine),
 ];
 
 /// `text` without the terminal colour sequences (`ESC [ … m`) some engine
@@ -191,7 +214,7 @@ pub fn parse_engine_diagnostics(text: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut index = 0;
     while index < lines.len() {
-        let Some((severity, script_type, message)) = split_type_prefix(lines[index]) else {
+        let Some((severity, reporter, message)) = split_type_prefix(lines[index]) else {
             index += 1;
             continue;
         };
@@ -219,7 +242,7 @@ pub fn parse_engine_diagnostics(text: &str) -> Vec<Diagnostic> {
         }
         diagnostics.push(Diagnostic {
             severity,
-            category: categorize(script_type, &message),
+            category: categorize(reporter, &message),
             message,
             location,
             engine_location,
@@ -231,13 +254,13 @@ pub fn parse_engine_diagnostics(text: &str) -> Vec<Diagnostic> {
     diagnostics
 }
 
-fn split_type_prefix(line: &str) -> Option<(DiagnosticSeverity, bool, String)> {
+fn split_type_prefix(line: &str) -> Option<(DiagnosticSeverity, Reporter, String)> {
     let trimmed = line.trim_end();
-    for (prefix, severity, script_type) in TYPE_PREFIXES {
+    for (prefix, severity, reporter) in TYPE_PREFIXES {
         if let Some(rest) = trimmed.strip_prefix(prefix)
             && let Some(details) = rest.strip_prefix(": ")
         {
-            return Some((severity, script_type, details.trim().to_owned()));
+            return Some((severity, reporter, details.trim().to_owned()));
         }
     }
     None
@@ -299,8 +322,11 @@ fn split_position(position: Option<&str>) -> (Option<SourceLocation>, Option<Str
     }
 }
 
-fn categorize(script_type: bool, message: &str) -> DiagnosticCategory {
-    if script_type {
+fn categorize(reporter: Reporter, message: &str) -> DiagnosticCategory {
+    if reporter == Reporter::Shader {
+        return DiagnosticCategory::ShaderCompile;
+    }
+    if reporter == Reporter::Script {
         // GDScript spells these two exactly, in `GDScript::reload`.
         if message.starts_with("Parse Error:") || message.starts_with("Compile Error:") {
             return DiagnosticCategory::ScriptParse;
@@ -470,6 +496,43 @@ mod tests {
         );
         assert!(parse_engine_diagnostics(text).is_empty());
         assert!(!has_error(&[]));
+    }
+
+    /// Godot 4.4.1 to 4.7.1 print a shader that fails to compile like this,
+    /// measured headless: the main shader's position names no file, an
+    /// included file's names it.
+    #[test]
+    fn a_shader_error_is_a_shader_compile_failure() {
+        let output = "--Main Shader--\n\
+                      E   5->  COLOR = vec4(undefined_name, 1.0);\n\
+                      SHADER ERROR: Unknown identifier in expression: 'undefined_name'.\n          \
+                      at: (null) (:5)\n\
+                      SHADER ERROR: Unknown identifier in expression: 'missing_factor'.\n          \
+                      at: (null) (res://inc.gdshaderinc:2)\n\
+                      ERROR: Shader compilation failed.\n   \
+                      at: shader_set_code (servers/rendering/dummy/storage/material_storage.cpp:190)\n";
+        let diagnostics = parse_engine_diagnostics(output);
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics[0].category, DiagnosticCategory::ShaderCompile);
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(
+            diagnostics[0].location, None,
+            "an unnamed file is no project location"
+        );
+        assert_eq!(diagnostics[0].engine_location.as_deref(), Some(":5"));
+        assert_eq!(diagnostics[1].category, DiagnosticCategory::ShaderCompile);
+        assert_eq!(
+            diagnostics[1].location,
+            Some(SourceLocation {
+                file: "res://inc.gdshaderinc".to_owned(),
+                line: Some(2),
+            })
+        );
+        assert_eq!(
+            diagnostics[2].category,
+            DiagnosticCategory::EngineReported,
+            "the closing engine error is not itself a shader's"
+        );
     }
 
     #[test]

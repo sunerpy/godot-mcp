@@ -89,6 +89,11 @@ the artifact becomes readable; nothing about a capture is committed until it is.
 server reads the PNG back from the editor in bounded chunks and checks it against the
 length and SHA-256 the editor reported before the artifact becomes readable.
 
+`runtime.image.compare` registers its capture, and its difference image when pixels differ,
+the same way. `test.scenario.run` registers every screenshot and comparison its steps take,
+and its report as `application/json`; when the report cannot be kept, the answer still
+carries it, with `artifact: null` and the reason in `artifact_error`.
+
 `project.export` registers every output file of a successful export the same way, as
 `application/octet-stream` with its size and SHA-256, once the export process has ended;
 `project.export.status` lists them. An export's outputs register together or not at all,

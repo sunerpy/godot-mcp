@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn the_inventory_matches_the_canonical_owners() {
         let canonical = build(&root()).expect("the canonical inventory builds");
-        assert_eq!(canonical.profile("core").tools.len(), 15);
+        assert_eq!(canonical.profile("core").tools.len(), 22);
         assert!(canonical.tools.contains("project.bind"));
         assert_eq!(canonical.capabilities.len(), 5);
         assert_eq!(canonical.planes.len(), 4);

@@ -177,6 +177,9 @@ fn digest_dir(
                 });
             }
             EntryKind::Directory => {
+                if policy.owns_directory(&relative) {
+                    continue;
+                }
                 let verdict = policy.directory_verdict(&relative);
                 let child = open_child_dir_no_symlink(dir, OsStr::new(&entry.name))
                     .map_err(|error| map_sys(error, &relative))?;
@@ -297,6 +300,9 @@ fn copy_dir(
                 });
             }
             EntryKind::Directory => {
+                if policy.owns_directory(&relative) {
+                    continue;
+                }
                 if let Some(reason) = policy.directory_verdict(&relative) {
                     // Enumerate the withheld subtree so the manifest states what
                     // was kept out, entry by entry, instead of leaving a caller
@@ -506,6 +512,51 @@ mod tests {
         );
         assert!(!first.contains("/tmp"), "{first}");
         assert!(first.contains("secret_material"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_the_caller_owns_is_never_opened_listed_or_hashed() {
+        let directory = tempfile::tempdir().expect("directory");
+        let source = directory.path().join("game");
+        for (path, text) in [
+            ("project.godot", "config_version=5\n"),
+            ("main.gd", "extends Node\n"),
+            (".state/journal.json", "{}"),
+        ] {
+            let file = source.join(path);
+            std::fs::create_dir_all(file.parent().expect("parent")).expect("parent");
+            std::fs::write(file, text).expect("file");
+        }
+        // Neither a link nor the copy being made inside the owned directory
+        // reaches the walk: the directory is never opened.
+        std::os::unix::fs::symlink("/", source.join(".state/link")).expect("link");
+        let copy = source.join(".state/copies/one");
+        std::fs::create_dir_all(&copy).expect("copy root");
+        let policy = ExclusionPolicy::new().owning_directory(".state");
+        let manifest = copy_project(&source, &copy, &policy).expect("copy");
+        assert_eq!(
+            manifest
+                .copied
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            ["main.gd", "project.godot"]
+        );
+        assert!(manifest.excluded.is_empty(), "{:?}", manifest.excluded);
+        assert!(!copy.join(".state").exists());
+        assert!(
+            manifest
+                .rules
+                .contains(&("owned:.state".to_owned(), ExclusionReason::CallerState)),
+            "{:?}",
+            manifest.rules
+        );
+        assert_eq!(
+            manifest.source_tree_sha256,
+            digest_source_tree(&copy, &policy).expect("digest the copy"),
+            "the owned directory is not part of the source digest"
+        );
     }
 
     #[test]

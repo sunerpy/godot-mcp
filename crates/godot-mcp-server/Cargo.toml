@@ -25,6 +25,13 @@ name = "qa-fake-game"
 path = "src/bin/qa-fake-game.rs"
 required-features = ["test-hooks"]
 
+# NON-SHIPPING stand-in for the Android SDK and JDK tools (adb, apksigner,
+# keytool, java) the Android acceptance suite runs; test-hooks only.
+[[bin]]
+name = "qa-fake-adb"
+path = "src/bin/qa-fake-adb.rs"
+required-features = ["test-hooks"]
+
 [features]
 # stdio is always available and is the default transport. It needs exactly rmcp's
 # `transport-io` feature (stdin/stdout async framing); no custom framing exists.

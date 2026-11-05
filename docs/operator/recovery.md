@@ -36,6 +36,24 @@ the helper and a `file` sub-proof for the on-disk change. The transaction commit
 if **both** hold — its own hash is valid *and* the linked launch proof shows a clean
 terminal state. A composite never introduces a fourth proof kind or a second journal.
 
+## A transaction that writes several files
+
+A file transaction may write more than one file: `file.move` writes its destination and
+removes its source, and `project.batch.apply` writes every file of its batch.
+
+* Before the first write, every recorded pre-state is read again. A file that changed
+  since the transaction opened stops it with nothing written; that file no longer holds
+  its recorded pre-state, so the transaction is quarantined, as a single-file write whose
+  file changed is.
+* The files are then written in order. When a later write fails, for example on a full
+  disk or a directory that cannot be written, the files already written are written back
+  to their recorded bytes, newest first, each as a compare-and-swap against the bytes the
+  transaction wrote, and a file the transaction created is removed again. The
+  transaction then ends `compensated` once every file is proven back in its pre-state. A
+  directory created for a new file may remain, empty.
+* When a write-back fails, or the server stops part way, neither state is proven and the
+  transaction is quarantined.
+
 ## What happens at startup
 
 Before the first request is served, the server acquires the lease, opens the journal
@@ -81,6 +99,12 @@ terminated the same way; none of its output becomes an artifact. What it had wri
 kept in the server's private state as recovery evidence: `project.export.status` reports
 how many bytes are retained, the bytes are never served, and artifact retention never
 removes them. See [Exports](exports.md).
+
+**An interrupted deploy is uncertain.** A deploy the killed server was running touched no
+project file, so the next server records its transaction as failed and `uncertain`: the
+project holds its pre-state, and whether the device installed or started the app is
+unknown. Check the device before deploying again. See
+[Exports](exports.md#android-devices).
 
 **Synthetic input is released without the server.** A game's probe releases everything
 it holds the moment it loses its server connection, and quits 15 s later; a hold also

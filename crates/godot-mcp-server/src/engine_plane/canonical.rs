@@ -188,7 +188,7 @@ impl EngineRuntime {
     }
 }
 
-fn recorded_replay_result(report: &RouteReport) -> Result<Option<Value>, OutcomeError> {
+pub(super) fn recorded_replay_result(report: &RouteReport) -> Result<Option<Value>, OutcomeError> {
     if !report.replayed() {
         return Ok(None);
     }
@@ -315,28 +315,7 @@ impl EngineRuntime {
             }
         };
         if let Some(expected) = author.expected_revision {
-            // The snapshot applies pending watch events, or rescans when no
-            // watcher runs, so an external change supersedes the revision.
-            let snapshot = self.workspace.snapshot();
-            if let crate::workspace::WorkspaceCoherence::Stale { reason } = snapshot.coherence() {
-                return Err(outcome_error(
-                    ErrorKind::Conflict,
-                    format!(
-                        "the workspace is stale ({reason}), so expected revision {expected} \
-                         cannot be proven; retry once it is coherent again"
-                    ),
-                ));
-            }
-            let current = snapshot.revision();
-            if current != expected {
-                return Err(outcome_error(
-                    ErrorKind::Conflict,
-                    format!(
-                        "the workspace is at revision {current}, not the expected revision \
-                         {expected}; re-read and retry"
-                    ),
-                ));
-            }
+            self.require_revision(expected)?;
         }
         // Node handles name nodes of the bytes the precondition just matched; a
         // handle of any other bytes refuses here, before an engine runs.
@@ -549,6 +528,35 @@ impl EngineRuntime {
 }
 
 impl EngineRuntime {
+    /// Refuse unless the workspace is at exactly `expected`, before any engine
+    /// runs. The router checks it again inside the effect lane.
+    pub(super) fn require_revision(&self, expected: u64) -> Result<(), OutcomeError> {
+        use godot_mcp_domain::ErrorKind;
+        // The snapshot applies pending watch events, or rescans when no
+        // watcher runs, so an external change supersedes the revision.
+        let snapshot = self.workspace.snapshot();
+        if let crate::workspace::WorkspaceCoherence::Stale { reason } = snapshot.coherence() {
+            return Err(outcome_error(
+                ErrorKind::Conflict,
+                format!(
+                    "the workspace is stale ({reason}), so expected revision {expected} \
+                     cannot be proven; retry once it is coherent again"
+                ),
+            ));
+        }
+        let current = snapshot.revision();
+        if current != expected {
+            return Err(outcome_error(
+                ErrorKind::Conflict,
+                format!(
+                    "the workspace is at revision {current}, not the expected revision \
+                     {expected}; re-read and retry"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether the connected editor holds `target` open. No editor connected
     /// is `false`; an editor that does not answer refuses the write.
     async fn open_in_editor(
@@ -724,7 +732,7 @@ impl EngineRuntime {
 }
 
 /// The caller's own recorded result, marked as a replay.
-fn marked_replay(mut value: Value) -> Value {
+pub(super) fn marked_replay(mut value: Value) -> Value {
     if let Value::Object(object) = &mut value {
         object.insert("replayed".to_owned(), Value::Bool(true));
     }
@@ -732,7 +740,7 @@ fn marked_replay(mut value: Value) -> Value {
 }
 
 /// A precondition refusal naming the current hash, when there is one.
-fn conflict(path: &str, message: String, current: Option<&[u8]>) -> OutcomeError {
+pub(super) fn conflict(path: &str, message: String, current: Option<&[u8]>) -> OutcomeError {
     let mut details = std::collections::BTreeMap::new();
     details.insert(
         "path".to_owned(),

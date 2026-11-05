@@ -3,8 +3,9 @@
 //! These are the exact bytes the server installs into a project's
 //! `addons/godot_mcp/`: the GDScript editor plugin that dials the bridge, its
 //! main-thread dispatcher, live reads, undoable scene batches, the tagged
-//! value codec and the class catalogue. `bridge_codec.gd` is the frozen
-//! protocol codec, byte for byte.
+//! value codec, the class catalogue, and the dock and "Godot MCP" bottom
+//! panel that show the connection and let the user pause agent edits.
+//! `bridge_codec.gd` is the frozen protocol codec, byte for byte.
 
 /// The project directory the add-on lives in.
 pub const ADDON_DIRECTORY: &str = "addons/godot_mcp";
@@ -13,7 +14,7 @@ pub const ADDON_DIRECTORY: &str = "addons/godot_mcp";
 pub const PLUGIN_CONFIG: &str = "res://addons/godot_mcp/plugin.cfg";
 
 /// The add-on version, as `plugin.cfg` and the plugin itself report it.
-pub const ADDON_VERSION: &str = "0.3.0";
+pub const ADDON_VERSION: &str = "0.4.0";
 
 /// One add-on file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,12 +44,24 @@ pub const FILES: &[AddonFile] = &[
         bytes: include_bytes!("../addon/godot_mcp/command_queue.gd"),
     },
     AddonFile {
+        name: "dialog_press.gd",
+        bytes: include_bytes!("../addon/godot_mcp/dialog_press.gd"),
+    },
+    AddonFile {
         name: "editing_methods.gd",
         bytes: include_bytes!("../addon/godot_mcp/editing_methods.gd"),
     },
     AddonFile {
+        name: "editor_camera.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editor_camera.gd"),
+    },
+    AddonFile {
         name: "editor_config.gd",
         bytes: include_bytes!("../addon/godot_mcp/editor_config.gd"),
+    },
+    AddonFile {
+        name: "editor_dialogs.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editor_dialogs.gd"),
     },
     AddonFile {
         name: "editor_handlers.gd",
@@ -57,6 +70,14 @@ pub const FILES: &[AddonFile] = &[
     AddonFile {
         name: "editor_log.gd",
         bytes: include_bytes!("../addon/godot_mcp/editor_log.gd"),
+    },
+    AddonFile {
+        name: "editor_monitors.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editor_monitors.gd"),
+    },
+    AddonFile {
+        name: "editor_restart.gd",
+        bytes: include_bytes!("../addon/godot_mcp/editor_restart.gd"),
     },
     AddonFile {
         name: "filesystem.gd",
@@ -69,6 +90,14 @@ pub const FILES: &[AddonFile] = &[
     AddonFile {
         name: "node_reader.gd",
         bytes: include_bytes!("../addon/godot_mcp/node_reader.gd"),
+    },
+    AddonFile {
+        name: "panel.gd",
+        bytes: include_bytes!("../addon/godot_mcp/panel.gd"),
+    },
+    AddonFile {
+        name: "panel_state.gd",
+        bytes: include_bytes!("../addon/godot_mcp/panel_state.gd"),
     },
     AddonFile {
         name: "play.gd",
@@ -93,6 +122,26 @@ pub const FILES: &[AddonFile] = &[
     AddonFile {
         name: "reloader.gd",
         bytes: include_bytes!("../addon/godot_mcp/reloader.gd"),
+    },
+    AddonFile {
+        name: "resource_preview.gd",
+        bytes: include_bytes!("../addon/godot_mcp/resource_preview.gd"),
+    },
+    AddonFile {
+        name: "restarter.gd",
+        bytes: include_bytes!("../addon/godot_mcp/restarter.gd"),
+    },
+    AddonFile {
+        name: "scene_reader.gd",
+        bytes: include_bytes!("../addon/godot_mcp/scene_reader.gd"),
+    },
+    AddonFile {
+        name: "script_runner.gd",
+        bytes: include_bytes!("../addon/godot_mcp/script_runner.gd"),
+    },
+    AddonFile {
+        name: "script_tabs.gd",
+        bytes: include_bytes!("../addon/godot_mcp/script_tabs.gd"),
     },
     AddonFile {
         name: "shortcuts.gd",
@@ -126,6 +175,19 @@ mod tests {
         assert!(
             text.contains(&godot_mcp_domain::editing_methods::gdscript_table()),
             "editing_methods.gd must carry the table godot-mcp-domain renders, unchanged"
+        );
+    }
+
+    #[test]
+    fn the_plugin_carries_the_reading_methods_table_verbatim() {
+        let shipped = FILES
+            .iter()
+            .find(|file| file.name == "scene_reader.gd")
+            .expect("scene_reader.gd ships");
+        let text = std::str::from_utf8(shipped.bytes).expect("GDScript is UTF-8");
+        assert!(
+            text.contains(&godot_mcp_domain::reading_methods::gdscript_table()),
+            "scene_reader.gd must carry the table godot-mcp-domain renders, unchanged"
         );
     }
 

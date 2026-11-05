@@ -3,7 +3,7 @@
 //! call the server refuses or hide one it accepts.
 
 use godot_mcp_domain::editing_methods::{
-    EDITING_METHODS, MAX_CALL_ARGUMENTS, NEW_RESOURCE_CLASSES,
+    EDITING_METHODS, MAX_CALL_ARGUMENTS, MAX_REPEATED_CALLS, NEW_RESOURCE_FORBIDDEN, Restore,
 };
 
 fn page() -> String {
@@ -60,21 +60,82 @@ fn the_operator_page_documents_exactly_the_editing_methods() {
     assert_eq!(documented(), expected);
 }
 
-#[test]
-fn the_operator_page_names_every_new_resource_class_and_the_argument_limit() {
-    let page = page();
-    let paragraph = page
+/// The paragraph of the page that starts with `opening`.
+fn paragraph(opening: &str) -> String {
+    page()
         .split("\n\n")
-        .find(|paragraph| paragraph.starts_with("**Arguments**"))
-        .expect("the page explains a call's arguments");
-    for class in NEW_RESOURCE_CLASSES {
+        .find(|paragraph| paragraph.starts_with(opening))
+        .unwrap_or_else(|| panic!("the page has a paragraph starting {opening}"))
+        .to_owned()
+}
+
+#[test]
+fn the_operator_page_names_the_forbidden_new_resource_classes_and_the_limits() {
+    let arguments = paragraph("**Arguments**");
+    for class in NEW_RESOURCE_FORBIDDEN {
         assert!(
-            paragraph.contains(class),
-            "the arguments paragraph names {class}: {paragraph}"
+            arguments.contains(class),
+            "the arguments paragraph names {class}: {arguments}"
         );
     }
     assert!(
-        paragraph.contains(&format!("at most {MAX_CALL_ARGUMENTS}")),
-        "{paragraph}"
+        arguments.contains(&format!("at most {MAX_CALL_ARGUMENTS}")),
+        "{arguments}"
     );
+    let repeat = paragraph("**Repeat.**");
+    assert!(
+        repeat.contains(&format!("at most {MAX_REPEATED_CALLS} calls")),
+        "{repeat}"
+    );
+}
+
+/// Whether `text` names `class` as a whole word, not as part of a longer name.
+fn names(text: &str, class: &str) -> bool {
+    let word = |character: char| character.is_ascii_alphanumeric() || character == '_';
+    text.match_indices(class).any(|(start, _)| {
+        !text[..start].chars().next_back().is_some_and(word)
+            && !text[start + class.len()..].chars().next().is_some_and(word)
+    })
+}
+
+#[test]
+fn the_operator_page_names_every_replacing_class() {
+    let page = page();
+    let replacing = page
+        .split("\n\n")
+        .find(|paragraph| paragraph.starts_with("The graph resources"))
+        .expect("the page explains how graph resources are undone");
+    for class in EDITING_METHODS {
+        let named = names(replacing, class.class)
+            || (class.class.starts_with("AnimationNodeBlendSpace")
+                && replacing.contains("the two blend spaces"));
+        assert_eq!(
+            named,
+            class.restore == Restore::Replace,
+            "the replacing paragraph names {} exactly when the table replaces it: {replacing}",
+            class.class
+        );
+    }
+}
+
+#[test]
+fn the_operator_page_names_every_baking_class() {
+    let baking = paragraph("**Baking.**");
+    for class in EDITING_METHODS {
+        let bakes = matches!(class.restore, Restore::Bake(_));
+        assert_eq!(
+            names(&baking, class.class),
+            bakes,
+            "the baking paragraph names {} exactly when the table bakes with it: {baking}",
+            class.class
+        );
+        if bakes {
+            for method in class.methods {
+                assert!(
+                    baking.contains(&format!("`{method}`")),
+                    "{method}: {baking}"
+                );
+            }
+        }
+    }
 }

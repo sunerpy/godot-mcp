@@ -1,4 +1,4 @@
-# godot-mcp bundled canonical-write helper, version 3.
+# godot-mcp bundled canonical-write helper, version 4.
 #
 # This file is SHIPPED WITH the server and pinned by SHA-256 in
 # `src/canonical/helper.rs`. It is never generated at runtime and never fetched
@@ -10,7 +10,7 @@
 # through the Todo 14 launch protocol:
 #
 #   godot --headless --path <project> \
-#         --script res://godot_mcp_helpers/3/canonical_write.gd \
+#         --script res://godot_mcp_helpers/4/canonical_write.gd \
 #         -- --request <res-relative request> --response <res-relative response>
 #
 # Everything after `--` reaches this script through
@@ -22,7 +22,7 @@
 #   * The helper is the ONLY thing that builds engine-canonical `.tscn`/`.tres`
 #     bytes and the ONLY thing that mints a `ResourceUID`. The Rust side never
 #     synthesises resource text and never implements UID hashing.
-#   * The helper writes ONLY inside `res://godot_mcp_helpers/3/staging/`. It
+#   * The helper writes ONLY inside `res://godot_mcp_helpers/4/staging/`. It
 #     never touches the caller's target path. Publishing the staged artifact
 #     onto the target is done by the Rust side, under the Todo 2 lease, as a
 #     compare-and-swap against the recorded preimage.
@@ -35,9 +35,28 @@
 #   * A batch's `call_method` calls one editing method of the table below on a
 #     node the scene owns, on a resource the scene embeds, or on the resource a
 #     resource batch edits, after checking its arguments against the method's
-#     engine signature. A resource saved in its own file is never a receiver:
-#     the edit would change that file too. What each call returned is answered
-#     as `results`, a JSON array in batch order.
+#     engine signature, once or once per argument list of its `repeat`. A
+#     resource saved in its own file is never a receiver: the edit would change
+#     that file too. What each call returned is answered as `results`, a JSON
+#     array in batch order.
+#   * A bake, a call of a method BAKING lists, runs once the helper's tree is
+#     running: the region of a copy of the scene, without scripts and added to
+#     the tree, bakes into the scene's own embedded resource, never on a thread,
+#     so the batch goes on only once the engine has finished baking.
+#   * `apply_batches` applies one batch to each of several existing scenes
+#     and resources in one run and stages each result, so one launch proof
+#     covers every staged file. Each file is edited as it is on disk; none
+#     sees what the run does to another. The first file that cannot be
+#     applied refuses the whole run and is named in the answer.
+#   * `read_calls` calls reading methods of the second table on nodes of a
+#     scene, on a resource or a `.gdshader`, or on resources either holds, and
+#     answers each value in Godot's text spelling. It stages nothing.
+#   * A property may be a property path: names separated by ":" pass through
+#     properties holding resources the edited file embeds, and the rest names a
+#     property of the last one and components of its value (`position:x`). A
+#     resource may take a stored property it does not list yet, as a state
+#     machine's `states/Run/node` or a bus layout's `bus/2/name`, which it must
+#     list once written.
 #   * A batch may name nodes by handle. The Rust side resolves each handle to a
 #     node path of the target as it is now (`handles`); the helper binds every
 #     handle to that node OBJECT before the first operation, so a handle follows
@@ -51,8 +70,8 @@
 
 extends SceneTree
 
-const HELPER_VERSION := "3"
-const STAGING_PREFIX := "res://godot_mcp_helpers/3/staging/"
+const HELPER_VERSION := "4"
+const STAGING_PREFIX := "res://godot_mcp_helpers/4/staging/"
 const TEXT_EXTENSIONS := ["tscn", "tres"]
 const BINARY_EXTENSIONS := ["scn", "res"]
 
@@ -73,11 +92,59 @@ const EDITING_METHODS := {
 	"Curve3D": ["add_point", "remove_point", "set_point_position", "set_point_in", "set_point_out", "set_point_tilt", "clear_points"],
 	"Gradient": ["add_point", "remove_point", "set_offset", "set_color"],
 	"Theme": ["set_color", "set_constant", "set_font_size", "set_font", "set_icon", "set_stylebox", "clear_color", "clear_constant", "clear_font_size", "clear_font", "clear_icon", "clear_stylebox"],
+	"Control": ["set_anchors_preset", "set_anchors_and_offsets_preset", "set_offsets_preset", "set_anchor", "set_anchor_and_offset"],
+	"AnimationNodeStateMachine": ["add_node", "remove_node", "rename_node", "replace_node", "set_node_position", "add_transition", "remove_transition", "remove_transition_by_index", "set_graph_offset"],
+	"AnimationNodeBlendTree": ["add_node", "remove_node", "rename_node", "connect_node", "disconnect_node", "set_node_position", "set_graph_offset"],
+	"AnimationNodeBlendSpace1D": ["add_blend_point", "remove_blend_point", "set_blend_point_position", "set_blend_point_node"],
+	"AnimationNodeBlendSpace2D": ["add_blend_point", "remove_blend_point", "set_blend_point_position", "set_blend_point_node", "add_triangle", "remove_triangle"],
+	"VisualShader": ["add_node", "remove_node", "connect_nodes", "disconnect_nodes", "set_node_position"],
+	"TileSet": ["add_source", "remove_source", "add_physics_layer", "remove_physics_layer", "set_physics_layer_collision_layer", "set_physics_layer_collision_mask", "add_terrain_set", "remove_terrain_set", "set_terrain_set_mode", "add_terrain", "remove_terrain", "set_terrain_name", "set_terrain_color", "add_navigation_layer", "remove_navigation_layer", "add_custom_data_layer", "remove_custom_data_layer", "set_custom_data_layer_name", "set_custom_data_layer_type"],
+	"TileSetAtlasSource": ["create_tile", "remove_tile", "create_alternative_tile", "remove_alternative_tile", "clear_tiles_outside_texture"],
+	"NavigationPolygon": ["add_outline", "add_outline_at_index", "set_outline", "remove_outline", "clear_outlines", "add_polygon", "clear_polygons", "clear"],
+	"NavigationMesh": ["add_polygon", "clear_polygons", "create_from_mesh", "clear"],
+	"MeshLibrary": ["create_item", "set_item_mesh", "set_item_name", "set_item_mesh_transform", "set_item_shapes", "set_item_navigation_mesh", "remove_item", "clear"],
+	"NavigationRegion2D": ["bake_navigation_polygon"],
+	"NavigationRegion3D": ["bake_navigation_mesh"],
 }
 const CLEARING := {"TileMapLayer": ["clear"], "AnimationMixer": ["get_animation_library_list", "remove_animation_library"], "Animation": ["clear"], "Theme": ["clear"]}
 const SETTLE := {"TileMapLayer": "update_internals"}
-const NEW_RESOURCE_CLASSES := ["Animation", "AnimationLibrary", "Curve", "Curve2D", "Curve3D", "Gradient", "SpriteFrames", "StyleBoxFlat", "Theme"]
+const REPLACING := ["AnimationNodeStateMachine", "AnimationNodeBlendTree", "AnimationNodeBlendSpace1D", "AnimationNodeBlendSpace2D", "VisualShader", "TileSet", "TileSetAtlasSource", "MeshLibrary"]
+const BAKING := {"NavigationRegion2D": "navigation_polygon", "NavigationRegion3D": "navigation_mesh"}
+const NEW_RESOURCE_FORBIDDEN := ["Script", "GDExtension"]
 const MAX_CALL_ARGUMENTS := 16
+const MAX_REPEATED_CALLS := 4096
+# The reading methods, as crates/godot-mcp-domain/src/reading_methods.rs lists
+# them; a test holds this copy to that table. Change the table, not this copy.
+const READING_METHODS := {
+	"TileMapLayer": ["get_cell_source_id", "get_cell_atlas_coords", "get_cell_alternative_tile", "get_used_cells", "get_used_cells_by_id", "get_used_rect"],
+	"GridMap": ["get_cell_item", "get_cell_item_orientation", "get_used_cells", "get_used_cells_by_item"],
+	"Line2D": ["get_point_count", "get_point_position"],
+	"Skeleton3D": ["get_bone_count", "get_bone_name", "find_bone", "get_bone_parent", "get_bone_rest"],
+	"AnimationMixer": ["get_animation_library_list", "get_animation_list", "has_animation", "has_animation_library"],
+	"AnimationLibrary": ["get_animation_list", "has_animation"],
+	"Animation": ["get_track_count", "find_track", "track_get_path", "track_get_type", "track_is_enabled", "track_get_interpolation_type", "track_get_interpolation_loop_wrap", "value_track_get_update_mode", "track_get_key_count", "track_get_key_time", "track_get_key_value", "track_get_key_transition", "track_find_key", "get_length", "get_loop_mode", "get_step"],
+	"SpriteFrames": ["get_animation_names", "has_animation", "get_frame_count", "get_frame_duration", "get_animation_speed", "get_animation_loop"],
+	"Curve": ["get_point_count", "get_point_position", "get_point_left_tangent", "get_point_right_tangent", "sample"],
+	"Curve2D": ["get_point_count", "get_point_position", "get_point_in", "get_point_out", "get_baked_length"],
+	"Curve3D": ["get_point_count", "get_point_position", "get_point_in", "get_point_out", "get_point_tilt", "get_baked_length"],
+	"Gradient": ["get_point_count", "get_offset", "get_color", "sample"],
+	"Theme": ["get_type_list", "get_color_list", "get_constant_list", "get_font_size_list", "get_font_list", "get_icon_list", "get_stylebox_list", "get_color", "get_constant", "get_font_size", "has_color", "has_constant", "has_font_size", "has_font", "has_icon", "has_stylebox"],
+	"AnimationNodeStateMachine": ["get_node_list", "has_node", "get_node_position", "get_transition_count", "get_transition_from", "get_transition_to", "get_graph_offset"],
+	"AnimationNodeBlendTree": ["get_node_list", "has_node", "get_node_position", "get_graph_offset"],
+	"AnimationNodeBlendSpace1D": ["get_blend_point_count", "get_blend_point_position"],
+	"AnimationNodeBlendSpace2D": ["get_blend_point_count", "get_blend_point_position", "get_triangle_count", "get_triangle_point"],
+	"VisualShader": ["get_node_list", "get_node_position", "get_node_connections", "get_valid_node_id"],
+	"TileSet": ["get_source_count", "get_source_id", "has_source", "get_physics_layers_count", "get_terrain_sets_count", "get_terrains_count", "get_terrain_name", "get_navigation_layers_count", "get_custom_data_layers_count", "get_custom_data_layer_name"],
+	"TileSetAtlasSource": ["get_tiles_count", "get_tile_id", "has_tile", "get_atlas_grid_size", "get_alternative_tiles_count"],
+	"NavigationPolygon": ["get_polygon_count", "get_polygon", "get_vertices", "get_outline_count", "get_outline"],
+	"NavigationMesh": ["get_polygon_count", "get_polygon", "get_vertices"],
+	"MeshLibrary": ["get_item_list", "get_item_name", "get_last_unused_item_id"],
+	"Mesh": ["get_surface_count", "get_aabb"],
+	"Shader": ["get_mode", "get_shader_uniform_list"],
+}
+const MAX_READ_CALLS := 64
+const MAX_READ_VALUE_BYTES := 262144
+const MAX_BATCH_TARGETS := 16
 
 const EXIT_OK := 0
 const EXIT_USAGE := 64
@@ -109,6 +176,17 @@ func _init() -> void:
 		quit(EXIT_USAGE)
 		return
 
+	# The engine bakes navigation only for nodes inside the running SceneTree,
+	# whose root joins it after this returns: a batch that bakes runs once the
+	# first frame flushes deferred calls, after the project's autoloads have
+	# started, as they do in every headless run.
+	if _bakes(request):
+		_finish.call_deferred(request, response_path)
+		return
+	_finish(request, response_path)
+
+
+func _finish(request: Dictionary, response_path: String) -> void:
 	var response: Dictionary = _run(request)
 	if str(response.get("status", "")) == "ok" and not _results.is_empty():
 		response["results"] = JSON.stringify(_results)
@@ -122,10 +200,33 @@ func _init() -> void:
 	quit(code)
 
 
+# Whether the request's batch, or the batch of one of its targets, calls a
+# BAKING method.
+func _bakes(request: Dictionary) -> bool:
+	var batches: Array = [str(request.get("batch", "[]"))]
+	var targets = JSON.parse_string(str(request.get("targets", "[]")))
+	if typeof(targets) == TYPE_ARRAY:
+		for entry in targets:
+			if typeof(entry) == TYPE_DICTIONARY:
+				batches.append(str(entry.get("batch", "[]")))
+	for text in batches:
+		var parsed = JSON.parse_string(text)
+		if typeof(parsed) != TYPE_ARRAY:
+			continue
+		for op in parsed:
+			if typeof(op) != TYPE_DICTIONARY or str(op.get("op", "")) != "call_method":
+				continue
+			for listed in BAKING:
+				if EDITING_METHODS[listed].has(str(op.get("method", ""))):
+					return true
+	return false
+
 func _run(request: Dictionary) -> Dictionary:
 	var operation: String = str(request.get("operation", ""))
 	var target: String = str(request.get("target", ""))
 	var artifact: String = str(request.get("artifact", ""))
+	if operation == "apply_batches":
+		return _apply_batches(request)
 
 	if not artifact.begins_with("godot_mcp_helpers/"):
 		return {"status": "refused", "reason": "artifact_outside_staging", "exit_code": EXIT_REFUSED}
@@ -139,7 +240,7 @@ func _run(request: Dictionary) -> Dictionary:
 		var extension: String = target.get_extension().to_lower()
 		if BINARY_EXTENSIONS.has(extension):
 			return {"status": "refused", "reason": "binary_resource", "exit_code": EXIT_REFUSED}
-		if not TEXT_EXTENSIONS.has(extension):
+		if not TEXT_EXTENSIONS.has(extension) and not (operation == "read_calls" and extension == "gdshader"):
 			return {"status": "refused", "reason": "not_a_text_resource", "exit_code": EXIT_REFUSED}
 
 	match operation:
@@ -153,6 +254,8 @@ func _run(request: Dictionary) -> Dictionary:
 			return _register_uid(request, target, artifact_res)
 		"query_uid":
 			return _query_uid(request)
+		"read_calls":
+			return _read_calls(request, target)
 		_:
 			return {"status": "refused", "reason": "unknown_operation", "exit_code": EXIT_USAGE}
 
@@ -258,6 +361,177 @@ func _apply_batch(request: Dictionary, target: String, artifact_res: String) -> 
 	if saved != OK:
 		return {"status": "failed", "reason": "save_failed", "exit_code": EXIT_FAILED}
 	return _ok_carrying_uid(artifact_res, target_res)
+
+
+# `apply_batches`: apply one batch to each of several existing scenes and
+# resources, in order, and stage each result in its own artifact. The answer
+# lists each staged file with its UID and what its calls returned. The first
+# file that cannot be applied refuses the whole run and is named.
+func _apply_batches(request: Dictionary) -> Dictionary:
+	var targets = JSON.parse_string(str(request.get("targets", "")))
+	if typeof(targets) != TYPE_ARRAY or targets.is_empty() or targets.size() > MAX_BATCH_TARGETS:
+		return _refuse("targets_not_a_list", -1, "the targets must list 1 to %d files" % MAX_BATCH_TARGETS)
+	var staged: Array = []
+	for index in targets.size():
+		var entry = targets[index]
+		if typeof(entry) != TYPE_DICTIONARY:
+			return _refuse("target_not_an_object", -1, "target %d is not an object" % index)
+		var target: String = str(entry.get("target", ""))
+		var artifact: String = str(entry.get("artifact", ""))
+		var answer: Dictionary = _apply_target(entry, target, artifact)
+		if str(answer.get("status", "")) != "ok":
+			answer["target_index"] = str(index)
+			answer["target"] = _res(target)
+			return answer
+		staged.append({"target": target, "artifact": artifact, "uid": answer["uid"], "results": _results})
+	_results = []
+	return {"status": "ok", "exit_code": EXIT_OK, "staged": JSON.stringify(staged)}
+
+
+# One file of `apply_batches`, checked as `_run` checks a single target.
+func _apply_target(entry: Dictionary, target: String, artifact: String) -> Dictionary:
+	if not artifact.begins_with("godot_mcp_helpers/") or not _res(artifact).begins_with(STAGING_PREFIX):
+		return {"status": "refused", "reason": "artifact_outside_staging", "exit_code": EXIT_REFUSED}
+	var extension: String = target.get_extension().to_lower()
+	if BINARY_EXTENSIONS.has(extension):
+		return {"status": "refused", "reason": "binary_resource", "exit_code": EXIT_REFUSED}
+	if not TEXT_EXTENSIONS.has(extension):
+		return {"status": "refused", "reason": "not_a_text_resource", "exit_code": EXIT_REFUSED}
+	_owner_path = _res(target)
+	_results = []
+	var single := {"batch": str(entry.get("batch", "[]"))}
+	if entry.has("handles"):
+		single["handles"] = str(entry["handles"])
+	return _apply_batch(single, target, _res(artifact))
+
+
+# --- reads -----------------------------------------------------------------
+
+
+# `read_calls`: call reading methods of the table on nodes of a scene, or on
+# the resource read, or on resources either holds, and answer each value in
+# Godot's own text spelling. Nothing is changed or staged. A call that cannot
+# be made says why, and the others are still made. Each call is bracketed on
+# stderr by two marker lines, so an engine error it raises can be told apart
+# from the next call's.
+func _read_calls(request: Dictionary, target: String) -> Dictionary:
+	var parsed = JSON.parse_string(str(request.get("batch", "[]")))
+	if typeof(parsed) != TYPE_ARRAY or parsed.is_empty() or parsed.size() > MAX_READ_CALLS:
+		return _refuse("invalid_calls", -1, "the calls are a JSON array of 1 to %d calls" % MAX_READ_CALLS)
+	var loaded = ResourceLoader.load(_res(target), "", ResourceLoader.CACHE_MODE_IGNORE)
+	if loaded == null:
+		return {"status": "failed", "reason": "target_not_loadable", "exit_code": EXIT_FAILED}
+	var root: Node = null
+	if loaded is PackedScene:
+		root = loaded.instantiate(PackedScene.GEN_EDIT_STATE_MAIN)
+		if root == null:
+			return {"status": "failed", "reason": "target_not_instantiable", "exit_code": EXIT_FAILED}
+	for index in parsed.size():
+		printerr("godot_mcp_read_call_begin %d" % index)
+		_results.append(_read_call(root, loaded, parsed[index], index))
+		printerr("godot_mcp_read_call_end %d" % index)
+	if root != null:
+		root.free()
+	return {"status": "ok", "exit_code": EXIT_OK}
+
+
+func _read_call(root: Node, loaded: Resource, call, index: int) -> Dictionary:
+	var entry := {"index": index}
+	if typeof(call) != TYPE_DICTIONARY:
+		return _unread(entry, "invalid_input", "a call is an object")
+	var method: String = str(call.get("method", ""))
+	entry["method"] = method
+	var receiver: Object = loaded
+	if root != null:
+		var node: Node = _node(root, call.get("node", "."))
+		if node == null:
+			return _unread(entry, "not_found", "the scene has no node %s" % str(call.get("node", ".")))
+		receiver = node
+	elif call.get("node") != null:
+		return _unread(entry, "invalid_input", "a resource has no nodes")
+	if call.get("resource") != null:
+		var found: Dictionary = _read_selected(receiver, call.get("resource"))
+		if not found["ok"]:
+			return _unread(entry, found["reason"], found["detail"])
+		receiver = found["object"]
+	var listed: String = _reading_class(receiver, method)
+	if listed == "":
+		return _unread(entry, "invalid_input", "%s is not a reading method of a %s" % [method, receiver.get_class()])
+	var info: Dictionary = {}
+	for candidate in ClassDB.class_get_method_list(receiver.get_class()):
+		if str(candidate["name"]) == method:
+			info = candidate
+			break
+	if info.is_empty():
+		return _unread(entry, "unsupported", "this Godot build has no %s.%s" % [listed, method])
+	var given = call.get("arguments", [])
+	if typeof(given) != TYPE_ARRAY or given.size() > MAX_CALL_ARGUMENTS:
+		return _unread(entry, "invalid_input", "a call takes at most %d arguments" % MAX_CALL_ARGUMENTS)
+	var arguments: Array = []
+	for argument in given:
+		var decoded: Dictionary = _decode(argument)
+		if not decoded["ok"]:
+			return _unread(entry, "invalid_input", decoded["reason"])
+		arguments.append(decoded["value"])
+	var problem: String = _signature_problem(receiver, method, info, arguments)
+	if problem != "":
+		return _unread(entry, "invalid_input", problem)
+	var value = receiver.callv(method, arguments)
+	if typeof(value) == TYPE_OBJECT:
+		return _unread(entry, "internal", "%s returned an object, which a read does not answer" % method)
+	var literal: String = var_to_str(value)
+	var size: int = literal.to_utf8_buffer().size()
+	if size > MAX_READ_VALUE_BYTES:
+		entry["value_bytes"] = size
+		return _unread(entry, "too_large", "the value takes %d bytes of text, more than the %d a call answers" % [size, MAX_READ_VALUE_BYTES])
+	entry["literal"] = literal
+	return entry
+
+
+func _unread(entry: Dictionary, kind: String, detail: String) -> Dictionary:
+	entry["error_kind"] = kind
+	entry["detail"] = detail.replace("\n", " ")
+	return entry
+
+
+# The table's class `object` belongs to for the reading `method`, or "".
+func _reading_class(object: Object, method: String) -> String:
+	for listed in READING_METHODS:
+		if ClassDB.is_parent_class(object.get_class(), listed) and READING_METHODS[listed].has(method):
+			return listed
+	return ""
+
+
+# The resource of `base` a read's `resource` selector names: a property or a
+# property path through the resources `base` holds, embedded or saved in their
+# own files, since a read changes none of them, an animation of an
+# AnimationMixer or an AnimationLibrary, or an animation library of an
+# AnimationMixer.
+func _read_selected(base: Object, selector) -> Dictionary:
+	if typeof(selector) != TYPE_DICTIONARY or selector.size() != 1:
+		return _selector_refusal("invalid_input", "`resource` names one of property, animation, library")
+	var kind: String = str(selector.keys()[0])
+	var name: String = str(selector[kind])
+	match kind:
+		"property":
+			var holder: Object = base
+			for part in name.split(":"):
+				if part == "" or not _has_property(holder, part):
+					return _selector_refusal("not_found", "%s names no property of a %s" % [name, holder.get_class()])
+				var value = holder.get(part)
+				if not (value is Resource) or value is Script:
+					return _selector_refusal("invalid_input", "%s holds no resource a read can call" % name)
+				holder = value
+			return {"ok": true, "object": holder}
+		"animation":
+			if not (base is AnimationMixer or base is AnimationLibrary) or not base.has_animation(name):
+				return _selector_refusal("not_found", "no animation %s" % name)
+			return {"ok": true, "object": base.get_animation(name)}
+		"library":
+			if not (base is AnimationMixer) or not base.has_animation_library(name):
+				return _selector_refusal("not_found", "no animation library %s" % name)
+			return {"ok": true, "object": base.get_animation_library(name)}
+	return _selector_refusal("invalid_input", "`resource` names one of property, animation, library")
 
 
 # --- batch operations ------------------------------------------------------
@@ -375,10 +649,10 @@ func _apply_scene_op(root: Node, op: Dictionary, index: int) -> Dictionary:
 				if child == null:
 					return _refuse("scene_not_instantiable", index, str(op["scene"]))
 			else:
-				var node_type: String = str(op.get("type", "Node"))
-				if not _is_node_class(node_type):
-					return _refuse("unknown_node_type", index, node_type)
-				child = ClassDB.instantiate(node_type)
+				var made: Dictionary = _instantiate(str(op.get("type", "Node")), "Node")
+				if not made["ok"]:
+					return _refuse("unknown_node_type", index, made["detail"])
+				child = made["object"]
 			child.name = name
 			parent.add_child(child)
 			child.owner = root
@@ -514,10 +788,62 @@ func _apply_scene_op(root: Node, op: Dictionary, index: int) -> Dictionary:
 			var node: Node = _node(root, op.get("node", "."))
 			if node == null or not _owned(root, node):
 				return _refuse("node_not_found", index, str(op.get("node", ".")))
+			var baking: String = _listed_class(node, str(op.get("method", "")))
+			if op.get("resource") == null and BAKING.has(baking):
+				return _bake(root, node, baking, op, index)
 			return _call_method(node, op, index)
 		_:
 			return _refuse("unknown_operation", index, kind)
 	return {"status": "ok"}
+
+
+# A BAKING call: the region rebuilds the resource its BAKING property holds
+# from the nodes the engine parses for it. The engine parses only a tree that
+# is inside the SceneTree, so the region bakes as part of a copy of the whole
+# scene added to it — groups kept, scripts and signal connections not, so
+# none of the scene's scripts runs — into the very resource the scene's region
+# holds. The call is always made with `on_thread` false, so it returns only
+# once the bake is done, and what it produced is answered with the call.
+func _bake(root: Node, node: Node, listed: String, op: Dictionary, index: int) -> Dictionary:
+	var method: String = str(op.get("method", ""))
+	if op.has("repeat"):
+		return _refuse("invalid_arguments", index, "%s bakes once; `repeat` does not apply" % method)
+	var given = op.get("arguments", [])
+	if typeof(given) != TYPE_ARRAY or given.size() > 1:
+		return _refuse("invalid_arguments", index, "%s takes no argument or on_thread false" % method)
+	if given.size() == 1:
+		var decoded: Dictionary = _decode(given[0])
+		if not decoded["ok"] or typeof(decoded["value"]) != TYPE_BOOL or decoded["value"]:
+			return _refuse("invalid_arguments", index, "%s bakes on the calling thread: on_thread must be false" % method)
+	var property: String = BAKING[listed]
+	var held = node.get(property)
+	if not (held is Resource):
+		return _refuse("not_a_resource", index, "the %s holds no %s to bake into; set one first" % [node.get_class(), property])
+	if not get_root().is_inside_tree():
+		return {"status": "failed", "reason": "tree_not_live", "op_index": str(index), "detail": "the helper's tree is not running, so the engine would bake nothing", "exit_code": EXIT_FAILED}
+	if not _embedded(held):
+		return _refuse("external_resource", index, "%s is the file %s, which a bake would change too" % [property, held.resource_path])
+	var copy: Node = root.duplicate(Node.DUPLICATE_GROUPS)
+	var twin: Node = copy.get_node(root.get_path_to(node))
+	twin.set(property, held)
+	get_root().add_child(copy)
+	twin.call(method, false)
+	get_root().remove_child(copy)
+	copy.free()
+	_results.append({"index": index, "method": method, "value": null, "baked": _baked(held)})
+	return {"status": "ok"}
+
+
+# What a bake produced in `held`.
+func _baked(held: Resource) -> Dictionary:
+	var baked := {
+		"class": held.get_class(),
+		"polygons": int(held.get_polygon_count()),
+		"vertices": int(held.get_vertices().size()),
+	}
+	if held is NavigationPolygon:
+		baked["outlines"] = int(held.get_outline_count())
+	return baked
 
 
 # Map every node of `original` that `owned` lists onto its counterpart in `copy`.
@@ -548,73 +874,227 @@ func _apply_resource_ops(resource: Resource, ops: Array) -> Dictionary:
 	return {"status": "ok"}
 
 
+# Whether `object` lists `property`, a dynamic property such as a state
+# machine's `states/Run/node` included.
 func _has_property(object: Object, property: String) -> bool:
 	for entry in object.get_property_list():
-		if entry["name"] == property:
+		if str(entry["name"]) == property:
 			return true
 	return false
 
 
+# Whether `resource` belongs to the edited file: unsaved, or one of the
+# sub-resources that file embeds.
+func _embedded(resource: Resource) -> bool:
+	var path: String = resource.resource_path
+	return path == "" or path.begins_with(_owner_path + "::")
+
+
+# A new object of the class `name` inheriting `base`: an engine class, or a
+# global script class (`class_name`) whose engine base inherits `base`, with
+# its script attached. Answers {"ok": true, "object"} or {"ok": false, "detail"}.
+func _instantiate(name: String, base: String) -> Dictionary:
+	if ClassDB.class_exists(name):
+		if ClassDB.can_instantiate(name) and (name == base or ClassDB.is_parent_class(name, base)):
+			return {"ok": true, "object": ClassDB.instantiate(name)}
+		return {"ok": false, "detail": "%s is not a %s class that can be created" % [name, base]}
+	var path := ""
+	for entry in ProjectSettings.get_global_class_list():
+		if str(entry.get("class", "")) == name:
+			path = str(entry.get("path", ""))
+	if path == "":
+		return {"ok": false, "detail": "%s names neither an engine class nor a global script class" % name}
+	var script = ResourceLoader.load(path, "Script")
+	if not (script is Script):
+		return {"ok": false, "detail": "the script of %s, %s, cannot be loaded" % [name, path]}
+	var native: String = String(script.get_instance_base_type())
+	if not ClassDB.can_instantiate(native) or not (native == base or ClassDB.is_parent_class(native, base)):
+		return {"ok": false, "detail": "%s extends %s, not %s" % [name, native, base]}
+	var object: Object = ClassDB.instantiate(native)
+	object.set_script(script)
+	if object.get_script() != script:
+		if not (object is RefCounted):
+			object.free()
+		return {"ok": false, "detail": "%s could not be given its script %s" % [name, path]}
+	return {"ok": true, "object": object}
+
+
+# Where the property path `path` leads from `base`: each name but the last
+# that names a property holding a resource passes into it, which must be one
+# the edited file embeds and not a script; with `to_resource` every name must.
+# Answers {"ok": true, "holder", "leaf"}, `leaf` being what remains of the path
+# on `holder`, or a refusal {"ok": false, "reason", "detail"}.
+func _walk(base: Object, path: String, to_resource: bool = false) -> Dictionary:
+	var parts: PackedStringArray = path.split(":")
+	for part in parts:
+		if part == "":
+			return _selector_refusal("invalid_property_path", "%s has an empty name" % path)
+	var hops: int = parts.size() if to_resource else parts.size() - 1
+	var holder: Object = base
+	var at: int = 0
+	while at < hops:
+		var passed: String = ":".join(parts.slice(0, at + 1))
+		if not _has_property(holder, parts[at]):
+			if to_resource:
+				return _selector_refusal("unknown_property", passed)
+			break
+		var value = holder.get(parts[at])
+		if not (value is Object):
+			if to_resource:
+				return _selector_refusal("not_a_resource", "%s holds no resource" % passed)
+			break
+		if not (value is Resource):
+			return _selector_refusal("not_a_resource", "%s holds an object that is not a resource" % passed)
+		if value is Script:
+			return _selector_refusal("script_resource", "%s is a script; change scripts with script.patch" % passed)
+		if not _embedded(value):
+			return _selector_refusal("external_resource", "%s is the file %s; edit it with resource.batch.apply" % [passed, value.resource_path])
+		holder = value
+		at += 1
+	return {"ok": true, "holder": holder, "leaf": ":".join(parts.slice(at))}
+
+
+# Whether a value read back as `after` is a write of `value` that the property
+# took: the same object, null, or a value of the same type, with either numeric
+# type for a number and either string type for a string.
+# Whether the engine kept exactly the value written, for the types whose values
+# compare exactly. A setter may replace a value of the right type, as a player
+# keeps `Master` for a bus the layout lacks; floats and the types built of them
+# are compared by type only, since the engine stores them rounded.
+func _kept(value, after) -> bool:
+	match typeof(value):
+		TYPE_BOOL, TYPE_STRING, TYPE_STRING_NAME:
+			return str(after) == str(value)
+		TYPE_INT:
+			return (typeof(after) == TYPE_INT or typeof(after) == TYPE_FLOAT) and float(after) == float(value)
+	return true
+
+
+# A refusal of a write the engine took as another type, or replaced.
+func _not_written(value, after, path: String, index: int) -> Dictionary:
+	if not _took(value, after):
+		return _refuse("value_type_mismatch", index, path + " is " + type_string(typeof(after)))
+	if not _kept(value, after):
+		return _refuse("value_not_kept", index, "%s kept %s, not %s" % [path, str(after), str(value)])
+	return {}
+
+
+func _took(value, after) -> bool:
+	match typeof(value):
+		TYPE_NIL:
+			return after == null
+		TYPE_OBJECT:
+			return typeof(after) == TYPE_OBJECT and after == value
+		TYPE_FLOAT, TYPE_INT:
+			return typeof(after) == TYPE_FLOAT or typeof(after) == TYPE_INT
+		TYPE_STRING, TYPE_STRING_NAME:
+			return typeof(after) == TYPE_STRING or typeof(after) == TYPE_STRING_NAME
+	return typeof(after) == typeof(value)
+
+
 func _set_property(object: Object, op: Dictionary, index: int, clear: bool) -> Dictionary:
-	var property: String = str(op.get("property", ""))
-	if property == "" or not _has_property(object, property):
-		return _refuse("unknown_property", index, property)
+	var path: String = str(op.get("property", ""))
+	if path == "":
+		return _refuse("unknown_property", index, path)
+	var found: Dictionary = _walk(object, path)
+	if not found["ok"]:
+		return _refuse(found["reason"], index, found["detail"])
+	var holder: Object = found["holder"]
+	var leaf: String = found["leaf"]
 	var value
 	if clear:
-		if object.property_can_revert(property):
-			value = object.property_get_revert(property)
+		if leaf.contains(":"):
+			return _refuse("invalid_property_path", index, "clear_property clears a whole property, not %s" % leaf)
+		if not _has_property(holder, leaf):
+			return _refuse("unknown_property", index, path)
+		if holder.property_can_revert(leaf):
+			value = holder.property_get_revert(leaf)
 		else:
-			value = ClassDB.class_get_property_default_value(object.get_class(), property)
+			value = ClassDB.class_get_property_default_value(holder.get_class(), leaf)
 	else:
 		var decoded: Dictionary = _decode(op.get("value"))
 		if not decoded["ok"]:
 			return _refuse("invalid_value", index, decoded["reason"])
 		value = decoded["value"]
-	var before = object.get(property)
-	object.set(property, value)
-	var after = object.get(property)
-	if not clear and typeof(value) != TYPE_NIL and typeof(after) != typeof(value) \
-			and not (typeof(value) == TYPE_FLOAT and typeof(after) == TYPE_INT) \
-			and not (typeof(value) == TYPE_INT and typeof(after) == TYPE_FLOAT) \
-			and not (typeof(value) == TYPE_STRING and typeof(after) == TYPE_STRING_NAME) \
-			and not (typeof(value) == TYPE_OBJECT):
-		object.set(property, before)
-		return _refuse("value_type_mismatch", index, property + " is " + type_string(typeof(after)))
+	return _write(found, path, value, index, not clear)
+
+
+# Write `value` where a walk led. A property the holder lists is written with
+# `set`, or `set_indexed` for a component of its value; a metadata entry is
+# added; and a resource may take a stored property it does not list yet, which
+# it must list once written.
+func _write(found: Dictionary, path: String, value, index: int, check: bool) -> Dictionary:
+	var holder: Object = found["holder"]
+	var leaf: String = found["leaf"]
+	var name: String = leaf.get_slice(":", 0)
+	var component: bool = leaf.contains(":")
+	var listed: bool = _has_property(holder, name)
+	var metadata: bool = name.begins_with("metadata/") and not component
+	if component:
+		if not listed:
+			return _refuse("unknown_property", index, "a %s has no property %s" % [holder.get_class(), name])
+		if holder.get(name) == null:
+			return _refuse("unknown_property", index, "%s holds nothing; set it first" % name)
+		if holder.get_indexed(NodePath(leaf)) == null:
+			return _refuse("unknown_property", index, "%s names no part of %s" % [leaf, name])
+		holder.set_indexed(NodePath(leaf), value)
+		if check:
+			var refused: Dictionary = _not_written(value, holder.get_indexed(NodePath(leaf)), path, index)
+			if not refused.is_empty():
+				return refused
+		return {"status": "ok"}
+	if not listed and metadata and not name.trim_prefix("metadata/").is_valid_identifier():
+		return _refuse("invalid_property_path", index, "%s is not a metadata name" % name.trim_prefix("metadata/"))
+	if not listed and not metadata and not (holder is Resource):
+		return _refuse("unknown_property", index, path)
+	holder.set(leaf, value)
+	if not _has_property(holder, leaf):
+		return _refuse("unknown_property", index, path)
+	if check:
+		var refused: Dictionary = _not_written(value, holder.get(leaf), path, index)
+		if not refused.is_empty():
+			return refused
 	return {"status": "ok"}
 
 
 func _set_subresource(object: Object, op: Dictionary, index: int) -> Dictionary:
-	var property: String = str(op.get("property", ""))
-	var resource_class: String = str(op.get("class", ""))
-	if property == "" or not _has_property(object, property):
-		return _refuse("unknown_property", index, property)
-	if not _is_resource_class(resource_class):
-		return _refuse("unknown_resource_class", index, resource_class)
-	var resource: Resource = ClassDB.instantiate(resource_class)
+	var path: String = str(op.get("property", ""))
+	if path == "":
+		return _refuse("unknown_property", index, path)
+	var found: Dictionary = _walk(object, path)
+	if not found["ok"]:
+		return _refuse(found["reason"], index, found["detail"])
+	if str(found["leaf"]).contains(":"):
+		return _refuse("invalid_property_path", index, "%s names part of a value, not a property" % path)
+	var made: Dictionary = _instantiate(str(op.get("class", "")), "Resource")
+	if not made["ok"]:
+		return _refuse("unknown_resource_class", index, made["detail"])
+	var resource: Resource = made["object"]
 	var properties = op.get("properties", {})
 	if typeof(properties) != TYPE_DICTIONARY:
 		return _refuse("invalid_value", index, "properties must be an object")
 	for key in properties.keys():
-		var nested: Dictionary = _set_property(resource, {"property": key, "value": properties[key]}, index, false)
-		if nested["status"] != "ok":
-			return nested
-	object.set(property, resource)
-	if object.get(property) != resource:
-		return _refuse("value_type_mismatch", index, property)
-	return {"status": "ok"}
+		if not _has_property(resource, str(key)):
+			return _refuse("unknown_property", index, str(key))
+		var decoded: Dictionary = _decode(properties[key])
+		if not decoded["ok"]:
+			return _refuse("invalid_value", index, decoded["reason"])
+		resource.set(str(key), decoded["value"])
+		var refused: Dictionary = _not_written(decoded["value"], resource.get(str(key)), str(key), index)
+		if not refused.is_empty():
+			return refused
+	return _write(found, path, resource, index, true)
 
 
 # --- editing calls -------------------------------------------------------------
 
 
 # `call_method`: call a listed editing method on `base`, a node the scene owns
-# or the resource a resource batch edits, or on the resource of the node that
-# the `resource` selector names.
+# or the resource a resource batch edits, or on the resource of `base` that
+# the `resource` selector names, once or once per argument list of `repeat`.
 func _call_method(base: Object, op: Dictionary, index: int) -> Dictionary:
 	var receiver: Object = base
 	if op.get("resource") != null:
-		if not (base is Node):
-			return _refuse("invalid_selector", index, "a resource batch calls the resource itself")
 		var found: Dictionary = _selected_resource(base, op.get("resource"))
 		if not found["ok"]:
 			return _refuse(found["reason"], index, found["detail"])
@@ -623,24 +1103,47 @@ func _call_method(base: Object, op: Dictionary, index: int) -> Dictionary:
 	var listed: String = _listed_class(receiver, method)
 	if listed == "":
 		return _refuse("method_not_listed", index, "%s cannot be called on a %s" % [method, receiver.get_class()])
-	var given = op.get("arguments", [])
-	if typeof(given) != TYPE_ARRAY or given.size() > MAX_CALL_ARGUMENTS:
-		return _refuse("invalid_arguments", index, "`arguments` lists at most %d values" % MAX_CALL_ARGUMENTS)
-	var arguments: Array = []
-	for argument in given:
-		var decoded: Dictionary = _decode_argument(argument)
-		if not decoded["ok"]:
-			return _refuse("invalid_value", index, decoded["reason"])
-		arguments.append(decoded["value"])
-	var problem: String = _signature_problem(receiver, method, arguments)
-	if problem != "":
-		return _refuse("invalid_arguments", index, problem)
-	var value = receiver.callv(method, arguments)
+	var given: Array = []
+	if op.has("repeat"):
+		var repeat = op["repeat"]
+		if op.has("arguments") or typeof(repeat) != TYPE_ARRAY or repeat.is_empty() or repeat.size() > MAX_REPEATED_CALLS:
+			return _refuse("invalid_arguments", index, "`repeat` lists 1 to %d argument lists, without `arguments`" % MAX_REPEATED_CALLS)
+		given = repeat
+	else:
+		given = [op.get("arguments", [])]
+	var info: Dictionary = {}
+	for candidate in ClassDB.class_get_method_list(receiver.get_class()):
+		if str(candidate["name"]) == method:
+			info = candidate
+			break
+	var lists: Array = []
+	for list in given:
+		if typeof(list) != TYPE_ARRAY or list.size() > MAX_CALL_ARGUMENTS:
+			return _refuse("invalid_arguments", index, "a call takes at most %d arguments" % MAX_CALL_ARGUMENTS)
+		var arguments: Array = []
+		for argument in list:
+			var decoded: Dictionary = _decode_argument(argument)
+			if not decoded["ok"]:
+				return _refuse("invalid_value", index, decoded["reason"])
+			arguments.append(decoded["value"])
+		var problem: String = _signature_problem(receiver, method, info, arguments)
+		if problem != "":
+			return _refuse("invalid_arguments", index, problem)
+		lists.append(arguments)
+	var values: Array = []
+	for arguments in lists:
+		values.append(receiver.callv(method, arguments))
 	# A class in SETTLE brings its stored properties up to date, so the staged
 	# bytes hold no entry the receiver no longer shows.
 	if SETTLE.has(listed):
 		receiver.call(SETTLE[listed])
-	_results.append({"index": index, "method": method, "value": _encode_result(value)})
+	if op.has("repeat"):
+		var encoded: Array = []
+		for value in values:
+			encoded.append(_encode_result(value))
+		_results.append({"index": index, "method": method, "values": encoded})
+	else:
+		_results.append({"index": index, "method": method, "value": _encode_result(values[0])})
 	return {"status": "ok"}
 
 
@@ -656,9 +1159,10 @@ func _selector_refusal(reason: String, detail: String) -> Dictionary:
 	return {"ok": false, "reason": reason, "detail": detail}
 
 
-# The resource of `node` that `selector` names — a node property, an animation
-# or an animation library of an AnimationMixer — when the edited file embeds it.
-func _selected_resource(node: Node, selector) -> Dictionary:
+# The resource of `base` that `selector` names — by a property or a property
+# path through embedded resources, or as an animation or an animation library
+# of an AnimationMixer — when the edited file embeds it.
+func _selected_resource(base: Object, selector) -> Dictionary:
 	if typeof(selector) != TYPE_DICTIONARY or selector.size() != 1:
 		return _selector_refusal("invalid_selector", "`resource` names one of property, animation, library")
 	var kind: String = str(selector.keys()[0])
@@ -666,72 +1170,92 @@ func _selected_resource(node: Node, selector) -> Dictionary:
 	var resource = null
 	match kind:
 		"property":
-			if not _has_property(node, name):
-				return _selector_refusal("unknown_property", name)
-			resource = node.get(name)
+			var found: Dictionary = _walk(base, name, true)
+			if not found["ok"]:
+				return found
+			return {"ok": true, "object": found["holder"]}
 		"animation":
-			if not (node is AnimationMixer) or not node.has_animation(name):
+			if not (base is AnimationMixer) or not base.has_animation(name):
 				return _selector_refusal("unknown_animation", name)
-			resource = node.get_animation(name)
+			resource = base.get_animation(name)
 		"library":
-			if not (node is AnimationMixer) or not node.has_animation_library(name):
+			if not (base is AnimationMixer) or not base.has_animation_library(name):
 				return _selector_refusal("unknown_animation_library", name)
-			resource = node.get_animation_library(name)
+			resource = base.get_animation_library(name)
 		_:
 			return _selector_refusal("invalid_selector", "`resource` names one of property, animation, library")
 	if not (resource is Resource):
 		return _selector_refusal("not_a_resource", "%s %s holds no resource" % [kind, name])
-	var path: String = resource.resource_path
-	if path != "" and not path.begins_with(_owner_path + "::"):
-		return _selector_refusal("external_resource", "%s is the file %s; edit it with resource.batch.apply" % [name, path])
+	if not _embedded(resource):
+		return _selector_refusal("external_resource", "%s is the file %s; edit it with resource.batch.apply" % [name, resource.resource_path])
 	return {"ok": true, "object": resource}
 
 
-# One argument: a new embedded resource of a listed class, or a tagged value.
+# One argument: a new embedded resource with optional properties, of any
+# class but a script or a GDExtension, or a tagged value.
 func _decode_argument(tagged) -> Dictionary:
 	if typeof(tagged) == TYPE_DICTIONARY and str(tagged.get("type", "")) == "new_resource":
 		var value = tagged.get("value")
-		if tagged.size() != 2 or typeof(value) != TYPE_DICTIONARY or value.size() != 1:
-			return _bad("a new resource is {type: new_resource, value: {class}}")
-		var resource_class: String = str(value.get("class", ""))
-		if not NEW_RESOURCE_CLASSES.has(resource_class) or not ClassDB.can_instantiate(resource_class):
-			return _bad("a new resource is one of " + ", ".join(NEW_RESOURCE_CLASSES))
-		return _good(ClassDB.instantiate(resource_class))
+		if tagged.size() != 2 or typeof(value) != TYPE_DICTIONARY or not value.has("class") \
+				or value.size() > (2 if value.has("properties") else 1):
+			return _bad("a new resource is {type: new_resource, value: {class, properties?}}")
+		var resource_class: String = str(value["class"])
+		for forbidden in NEW_RESOURCE_FORBIDDEN:
+			if resource_class == forbidden or ClassDB.class_exists(resource_class) and ClassDB.is_parent_class(resource_class, forbidden):
+				return _bad("a new resource cannot be a %s" % forbidden)
+		var made: Dictionary = _instantiate(resource_class, "Resource")
+		if not made["ok"]:
+			return _bad(made["detail"])
+		var resource: Resource = made["object"]
+		var properties = value.get("properties", {})
+		if typeof(properties) != TYPE_DICTIONARY:
+			return _bad("a new resource's properties are an object")
+		for key in properties:
+			var property: String = str(key)
+			if not _has_property(resource, property):
+				return _bad("a %s has no property %s" % [resource_class, property])
+			var decoded: Dictionary = _decode(properties[key])
+			if not decoded["ok"]:
+				return decoded
+			resource.set(property, decoded["value"])
+			if not _took(decoded["value"], resource.get(property)):
+				return _bad("%s of a %s is a %s" % [property, resource_class, type_string(typeof(resource.get(property)))])
+			if not _kept(decoded["value"], resource.get(property)):
+				return _bad("%s of a %s kept %s, not %s" % [property, resource_class, str(resource.get(property)), str(decoded["value"])])
+		return _good(resource)
 	return _decode(tagged)
 
 
-# Why `arguments` do not fit `method`'s engine signature on `object`, or "".
-func _signature_problem(object: Object, method: String, arguments: Array) -> String:
-	for info in ClassDB.class_get_method_list(object.get_class()):
-		if str(info["name"]) != method:
+# Why `arguments` do not fit `method`'s engine signature `info` on `object`, or "".
+func _signature_problem(object: Object, method: String, info: Dictionary, arguments: Array) -> String:
+	if info.is_empty():
+		return "%s has no method %s" % [object.get_class(), method]
+	var parameters: Array = info.get("args", [])
+	var defaults: Array = info.get("default_args", [])
+	var least: int = parameters.size() - defaults.size()
+	if arguments.size() < least or arguments.size() > parameters.size():
+		return "%s.%s takes %d to %d arguments, not %d" % [object.get_class(), method, least, parameters.size(), arguments.size()]
+	for position in arguments.size():
+		var expected: int = int(parameters[position].get("type", TYPE_NIL))
+		var argument = arguments[position]
+		var actual: int = typeof(argument)
+		if expected == TYPE_NIL or actual == expected and expected != TYPE_OBJECT:
 			continue
-		var parameters: Array = info.get("args", [])
-		var defaults: Array = info.get("default_args", [])
-		var least: int = parameters.size() - defaults.size()
-		if arguments.size() < least or arguments.size() > parameters.size():
-			return "%s.%s takes %d to %d arguments, not %d" % [object.get_class(), method, least, parameters.size(), arguments.size()]
-		for position in arguments.size():
-			var expected: int = int(parameters[position].get("type", TYPE_NIL))
-			var argument = arguments[position]
-			var actual: int = typeof(argument)
-			if expected == TYPE_NIL or actual == expected and expected != TYPE_OBJECT:
+		if expected == TYPE_OBJECT:
+			var wanted: String = str(parameters[position].get("class_name", ""))
+			if actual == TYPE_NIL or actual == TYPE_OBJECT and (wanted == "" or argument.is_class(wanted)):
 				continue
-			if expected == TYPE_OBJECT:
-				var wanted: String = str(parameters[position].get("class_name", ""))
-				if actual == TYPE_NIL or actual == TYPE_OBJECT and (wanted == "" or argument.is_class(wanted)):
-					continue
-				return "argument %d of %s must be a %s" % [position, method, wanted if wanted != "" else "object"]
-			if expected == TYPE_FLOAT and actual == TYPE_INT:
-				continue
-			if expected == TYPE_INT and actual == TYPE_FLOAT and float(argument) == floor(float(argument)):
-				continue
-			if [TYPE_STRING, TYPE_STRING_NAME].has(expected) and [TYPE_STRING, TYPE_STRING_NAME].has(actual):
-				continue
-			if expected == TYPE_NODE_PATH and [TYPE_STRING, TYPE_STRING_NAME].has(actual):
-				continue
-			return "argument %d of %s must be %s, not %s" % [position, method, type_string(expected), type_string(actual)]
-		return ""
-	return "%s has no method %s" % [object.get_class(), method]
+			return "argument %d of %s must be a %s" % [position, method, wanted if wanted != "" else "object"]
+		if expected == TYPE_FLOAT and actual == TYPE_INT:
+			continue
+		if expected == TYPE_INT and actual == TYPE_FLOAT and float(argument) == floor(float(argument)):
+			continue
+		if [TYPE_STRING, TYPE_STRING_NAME].has(expected) and [TYPE_STRING, TYPE_STRING_NAME].has(actual):
+			continue
+		if expected == TYPE_NODE_PATH and [TYPE_STRING, TYPE_STRING_NAME].has(actual):
+			continue
+		return "argument %d of %s must be %s, not %s" % [position, method, type_string(expected), type_string(actual)]
+	return ""
 
 
 # The tagged spelling of a call's result, null when it returned nothing. Every

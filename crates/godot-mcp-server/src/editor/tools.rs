@@ -33,6 +33,7 @@ use super::bridge::{BridgeAnswer, BridgeFailure, BridgeStatus, EditorBridge};
 use crate::effect::WritePrecondition;
 use crate::effect::boundary::EditorMutation;
 use crate::effect::gateway::EditorEffectIntent;
+use crate::engine_plane::session::SessionManager;
 use crate::idempotency::TransportAuthMode;
 use crate::idempotency::replay::replay_outcome;
 use crate::journal::{OperationFamily, TransportMode};
@@ -73,6 +74,36 @@ const LOG_KINDS: [&str; 5] = ["message", "error", "warning", "script", "shader"]
 const MAX_EDIT_OPERATIONS: usize = 128;
 /// Longest undo-action label of a live edit, in characters.
 const MAX_LABEL_CHARS: usize = 96;
+/// The editor views a camera read selects.
+const CAMERA_VIEWS: [&str; 2] = ["2d", "3d"];
+/// The farthest a camera's position or target lies from the origin.
+const MAX_COORDINATE: f64 = 1.0e9;
+/// How near a camera's target may lie to its position.
+const MIN_LOOK_DISTANCE: f64 = 1.0e-4;
+/// Most dialogs one read lists, and how many it lists by default.
+const MAX_DIALOGS: u64 = 64;
+const DEFAULT_DIALOGS: u64 = 32;
+/// A dialog's `id`: the editor's object ID of the dialog, never 0.
+const DIALOG_ID_PATTERN: &str = "^[1-9][0-9]{0,19}$";
+/// A dialog button's name: no control character in it.
+const BUTTON_PATTERN: &str = r"^[^\x00-\x1F\x7F-\x9F]+$";
+/// Longest dialog button name, in characters.
+const MAX_BUTTON_CHARS: usize = 256;
+/// Most monitors one performance read names.
+const MAX_MONITORS: usize = 256;
+/// How long a restarted editor may take to connect, in milliseconds: the
+/// least, the default and the most.
+const RESTART_TIMEOUT_MS: (u64, u64, u64) = (1_000, 120_000, 600_000);
+/// How often a restart is checked for while it is awaited.
+const RESTART_POLL: Duration = Duration::from_millis(250);
+/// How long one check of a restart may wait for the editor that was asked.
+const RESTART_CHECK: Duration = Duration::from_secs(2);
+/// How long a preview may take, in milliseconds: the least, the default and
+/// the most.
+const PREVIEW_TIMEOUT_MS: (u64, u64, u64) = (100, 10_000, 60_000);
+/// How much longer than the preview itself its request may take: the images
+/// are read back after it.
+const PREVIEW_MARGIN: Duration = Duration::from_secs(10);
 
 fn outcome_error(kind: ErrorKind, message: impl Into<String>) -> OutcomeError {
     OutcomeError::new(kind, message, false, BTreeMap::new())
@@ -172,6 +203,33 @@ fn no_shortcuts(status: &BridgeStatus, method: &str, outcome: &str) -> OutcomeEr
             "cannot hand its shortcuts to a plugin: reading and changing them needs \
              EditorSettings.get_shortcut_list of Godot 4.6 or later. {outcome}"
         ),
+    )
+}
+
+/// Why the connected editor does not serve `editor.camera.set`: a plugin
+/// that says it cannot move a camera runs on a Godot whose 3D editor does
+/// not keep a camera a plugin moves; any other predates the method.
+fn no_camera_set(status: &BridgeStatus) -> OutcomeError {
+    editor_lacks(
+        status,
+        "editor.camera.set",
+        "camera_set",
+        "does not keep a camera a plugin moves: its 3D editor puts its orbit pivot at the \
+         camera and draws the view 4.0 units behind the point asked for (measured on Godot \
+         4.4.1); cameras a plugin moves hold from Godot 4.5.1 on. Nothing was changed.",
+    )
+}
+
+/// Why the connected editor does not serve `editor.script.close`: a plugin
+/// that says it cannot close a script tab runs on a Godot whose
+/// `ScriptEditor` has no `close_file`; any other predates the method.
+fn no_script_close(status: &BridgeStatus) -> OutcomeError {
+    editor_lacks(
+        status,
+        "editor.script.close",
+        "script_close",
+        "cannot close a script tab from a plugin: closing needs ScriptEditor.close_file of \
+         Godot 4.7 or later. Nothing was changed.",
     )
 }
 
@@ -656,6 +714,248 @@ fn key_event_schema() -> Value {
     })
 }
 
+/// An integer argument `key` within `range`, or `default` when it is absent.
+fn bounded(
+    arguments: &Map<String, Value>,
+    key: &str,
+    range: std::ops::RangeInclusive<u64>,
+    default: u64,
+) -> Result<u64, OutcomeError> {
+    match arguments.get(key) {
+        None => Ok(default),
+        Some(value) => value
+            .as_u64()
+            .filter(|number| range.contains(number))
+            .ok_or_else(|| {
+                outcome_error(
+                    ErrorKind::InvalidInput,
+                    format!("`{key}` is from {} to {}", range.start(), range.end()),
+                )
+            }),
+    }
+}
+
+/// `editor.camera.get`'s arguments: the view read, `2d`, `3d` or both
+/// (empty), and one 3D viewport, or -1 for every one.
+fn camera_read(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let view = match arguments.get("view") {
+        None => None,
+        Some(Value::String(view)) if CAMERA_VIEWS.contains(&view.as_str()) => Some(view.as_str()),
+        Some(_) => {
+            return Err(outcome_error(ErrorKind::InvalidInput, "`view` is 2d or 3d"));
+        }
+    };
+    let viewport =
+        match arguments.get("viewport") {
+            None => None,
+            Some(value) => Some(value.as_u64().filter(|index| *index <= 3).ok_or_else(|| {
+                outcome_error(ErrorKind::InvalidInput, "`viewport` is from 0 to 3")
+            })?),
+        };
+    if view == Some("2d") && viewport.is_some() {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            "`viewport` selects a 3D viewport, not part of the 2D view",
+        ));
+    }
+    let view = view.unwrap_or(if viewport.is_some() { "3d" } else { "" });
+    Ok(json!({
+        "view": view,
+        "viewport": viewport.map_or(-1, |index| i64::try_from(index).unwrap_or(-1)),
+    }))
+}
+
+/// A point `{x, y, z}` in global coordinates, each within ±`MAX_COORDINATE`.
+fn point(value: Option<&Value>, key: &str) -> Result<[f64; 3], OutcomeError> {
+    let invalid = || {
+        outcome_error(
+            ErrorKind::InvalidInput,
+            format!("`{key}` is {{x, y, z}}, each a number within ±{MAX_COORDINATE:e}"),
+        )
+    };
+    let object = value.and_then(Value::as_object).ok_or_else(invalid)?;
+    if object.len() != 3 {
+        return Err(invalid());
+    }
+    let mut point = [0.0; 3];
+    for (slot, axis) in point.iter_mut().zip(["x", "y", "z"]) {
+        *slot = object
+            .get(axis)
+            .and_then(Value::as_f64)
+            .filter(|coordinate| coordinate.is_finite() && coordinate.abs() <= MAX_COORDINATE)
+            .ok_or_else(invalid)?;
+    }
+    Ok(point)
+}
+
+/// `editor.camera.set`'s arguments: the 3D viewport, where its camera is put
+/// and the point it looks at.
+fn camera_move(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let viewport = bounded(arguments, "viewport", 0..=3, 0)?;
+    let position = point(arguments.get("position"), "position")?;
+    let target = point(arguments.get("target"), "target")?;
+    let distance = position
+        .iter()
+        .zip(target)
+        .map(|(from, to)| (to - from).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if distance < MIN_LOOK_DISTANCE {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            "`target` must differ from `position`: a camera cannot look at the point it is at",
+        ));
+    }
+    let spelled = |point: [f64; 3]| json!({ "x": point[0], "y": point[1], "z": point[2] });
+    Ok(json!({
+        "viewport": viewport,
+        "position": spelled(position),
+        "target": spelled(target),
+    }))
+}
+
+/// `editor.script.close`'s argument: the `res://` path of a GDScript file.
+fn script_tab(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let path = res_path(
+        arguments
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty() && path.len() <= 1024)
+            .ok_or_else(|| outcome_error(ErrorKind::InvalidInput, "`path` is required"))?,
+    )?;
+    if !path.ends_with(".gd") {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            format!("`{path}` must name a .gd script"),
+        ));
+    }
+    Ok(json!({ "path": path }))
+}
+
+/// `editor.dialogs.get`'s argument: how many dialogs to list at most.
+fn dialogs_read(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    Ok(json!({ "limit": bounded(arguments, "limit", 1..=MAX_DIALOGS, DEFAULT_DIALOGS)? }))
+}
+
+/// `editor.dialog.respond`'s arguments: the dialog's `id` and the button's
+/// name.
+fn dialog_press(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let dialog = arguments
+        .get("dialog")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 20
+                && !id.starts_with('0')
+                && id.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        .ok_or_else(|| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                "`dialog` is the `id` editor.dialogs.get answered for a dialog",
+            )
+        })?;
+    let button = arguments
+        .get("button")
+        .and_then(Value::as_str)
+        .filter(|button| {
+            !button.is_empty()
+                && button.chars().count() <= MAX_BUTTON_CHARS
+                && !button.chars().any(char::is_control)
+        })
+        .ok_or_else(|| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                format!(
+                    "`button` is `ok`, `cancel` or a button's action, 1 to {MAX_BUTTON_CHARS} \
+                     characters without control characters"
+                ),
+            )
+        })?;
+    Ok(json!({ "dialog": dialog, "button": button }))
+}
+
+/// `editor.restart`'s arguments: whether to save first, and how long the
+/// restarted editor may take to connect.
+fn restart_request(arguments: &Map<String, Value>) -> Result<(bool, u64), OutcomeError> {
+    let save = match arguments.get("save") {
+        None => false,
+        Some(Value::Bool(save)) => *save,
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                "`save` must be a boolean",
+            ));
+        }
+    };
+    let timeout = bounded(
+        arguments,
+        "timeoutMs",
+        RESTART_TIMEOUT_MS.0..=RESTART_TIMEOUT_MS.2,
+        RESTART_TIMEOUT_MS.1,
+    )?;
+    Ok((save, timeout))
+}
+
+/// `editor.performance.get`'s argument: the monitors to read, every one when
+/// absent.
+fn performance_read(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let monitors = match arguments.get("monitors") {
+        None => Value::Null,
+        Some(Value::Array(names))
+            if names.len() <= MAX_MONITORS
+                && names.iter().all(|name| {
+                    name.as_str()
+                        .is_some_and(|name| !name.is_empty() && name.chars().count() <= 256)
+                }) =>
+        {
+            Value::Array(names.clone())
+        }
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`monitors` is an array of at most {MAX_MONITORS} monitor names"),
+            ));
+        }
+    };
+    Ok(json!({ "monitors": monitors }))
+}
+
+/// `editor.resource.preview`'s arguments: the resource's `res://` path and
+/// how long the editor may take, in milliseconds.
+fn preview_request(arguments: &Map<String, Value>) -> Result<(String, u64), OutcomeError> {
+    let path = res_path(
+        arguments
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty() && path.len() <= 1024)
+            .ok_or_else(|| outcome_error(ErrorKind::InvalidInput, "`path` is required"))?,
+    )?;
+    let timeout = bounded(
+        arguments,
+        "timeoutMs",
+        PREVIEW_TIMEOUT_MS.0..=PREVIEW_TIMEOUT_MS.2,
+        PREVIEW_TIMEOUT_MS.1,
+    )?;
+    Ok((path, timeout))
+}
+
+/// The schema of a point in global coordinates.
+fn point_schema(description: &str) -> Value {
+    let coordinate = json!({
+        "type": "number",
+        "minimum": -MAX_COORDINATE,
+        "maximum": MAX_COORDINATE
+    });
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "x": coordinate, "y": coordinate, "z": coordinate },
+        "required": ["x", "y", "z"],
+        "description": description
+    })
+}
+
 /// What each live-editor operation asks of the bridge, beside the catalog
 /// descriptor its operation serves.
 trait EditorCall: Copy {
@@ -691,6 +991,16 @@ impl EditorCall for EditorOperation {
             Self::Undo => "editor.history.undo",
             Self::Redo => "editor.history.redo",
             Self::AddonReload => "editor.addon.reload",
+            Self::ScriptRun => super::bridge::SCRIPT_RUN_METHOD,
+            Self::CameraGet => "editor.camera.read",
+            Self::CameraSet => "editor.camera.set",
+            Self::ScriptClose => "editor.script.close",
+            Self::DialogsGet => "editor.dialogs.read",
+            Self::DialogRespond => "editor.dialog.respond",
+            Self::Restart => super::bridge::RESTART_METHOD,
+            Self::PerformanceGet => "editor.performance.read",
+            Self::ResourcePreview => crate::editor::boundary::PREVIEW_RESOURCE,
+            Self::SceneRead => super::scene_read::BRIDGE_METHOD,
         }
     }
 
@@ -705,6 +1015,10 @@ impl EditorCall for EditorOperation {
                 | Self::LogGet
                 | Self::PreferencesGet
                 | Self::ShortcutsGet
+                | Self::CameraGet
+                | Self::DialogsGet
+                | Self::PerformanceGet
+                | Self::SceneRead
         )
     }
 
@@ -718,6 +1032,12 @@ impl EditorCall for EditorOperation {
         });
         let (properties, required): (Value, &[&str]) = match self {
             Self::StatusGet | Self::AddonReload | Self::PlayStop => (json!({}), &[]),
+            Self::ScriptRun => (
+                Value::Object(crate::live_script::properties(
+                    crate::live_script::Place::Editor,
+                )),
+                &["source"],
+            ),
             Self::PlayStart => (
                 json!({
                     "scene": {
@@ -732,6 +1052,7 @@ impl EditorCall for EditorOperation {
                 &[],
             ),
             Self::SceneTreeGet | Self::SceneClose => (json!({ "scene": scene }), &[]),
+            Self::SceneRead => (super::scene_read::properties(scene), &["calls"]),
             Self::PreferencesGet => (
                 json!({
                     "settings": {
@@ -1082,6 +1403,131 @@ impl EditorCall for EditorOperation {
                 }),
                 &[],
             ),
+            Self::CameraGet => (
+                json!({
+                    "view": {
+                        "type": "string",
+                        "enum": CAMERA_VIEWS,
+                        "description": "Only the 2D editor's view, or only the 3D viewports; \
+                                        both when omitted."
+                    },
+                    "viewport": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3,
+                        "description": "Only this one of the 3D main screen's four viewports; \
+                                        not with `view` 2d."
+                    }
+                }),
+                &[],
+            ),
+            Self::CameraSet => (
+                json!({
+                    "viewport": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3,
+                        "description": "Which of the 3D main screen's four viewports (default 0)."
+                    },
+                    "position": point_schema("Where the camera is put, in global coordinates."),
+                    "target": point_schema(
+                        "The point the camera looks at, in global coordinates; it must differ \
+                         from `position`. The top of the view faces +Y, or -Z when the camera \
+                         looks straight up or down."
+                    )
+                }),
+                &["position", "target"],
+            ),
+            Self::ScriptClose => (
+                json!({
+                    "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                        "description": "Project-relative or res:// path of the .gd script whose \
+                                        tab is closed."
+                    }
+                }),
+                &["path"],
+            ),
+            Self::DialogsGet => (
+                json!({
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_DIALOGS,
+                        "description": "Most dialogs listed (default 32)."
+                    }
+                }),
+                &[],
+            ),
+            Self::DialogRespond => (
+                json!({
+                    "dialog": {
+                        "type": "string",
+                        "pattern": DIALOG_ID_PATTERN,
+                        "description": "The `id` editor.dialogs.get answered for the dialog."
+                    },
+                    "button": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_BUTTON_CHARS,
+                        "pattern": BUTTON_PATTERN,
+                        "description": "`ok`, `cancel`, or the action of another button, as \
+                                        editor.dialogs.get names the dialog's buttons."
+                    }
+                }),
+                &["dialog", "button"],
+            ),
+            Self::Restart => (
+                json!({
+                    "save": {
+                        "type": "boolean",
+                        "description": "Save every open scene, and from Godot 4.7.1 every open \
+                                        script, before restarting (default false); without it \
+                                        an unsaved scene or script refuses the restart."
+                    },
+                    "timeoutMs": {
+                        "type": "integer",
+                        "minimum": RESTART_TIMEOUT_MS.0,
+                        "maximum": RESTART_TIMEOUT_MS.2,
+                        "description": "How long the restarted editor may take to connect, in \
+                                        milliseconds (default 120000)."
+                    }
+                }),
+                &[],
+            ),
+            Self::PerformanceGet => (
+                json!({
+                    "monitors": {
+                        "type": "array",
+                        "maxItems": MAX_MONITORS,
+                        "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+                        "description": "Only these monitors, by the names an earlier read \
+                                        answered; every monitor when omitted."
+                    }
+                }),
+                &[],
+            ),
+            Self::ResourcePreview => (
+                json!({
+                    "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024,
+                        "description": "Project-relative or res:// path of the resource to \
+                                        preview."
+                    },
+                    "timeoutMs": {
+                        "type": "integer",
+                        "minimum": PREVIEW_TIMEOUT_MS.0,
+                        "maximum": PREVIEW_TIMEOUT_MS.2,
+                        "description": "How long the editor may take to make the preview, in \
+                                        milliseconds (default 10000)."
+                    }
+                }),
+                &["path"],
+            ),
         };
         let mut required: Vec<&str> = required.to_vec();
         if !self.is_read() {
@@ -1094,7 +1540,10 @@ impl EditorCall for EditorOperation {
             "properties": properties,
             "required": required,
         });
-        if matches!(self, Self::SceneEdit | Self::PreferencesSet) {
+        if matches!(
+            self,
+            Self::SceneEdit | Self::PreferencesSet | Self::SceneRead
+        ) {
             schema["$defs"] = Value::Object(crate::schema::value_definitions());
         }
         schema
@@ -1160,6 +1609,11 @@ pub(crate) struct EditorToolRuntime {
     /// Whether the operator trusts the project's code: the editor runs a game
     /// outside every boundary this server holds.
     pub(crate) trust: ProcessTrust,
+    /// Whether `editor.script.run` runs caller-written GDScript (ADR 0012).
+    pub(crate) allow_scripts: bool,
+    /// The managed sessions of a profile that runs the project: an editor
+    /// one of them runs is never restarted (ADR 0013).
+    pub(crate) sessions: Option<Arc<SessionManager>>,
 }
 
 /// Register every live-editor tool the kernel's profile lists.
@@ -1436,6 +1890,279 @@ impl EditorToolRuntime {
             Err(_) => Ok(WritePrecondition::Absent),
         }
     }
+
+    /// One read the editor answers within `timeout`, or `None`.
+    async fn ask_within(&self, method: &str, timeout: Duration) -> Option<Value> {
+        let bridge = Arc::clone(&self.bridge);
+        let method = method.to_owned();
+        let answer = tokio::task::spawn_blocking(move || {
+            bridge.call(
+                &method,
+                OperationClass::Read,
+                &json!({}),
+                "editor-restart-check",
+                timeout,
+            )
+        })
+        .await
+        .ok()?;
+        match answer {
+            Ok(BridgeAnswer::Result { payload, .. }) => Some(payload),
+            _ => None,
+        }
+    }
+
+    /// `editor.restart` (ADR 0013): refuse an editor this server runs as a
+    /// managed session, journal the restart, and answer success only once
+    /// the add-on of a different editor process connects.
+    async fn restart(
+        &self,
+        tool: &str,
+        arguments: &Map<String, Value>,
+        canonical: &Value,
+        call: &KernelToolCall,
+        idempotency_id: &str,
+    ) -> Result<Value, OutcomeError> {
+        let (save, timeout_ms) = restart_request(arguments)?;
+        let status = self.bridge.status();
+        let previous_pid = status
+            .description
+            .as_ref()
+            .and_then(|description| description.get("pid"))
+            .and_then(Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok())
+            .ok_or_else(|| {
+                outcome_error(
+                    ErrorKind::Unavailable,
+                    "the connected editor did not say which process it runs in, so whether \
+                     this server runs it as a managed session cannot be told; nothing was \
+                     restarted",
+                )
+            })?;
+        if let Some(session) = self
+            .sessions
+            .as_ref()
+            .and_then(|sessions| sessions.running_process(previous_pid))
+        {
+            return Err(outcome_error(
+                ErrorKind::Conflict,
+                format!(
+                    "the connected editor (process {previous_pid}) is the managed session \
+                     {session}, which editor.session.start runs inside this server's process \
+                     boundary; a restarted editor would be a new process outside it. Stop the \
+                     session with editor.session.stop and start a new one instead. Nothing was \
+                     restarted."
+                ),
+            ));
+        }
+        let state = self.ask("editor.state", json!({})).await?;
+        let declined_before = state["restart"]["declined"].as_u64().unwrap_or(0);
+        let mut scenes = Vec::new();
+        let mut files = Vec::new();
+        if save {
+            // Saving writes every open scene and script, with whatever
+            // external resources they changed.
+            let listed = |key: &str| -> Vec<String> {
+                state
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| entry.get("path").and_then(Value::as_str))
+                    .filter(|path| path.starts_with("res://"))
+                    .map(str::to_owned)
+                    .collect()
+            };
+            for path in listed("open_scenes") {
+                let precondition = self.disk_precondition(&path)?;
+                scenes.push(json!({
+                    "path": path,
+                    "sha256": match &precondition {
+                        WritePrecondition::Sha256(sha256) => Value::String(sha256.clone()),
+                        _ => Value::Null,
+                    },
+                }));
+                files.push((path.trim_start_matches("res://").to_owned(), precondition));
+            }
+            for path in listed("open_scripts") {
+                let precondition = self.disk_precondition(&path)?;
+                files.push((path.trim_start_matches("res://").to_owned(), precondition));
+            }
+        }
+        let scope = if save {
+            EditorScope::project_wide(files)
+        } else {
+            EditorScope::state()
+        };
+        // From here until the restarted editor connects, nothing else is sent
+        // to the editor that is about to exit.
+        let guard = self.bridge.begin_restart();
+        let opened_before = self.bridge.status().sessions_opened;
+        let answer = self
+            .mutate(
+                tool,
+                super::bridge::RESTART_METHOD,
+                json!({ "save": save, "scenes": scenes }),
+                scope,
+                canonical,
+                call,
+                idempotency_id,
+            )
+            .await?;
+        if answer.get("replayed") == Some(&Value::Bool(true)) {
+            return Ok(answer);
+        }
+        let timeout = Duration::from_millis(timeout_ms);
+        let started = std::time::Instant::now();
+        let outcome = loop {
+            let now = self.bridge.status();
+            let pid = now
+                .description
+                .as_ref()
+                .and_then(|description| description.get("pid"))
+                .and_then(Value::as_u64);
+            if now.connected
+                && now.sessions_opened > opened_before
+                && pid.is_some_and(|pid| pid != u64::from(previous_pid))
+            {
+                break Awaited::Restarted(pid.unwrap_or_default());
+            }
+            if now.connected && pid == Some(u64::from(previous_pid)) {
+                // The editor that was asked is still there: did it ask a
+                // question, which the add-on cancelled?
+                if let Some(state) = self.ask_within("editor.state", RESTART_CHECK).await
+                    && state["restart"]["declined"].as_u64().unwrap_or(0) > declined_before
+                {
+                    break Awaited::Declined(declined(&state["restart"]["question"], &answer));
+                }
+            }
+            let waited = started.elapsed();
+            if waited >= timeout {
+                let still = now.connected && pid == Some(u64::from(previous_pid));
+                break Awaited::Unproven(format!(
+                    "the editor (process {previous_pid}) was asked to restart, but no restarted \
+                     editor connected within {timeout_ms} ms; {}",
+                    if still {
+                        "the editor that was asked is still connected and did not restart"
+                    } else {
+                        "the editor that was asked disconnected. An editor that cannot start, \
+                         for example without a display, never connects"
+                    }
+                ));
+            }
+            if call.cancellation.is_cancelled() {
+                break Awaited::Unproven(format!(
+                    "the wait for the restarted editor was cancelled after {} ms; the editor \
+                     (process {previous_pid}) was asked to restart",
+                    waited.as_millis()
+                ));
+            }
+            tokio::time::sleep(RESTART_POLL).await;
+        };
+        drop(guard);
+        let waited_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match outcome {
+            Awaited::Restarted(pid) => {
+                let mut answer = answer;
+                if let Value::Object(object) = &mut answer {
+                    object.remove("requested");
+                    object.insert("restarted".to_owned(), Value::Bool(true));
+                    object.insert("previous_pid".to_owned(), json!(previous_pid));
+                    object.insert("pid".to_owned(), json!(pid));
+                    object.insert("waited_ms".to_owned(), json!(waited_ms));
+                }
+                Ok(answer)
+            }
+            Awaited::Declined(message) => Err(restart_error(ErrorKind::Conflict, message, &answer)),
+            Awaited::Unproven(message) => {
+                Err(restart_error(ErrorKind::Uncertain, message, &answer))
+            }
+        }
+    }
+}
+
+/// The error of a restart the editor was asked for and that is not proven:
+/// `message`, with the transaction it is journaled in.
+fn restart_error(kind: ErrorKind, message: String, answer: &Value) -> OutcomeError {
+    let mut details = BTreeMap::new();
+    details.insert(
+        "transaction_id".to_owned(),
+        GodotValue::String(
+            answer["transaction_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+    );
+    details.insert(
+        "mutation_status".to_owned(),
+        GodotValue::String("committed".to_owned()),
+    );
+    OutcomeError::new(kind, message, false, details)
+}
+
+/// How the wait for a restarted editor ended.
+enum Awaited {
+    /// The add-on of this editor process connected.
+    Restarted(u64),
+    /// The editor that was asked declined: it asked a question, which the
+    /// add-on cancelled.
+    Declined(String),
+    /// Nothing proves the editor restarted, and why.
+    Unproven(String),
+}
+
+/// The refusal of a restart the editor declined: the question it asked,
+/// which the add-on cancelled, and what the restart saved before it asked
+/// the editor (`answer`, the add-on's answer to the request).
+fn declined(question: &Value, answer: &Value) -> String {
+    let said = |key: &str| {
+        question
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|text| text.chars().take(512).collect::<String>())
+            .unwrap_or_default()
+    };
+    let (title, text) = (said("title"), said("text"));
+    let first = saved_first(answer);
+    if title.is_empty() && text.is_empty() {
+        return format!(
+            "the editor was asked to restart and neither restarted nor asked anything; nothing \
+             was restarted{first}"
+        );
+    }
+    format!(
+        "the editor asked a question before restarting (\"{title}: {text}\"), and godot-mcp \
+         cancelled it, so the question saved and discarded nothing and the editor was not \
+         restarted{first}. Save or undo what it names, then retry; `save: true` saves the open \
+         scenes first, and the script tabs from Godot 4.7.1 on"
+    )
+}
+
+/// What a saving restart wrote before it asked the editor to restart, as
+/// the tail of a sentence, or "" when it wrote nothing: `saved` and
+/// `also_saved` list objects with a `path`, `scripts_saved` paths.
+fn saved_first(answer: &Value) -> String {
+    const NAMED: usize = 8;
+    let paths: Vec<&str> = ["saved", "also_saved", "scripts_saved"]
+        .iter()
+        .filter_map(|key| answer.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter_map(|entry| entry.as_str().or_else(|| entry.get("path")?.as_str()))
+        .collect();
+    if paths.is_empty() {
+        return String::new();
+    }
+    let more = paths.len().saturating_sub(NAMED);
+    format!(
+        "; before asking, the restart saved {}{}",
+        paths[..paths.len().min(NAMED)].join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    )
 }
 
 fn route_identity(access: &AccessContext) -> RouterIdentity {
@@ -1741,6 +2468,29 @@ impl KernelToolHandler for EditorHandler {
                         )
                         .await
                 }
+                EditorOperation::CameraGet => {
+                    runtime
+                        .ask(operation.bridge_method(), camera_read(arguments)?)
+                        .await
+                }
+                EditorOperation::DialogsGet => {
+                    runtime
+                        .ask(operation.bridge_method(), dialogs_read(arguments)?)
+                        .await
+                }
+                EditorOperation::PerformanceGet => {
+                    runtime
+                        .ask(operation.bridge_method(), performance_read(arguments)?)
+                        .await
+                }
+                EditorOperation::SceneRead => {
+                    let asked = super::scene_read::request(arguments, optional_scene(arguments)?)?;
+                    let answer = runtime
+                        .ask(operation.bridge_method(), asked.clone())
+                        .await?;
+                    let calls = asked["calls"].as_array().cloned().unwrap_or_default();
+                    super::scene_read::answer(&calls, &answer)
+                }
                 _ => {
                     let class = arguments
                         .get("class")
@@ -1756,6 +2506,9 @@ impl KernelToolHandler for EditorHandler {
             };
         }
         let tool = operation.tool_name();
+        if operation == EditorOperation::ScriptRun && !runtime.allow_scripts {
+            return Err(crate::scripts::scripts_off());
+        }
         let idempotency_id = call.idempotency_id.clone().ok_or_else(|| {
             outcome_error(
                 ErrorKind::InvalidInput,
@@ -1767,6 +2520,16 @@ impl KernelToolHandler for EditorHandler {
         }
         if !runtime.bridge.status().connected {
             return Err(not_connected());
+        }
+        if runtime.bridge.restarting() {
+            return Err(if operation == EditorOperation::Restart {
+                outcome_error(
+                    ErrorKind::Conflict,
+                    "a restart of the editor is already awaited; nothing else was restarted",
+                )
+            } else {
+                outcome_error(ErrorKind::Unavailable, BridgeFailure::Restarting.message())
+            });
         }
         let canonical = Value::Object(arguments.clone());
         let status = runtime.bridge.status();
@@ -1780,8 +2543,15 @@ impl KernelToolHandler for EditorHandler {
                 EditorOperation::ShortcutsSet => {
                     no_shortcuts(&status, operation.bridge_method(), "Nothing was changed.")
                 }
+                EditorOperation::CameraSet => no_camera_set(&status),
+                EditorOperation::ScriptClose => no_script_close(&status),
                 _ => plugin_lacks(&status, operation.bridge_method()),
             });
+        }
+        if operation == EditorOperation::Restart {
+            return runtime
+                .restart(tool, arguments, &canonical, &call, &idempotency_id)
+                .await;
         }
         let mut reimported: Vec<String> = Vec::new();
         let (payload, scope) = match operation {
@@ -2095,6 +2865,15 @@ impl KernelToolHandler for EditorHandler {
                 )
             }
             EditorOperation::AddonReload => (json!({}), EditorScope::state()),
+            // The code may write any project file, and the editor may still be
+            // running it when the deadline ends the wait.
+            EditorOperation::ScriptRun => {
+                let request = crate::live_script::request(arguments)?;
+                (
+                    request.payload,
+                    EditorScope::project_wide(Vec::new()).within(request.deadline),
+                )
+            }
             // An editor setting lives in the user's own settings file, outside
             // the project: no project file is in scope.
             EditorOperation::PreferencesSet => {
@@ -2128,6 +2907,31 @@ impl KernelToolHandler for EditorHandler {
                 )
             }
             EditorOperation::PlayStop => (json!({}), EditorScope::state()),
+            EditorOperation::CameraSet => (camera_move(arguments)?, EditorScope::state()),
+            EditorOperation::ScriptClose => (script_tab(arguments)?, EditorScope::state()),
+            // The button does whatever the editor does for it: it may save,
+            // discard or delete any project file.
+            EditorOperation::DialogRespond => (
+                dialog_press(arguments)?,
+                EditorScope::project_wide(Vec::new()),
+            ),
+            EditorOperation::ResourcePreview => {
+                let (path, timeout_ms) = preview_request(arguments)?;
+                (
+                    json!({
+                        "path": path,
+                        "timeout_ms": timeout_ms,
+                        // The boundary keeps the artifacts for this caller and
+                        // removes the owner before the editor is asked.
+                        "owner": {
+                            "principal": call.access.principal().as_str(),
+                            "session": call.access.session().map(|session| session.as_str().to_owned()),
+                        },
+                    }),
+                    EditorScope::state().within(Duration::from_millis(timeout_ms) + PREVIEW_MARGIN),
+                )
+            }
+            EditorOperation::Restart => unreachable!("a restart is answered above"),
             EditorOperation::StatusGet
             | EditorOperation::SceneTreeGet
             | EditorOperation::TypesGet
@@ -2135,9 +2939,20 @@ impl KernelToolHandler for EditorHandler {
             | EditorOperation::TypesSearch
             | EditorOperation::LogGet
             | EditorOperation::PreferencesGet
-            | EditorOperation::ShortcutsGet => unreachable!("reads are answered above"),
+            | EditorOperation::ShortcutsGet
+            | EditorOperation::CameraGet
+            | EditorOperation::DialogsGet
+            | EditorOperation::PerformanceGet
+            | EditorOperation::SceneRead => unreachable!("reads are answered above"),
         };
-        let mut answer = runtime
+        // Read from disk now, not from the last snapshot: the editor writes
+        // files of its own (`.uid` sidecars, imports) the snapshot may predate.
+        let before = if operation == EditorOperation::ScriptRun {
+            crate::scripts::contents_of_inventory(&runtime.root, &runtime.workspace.rescan())?
+        } else {
+            None
+        };
+        let result = runtime
             .mutate(
                 tool,
                 operation.bridge_method(),
@@ -2147,7 +2962,18 @@ impl KernelToolHandler for EditorHandler {
                 &call,
                 &idempotency_id,
             )
-            .await?;
+            .await;
+        if operation == EditorOperation::ScriptRun {
+            let after =
+                crate::scripts::contents_of_inventory(&runtime.root, &runtime.workspace.rescan());
+            return crate::live_script::finish(
+                crate::live_script::Place::Editor,
+                result,
+                before.as_ref(),
+                after,
+            );
+        }
+        let mut answer = result?;
         if !reimported.is_empty() {
             // The import state the editor left, read as asset.status reads it.
             answer["assets"] = Value::Array(
@@ -2543,6 +3369,248 @@ mod tests {
         ];
         agree(EditorOperation::ShortcutsSet, &cases, |arguments| {
             shortcuts_change(arguments).is_ok()
+        });
+    }
+
+    /// That a 3D viewport is not part of the 2D view is the handler's to
+    /// check, as every rule across top-level fields is. Every other case gets
+    /// one verdict from both.
+    #[test]
+    fn the_camera_read_schema_and_its_check_agree() {
+        let cases = [
+            (json!({}), true),
+            (json!({ "view": "2d" }), true),
+            (json!({ "view": "3d" }), true),
+            (json!({ "viewport": 0 }), true),
+            (json!({ "viewport": 3 }), true),
+            (json!({ "view": "3d", "viewport": 2 }), true),
+            (json!({ "view": "4d" }), false),
+            (json!({ "view": 2 }), false),
+            (json!({ "viewport": 4 }), false),
+            (json!({ "viewport": -1 }), false),
+            (json!({ "viewport": 1.5 }), false),
+            (json!({ "viewport": "1" }), false),
+        ];
+        agree(EditorOperation::CameraGet, &cases, |arguments| {
+            camera_read(arguments).is_ok()
+        });
+        // A rule across two fields is the handler's: a schema's top level
+        // stays one plain object.
+        let both = json!({ "view": "2d", "viewport": 0 });
+        let error = camera_read(both.as_object().expect("arguments"))
+            .expect_err("a 3D viewport of the 2D view");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput, "{error:?}");
+        assert_eq!(
+            camera_read(json!({ "viewport": 1 }).as_object().expect("arguments")).expect("read"),
+            json!({ "view": "3d", "viewport": 1 }),
+            "a 3D viewport alone reads the 3D view"
+        );
+    }
+
+    /// That a camera cannot look at the point it is at is the handler's to
+    /// check: no schema keyword compares two properties. Every other case
+    /// gets one verdict from both.
+    #[test]
+    fn the_camera_move_schema_and_its_check_agree() {
+        let at = json!({ "x": 6, "y": 4, "z": 8 });
+        let origin = json!({ "x": 0, "y": 0, "z": 0 });
+        let cases = [
+            (json!({ "position": at, "target": origin }), true),
+            (
+                json!({ "viewport": 3, "position": at, "target": origin }),
+                true,
+            ),
+            (
+                json!({ "position": { "x": 1.0e9, "y": -1.0e9, "z": 0.5 }, "target": origin }),
+                true,
+            ),
+            (
+                json!({ "position": { "x": 1.5e9, "y": 0, "z": 0 }, "target": origin }),
+                false,
+            ),
+            (
+                json!({ "position": { "x": 1, "y": 2 }, "target": origin }),
+                false,
+            ),
+            (
+                json!({ "position": { "x": 1, "y": 2, "w": 3 }, "target": origin }),
+                false,
+            ),
+            (
+                json!({ "position": { "x": 1, "y": 2, "z": 3, "w": 4 }, "target": origin }),
+                false,
+            ),
+            (
+                json!({ "position": { "x": "1", "y": 2, "z": 3 }, "target": origin }),
+                false,
+            ),
+            (json!({ "position": [1, 2, 3], "target": origin }), false),
+            (json!({ "position": at }), false),
+            (json!({ "target": origin }), false),
+            (
+                json!({ "viewport": 4, "position": at, "target": origin }),
+                false,
+            ),
+        ];
+        agree(EditorOperation::CameraSet, &cases, |arguments| {
+            camera_move(arguments).is_ok()
+        });
+        let same = json!({ "position": at, "target": at });
+        let error = camera_move(same.as_object().expect("arguments"))
+            .expect_err("a camera looking at its own position");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput, "{error:?}");
+    }
+
+    /// Which path names a script is the handler's to check, as for
+    /// editor.script.open.
+    #[test]
+    fn the_script_close_schema_and_its_check_agree() {
+        let cases = [
+            (json!({ "path": "player.gd" }), true),
+            (json!({ "path": "res://levels/one.gd" }), true),
+            (json!({ "path": "" }), false),
+            (json!({ "path": 3 }), false),
+            (json!({}), false),
+        ];
+        agree(EditorOperation::ScriptClose, &cases, |arguments| {
+            script_tab(arguments).is_ok()
+        });
+    }
+
+    #[test]
+    fn the_dialog_schemas_and_their_checks_agree() {
+        let cases = [
+            (json!({}), true),
+            (json!({ "limit": 1 }), true),
+            (json!({ "limit": 64 }), true),
+            (json!({ "limit": 0 }), false),
+            (json!({ "limit": 65 }), false),
+            (json!({ "limit": "2" }), false),
+        ];
+        agree(EditorOperation::DialogsGet, &cases, |arguments| {
+            dialogs_read(arguments).is_ok()
+        });
+        let cases = [
+            (json!({ "dialog": "77", "button": "ok" }), true),
+            (json!({ "dialog": "1", "button": "discard" }), true),
+            (
+                json!({ "dialog": "1".repeat(20), "button": "x".repeat(256) }),
+                true,
+            ),
+            (json!({ "dialog": "1".repeat(21), "button": "ok" }), false),
+            (json!({ "dialog": "01", "button": "ok" }), false),
+            (json!({ "dialog": "0", "button": "ok" }), false),
+            (json!({ "dialog": "", "button": "ok" }), false),
+            (json!({ "dialog": "1a", "button": "ok" }), false),
+            (json!({ "dialog": 77, "button": "ok" }), false),
+            (json!({ "dialog": "77", "button": "" }), false),
+            (json!({ "dialog": "77", "button": "x".repeat(257) }), false),
+            (json!({ "dialog": "77", "button": "a\u{7}" }), false),
+            (json!({ "dialog": "77", "button": "a\u{85}" }), false),
+            (json!({ "dialog": "77" }), false),
+            (json!({ "button": "ok" }), false),
+        ];
+        agree(EditorOperation::DialogRespond, &cases, |arguments| {
+            dialog_press(arguments).is_ok()
+        });
+    }
+
+    #[test]
+    fn the_restart_schema_and_its_check_agree() {
+        let cases = [
+            (json!({}), true),
+            (json!({ "save": true }), true),
+            (json!({ "save": false, "timeoutMs": 1000 }), true),
+            (json!({ "timeoutMs": 600_000 }), true),
+            (json!({ "timeoutMs": 999 }), false),
+            (json!({ "timeoutMs": 600_001 }), false),
+            (json!({ "save": "yes" }), false),
+        ];
+        agree(EditorOperation::Restart, &cases, |arguments| {
+            restart_request(arguments).is_ok()
+        });
+    }
+
+    #[test]
+    fn the_performance_schema_and_its_check_agree() {
+        let names = |count: usize| -> Vec<String> {
+            (0..count).map(|index| format!("MONITOR_{index}")).collect()
+        };
+        let cases = [
+            (json!({}), true),
+            (json!({ "monitors": [] }), true),
+            (json!({ "monitors": ["TIME_FPS"] }), true),
+            (json!({ "monitors": names(256) }), true),
+            (json!({ "monitors": names(257) }), false),
+            (json!({ "monitors": [""] }), false),
+            (json!({ "monitors": ["x".repeat(257)] }), false),
+            (json!({ "monitors": [3] }), false),
+            (json!({ "monitors": "TIME_FPS" }), false),
+        ];
+        agree(EditorOperation::PerformanceGet, &cases, |arguments| {
+            performance_read(arguments).is_ok()
+        });
+    }
+
+    /// The calls are scene.read's, checked by the same code.
+    #[test]
+    fn the_scene_read_schema_and_its_check_agree() {
+        let cells = json!({ "node": "Layer", "method": "get_used_cells" });
+        let calls = |count: usize| -> Vec<Value> { (0..count).map(|_| cells.clone()).collect() };
+        let cases = [
+            (json!({ "calls": [cells] }), true),
+            (
+                json!({ "scene": "res://level.tscn", "calls": calls(64) }),
+                true,
+            ),
+            (
+                json!({ "calls": [{ "node": "Player", "resource": { "library": "" },
+                                    "method": "get_animation_list" }] }),
+                true,
+            ),
+            (
+                json!({ "calls": [{ "method": "get_point_position",
+                                    "arguments": [{ "type": "integer", "value": 1 }] }] }),
+                true,
+            ),
+            (json!({}), false),
+            (json!({ "calls": [] }), false),
+            (json!({ "calls": calls(65) }), false),
+            (json!({ "calls": [{ "method": "set_cell" }] }), false),
+            (json!({ "calls": [{ "node": "Layer" }] }), false),
+            (
+                json!({ "calls": [{ "method": "get_used_cells", "extra": 1 }] }),
+                false,
+            ),
+            (
+                json!({ "calls": [{ "method": "get_length",
+                                    "resource": { "property": "a", "animation": "b" } }] }),
+                false,
+            ),
+            (json!({ "scene": 3, "calls": [cells] }), false),
+            (json!({ "calls": [cells], "path": "level.tscn" }), false),
+        ];
+        agree(EditorOperation::SceneRead, &cases, |arguments| {
+            optional_scene(arguments)
+                .and_then(|scene| crate::editor::scene_read::request(arguments, scene))
+                .is_ok()
+        });
+    }
+
+    /// Which path names a project file is the handler's to check.
+    #[test]
+    fn the_preview_schema_and_its_check_agree() {
+        let cases = [
+            (json!({ "path": "icon.svg" }), true),
+            (json!({ "path": "res://box.tres", "timeoutMs": 100 }), true),
+            (json!({ "path": "a.png", "timeoutMs": 60_000 }), true),
+            (json!({ "path": "a.png", "timeoutMs": 99 }), false),
+            (json!({ "path": "a.png", "timeoutMs": 60_001 }), false),
+            (json!({ "path": "" }), false),
+            (json!({}), false),
+        ];
+        agree(EditorOperation::ResourcePreview, &cases, |arguments| {
+            preview_request(arguments).is_ok()
         });
     }
 }

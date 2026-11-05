@@ -31,6 +31,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: qa-journal-foundation (--project <dir> | --workspace <dir>) \
          [--godot-binary <path>] [--profile core|editor|runtime|full] [--config <toml>] \
+         [--allow-scripts] [--android-sdk <dir>] [--android-java-home <dir>] \
          [--observed-at-unix-ms <ms>]"
     );
     ExitCode::from(2)
@@ -108,6 +109,15 @@ fn main() -> ExitCode {
                     }
                 }
             }
+            "--allow-scripts" => config.allow_scripts = true,
+            "--android-sdk" => match arguments.next() {
+                Some(value) => config.android.sdk = Some(value),
+                None => return usage(),
+            },
+            "--android-java-home" => match arguments.next() {
+                Some(value) => config.android.java_home = Some(value),
+                None => return usage(),
+            },
             "--observed-at-unix-ms" => match arguments.next().map(|value| value.parse()) {
                 Some(Ok(value)) => observed_at_unix_ms = value,
                 _ => return usage(),
@@ -133,6 +143,8 @@ fn main() -> ExitCode {
                 observed_at_unix_ms,
                 limits: config.limits.clone(),
                 process: config.process.clone(),
+                allow_scripts: config.allow_scripts,
+                android: config.android.clone(),
             });
         }
         _ => return usage(),
@@ -145,6 +157,8 @@ fn main() -> ExitCode {
         observed_at_unix_ms,
         limits: config.limits.clone(),
         process: config.process.clone(),
+        allow_scripts: config.allow_scripts,
+        android: config.android.clone(),
     };
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()

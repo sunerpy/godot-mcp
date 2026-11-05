@@ -50,6 +50,43 @@ pub struct ArchiveEntry {
     pub name: String,
     /// The bytes it unpacks to.
     pub size: u64,
+    /// The bytes stored for it.
+    pub compressed_size: u64,
+    /// Its compression method: 0 stored, 8 deflated.
+    pub method: u16,
+    /// The CRC-32 the central directory records for it.
+    pub crc32: u32,
+    /// Where its stored bytes start, after its local header.
+    pub data_offset: usize,
+}
+
+/// The CRC-32 (IEEE 802.3, as zip records it) of `data`.
+#[must_use]
+pub fn crc32(data: &[u8]) -> u32 {
+    const TABLE: [u32; 256] = {
+        let mut table = [0_u32; 256];
+        let mut index = 0;
+        while index < 256 {
+            let mut crc = index as u32;
+            let mut bit = 0;
+            while bit < 8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+                bit += 1;
+            }
+            table[index] = crc;
+            index += 1;
+        }
+        table
+    };
+    let mut crc = 0xffff_ffff_u32;
+    for &byte in data {
+        crc = (crc >> 8) ^ TABLE[((crc ^ u32::from(byte)) & 0xff) as usize];
+    }
+    !crc
 }
 
 const END_OF_CENTRAL_DIRECTORY: u32 = 0x0605_4b50;
@@ -159,6 +196,9 @@ pub fn check_archive(archive: &[u8]) -> Result<Vec<ArchiveEntry>, BundleError> {
         }
         let made_by = u16_at(archive, at + 4)?;
         let flags = u16_at(archive, at + 8)?;
+        let method = u16_at(archive, at + 10)?;
+        let crc = u32_at(archive, at + 16)?;
+        let compressed_size = u64::from(u32_at(archive, at + 20)?);
         let size = u64::from(u32_at(archive, at + 24)?);
         let name_length = u16_at(archive, at + 28)?;
         let extra_length = u16_at(archive, at + 30)?;
@@ -193,6 +233,16 @@ pub fn check_archive(archive: &[u8]) -> Result<Vec<ArchiveEntry>, BundleError> {
                 "the local header of `{name}` does not name the same file"
             )));
         }
+        let data_offset = local + LOCAL_HEADER_BYTES + name_length + u16_at(archive, local + 28)?;
+        if usize::try_from(compressed_size)
+            .ok()
+            .and_then(|stored| data_offset.checked_add(stored))
+            .is_none_or(|end| end > central_offset)
+        {
+            return Err(malformed(format!(
+                "the data of `{name}` reaches into the central directory"
+            )));
+        }
         unpacked = unpacked.saturating_add(size);
         if unpacked > MAX_UNPACKED_BYTES {
             return Err(BundleError::TooLarge {
@@ -202,10 +252,57 @@ pub fn check_archive(archive: &[u8]) -> Result<Vec<ArchiveEntry>, BundleError> {
         entries.push(ArchiveEntry {
             name: name.to_owned(),
             size,
+            compressed_size,
+            method: u16::try_from(method).unwrap_or(u16::MAX),
+            crc32: crc,
+            data_offset,
         });
         at = name_start + name_length + extra_length + comment_length;
     }
     Ok(entries)
+}
+
+/// The bytes one checked archive entry unpacks to, inflated when it is
+/// deflated, refused when it would unpack to more than `limit` bytes.
+///
+/// # Errors
+/// Returns [`BundleError::Malformed`] when the entry's data lies outside the
+/// archive, uses a compression method other than stored and deflated, or does
+/// not unpack to its recorded size; [`BundleError::TooLarge`] past `limit`.
+pub fn entry_bytes(
+    archive: &[u8],
+    entry: &ArchiveEntry,
+    limit: u64,
+) -> Result<Vec<u8>, BundleError> {
+    if entry.size > limit {
+        return Err(BundleError::TooLarge { limit });
+    }
+    let stored = usize::try_from(entry.compressed_size)
+        .ok()
+        .and_then(|length| entry.data_offset.checked_add(length))
+        .and_then(|end| archive.get(entry.data_offset..end))
+        .ok_or_else(|| malformed(format!("the data of `{}` lies outside it", entry.name)))?;
+    let size = usize::try_from(entry.size)
+        .map_err(|_| malformed(format!("`{}` is too large", entry.name)))?;
+    let data = match entry.method {
+        0 => stored.to_vec(),
+        8 => super::inflate::inflate(stored, size)
+            .map_err(|error| malformed(format!("`{}`: {error}", entry.name)))?,
+        method => {
+            return Err(malformed(format!(
+                "`{}` uses compression method {method}, which this server does not read",
+                entry.name
+            )));
+        }
+    };
+    if data.len() != size {
+        return Err(malformed(format!(
+            "`{}` unpacks to {} bytes, not the {size} its directory records",
+            entry.name,
+            data.len()
+        )));
+    }
+    Ok(data)
 }
 
 /// The `<string>` an XML property list gives `key`.
@@ -372,17 +469,7 @@ pub mod fixture {
         pub mode: u32,
     }
 
-    fn crc32(data: &[u8]) -> u32 {
-        let mut crc = 0xffff_ffff_u32;
-        for byte in data {
-            crc ^= u32::from(*byte);
-            for _ in 0..8 {
-                let mask = (crc & 1).wrapping_neg();
-                crc = (crc >> 1) ^ (0xedb8_8320 & mask);
-            }
-        }
-        !crc
-    }
+    use super::crc32;
 
     fn u16le(out: &mut Vec<u8>, value: usize) {
         out.extend_from_slice(&u16::try_from(value).expect("fits 16 bits").to_le_bytes());

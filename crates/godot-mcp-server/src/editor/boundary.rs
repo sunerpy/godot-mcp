@@ -13,7 +13,8 @@
 //! A screenshot's effect is its artifact, as a managed game's is: the plugin
 //! captures, the boundary reads the PNG back in bounded chunks, checks it and
 //! registers it, owned by the caller, and the capture commits only once it is
-//! registered.
+//! registered. A resource preview is read back the same way, as one artifact
+//! for the preview and one for its thumbnail.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -37,6 +38,8 @@ use crate::router::{HeldPath, LiveEditorView};
 const VIEW_TIMEOUT: Duration = Duration::from_secs(5);
 /// The bridge method that captures what the editor shows.
 pub(crate) const CAPTURE_VIEWPORT: &str = "editor.capture.viewport";
+/// The bridge method that asks the editor for a resource's preview.
+pub(crate) const PREVIEW_RESOURCE: &str = "editor.preview.resource";
 /// The bridge method that reads a capture back.
 const CAPTURE_CHUNK: &str = "editor.capture.chunk";
 /// How long one chunk read may take.
@@ -125,7 +128,7 @@ impl EditorEffectBoundary for BridgeEditorBoundary {
         ticket: &EffectTicket,
         mutation: &EditorMutation,
     ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
-        if mutation.action == CAPTURE_VIEWPORT {
+        if mutation.action == CAPTURE_VIEWPORT || mutation.action == PREVIEW_RESOURCE {
             return self.capture(ticket, mutation);
         }
         let payload: Value = serde_json::from_str(&mutation.payload).unwrap_or_else(|_| json!({}));
@@ -167,7 +170,7 @@ impl BridgeEditorBoundary {
             ));
         };
         let described = match self.bridge.call(
-            CAPTURE_VIEWPORT,
+            &mutation.action,
             OperationClass::Read,
             &Value::Object(payload),
             &mutation.idempotency_id,
@@ -180,6 +183,9 @@ impl BridgeEditorBoundary {
             }
             Err(_) => return Err(BoundaryUnavailable { boundary: "editor" }),
         };
+        if mutation.action == PREVIEW_RESOURCE {
+            return Ok(self.keep_preview(sink, ticket, mutation, &described, &owner));
+        }
         let frames = crate::capture::fetch_frames(&described, |chunk| {
             read(&self.bridge, CAPTURE_CHUNK, chunk, &mutation.idempotency_id)
         });
@@ -222,6 +228,105 @@ impl BridgeEditorBoundary {
             }),
             error: None,
         })
+    }
+}
+
+impl BridgeEditorBoundary {
+    /// Read back the preview `described` and keep each of its images, the
+    /// preview and, when the editor made one, its thumbnail, as the caller's
+    /// artifact. Nothing is kept unless every image arrived as described.
+    fn keep_preview(
+        &self,
+        sink: &CaptureSink,
+        ticket: &EffectTicket,
+        mutation: &EditorMutation,
+        described: &Value,
+        owner: &Value,
+    ) -> EditorEffectOutcome {
+        let roles: Vec<&str> = described
+            .get("images")
+            .and_then(Value::as_array)
+            .map(|images| {
+                images
+                    .iter()
+                    .filter_map(|image| image.get("role").and_then(Value::as_str))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let frame_count = described
+            .get("frames")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        if !(roles == ["preview"] || roles == ["preview", "thumbnail"])
+            || roles.len() != frame_count
+        {
+            return not_started(
+                ErrorKind::Internal,
+                "the editor described a preview it did not complete",
+            );
+        }
+        let frames = match crate::capture::fetch_frames(described, |chunk| {
+            read(&self.bridge, CAPTURE_CHUNK, chunk, &mutation.idempotency_id)
+        }) {
+            Ok(frames) => frames,
+            Err(error) => return not_started(error.kind(), error.message()),
+        };
+        let mut kept: Vec<(Value, Vec<u8>)> = Vec::with_capacity(frames.len());
+        let mut artifacts = Map::new();
+        for (index, bytes) in frames.into_iter().enumerate() {
+            let image = &described["images"][index];
+            // Two identical images are one artifact.
+            let artifact = if let Some((artifact, _)) = kept.iter().find(|(_, kept)| *kept == bytes)
+            {
+                let mut artifact = artifact.clone();
+                artifact["width"] = image.get("width").cloned().unwrap_or(Value::Null);
+                artifact["height"] = image.get("height").cloned().unwrap_or(Value::Null);
+                artifact
+            } else {
+                let contract = match crate::capture::contract(
+                    sink,
+                    ticket,
+                    ArtifactKind::Screenshot,
+                    "image/png",
+                    &bytes,
+                    Some(owner),
+                    now_unix_ms(),
+                ) {
+                    Ok(contract) => contract,
+                    Err(error) => return not_started(error.kind(), error.message()),
+                };
+                let artifact = json!({
+                    "uri": contract.resource_uri().as_str(),
+                    "media_type": contract.metadata().media_type,
+                    "byte_length": contract.metadata().byte_length,
+                    "sha256": contract.metadata().sha256,
+                    "width": image.get("width"),
+                    "height": image.get("height"),
+                    "expires_at_unix_ms": contract.expires_at_unix_ms(),
+                });
+                if let Err(error) = sink.store.register(contract, bytes.clone()) {
+                    return not_started(error.kind(), error.message());
+                }
+                kept.push((artifact.clone(), bytes));
+                artifact
+            };
+            artifacts.insert(roles[index].to_owned(), artifact);
+        }
+        let digest = artifacts
+            .get("preview")
+            .and_then(|preview| preview.get("sha256"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        EditorEffectOutcome {
+            status: MutationStatus::Committed,
+            proof: receipt(ticket, &mutation.action, &json!({ "digest": digest })),
+            payload: json!({
+                "path": described.get("path").cloned().unwrap_or(Value::Null),
+                "preview": artifacts.get("preview").cloned().unwrap_or(Value::Null),
+                "thumbnail": artifacts.get("thumbnail").cloned().unwrap_or(Value::Null),
+            }),
+            error: None,
+        }
     }
 }
 
@@ -319,6 +424,16 @@ impl LiveEditorView for BridgeEditorBoundary {
         ) {
             Ok(BridgeAnswer::Result { payload, .. }) => payload,
             Ok(BridgeAnswer::Error { message, .. }) => return Err(message),
+            // Between the editor that was asked to restart and the restarted
+            // one, an editor process may still write its files, and the
+            // restarted one is loading them: nothing is free to be written.
+            Err(BridgeFailure::NotConnected) if self.bridge.restarting() => {
+                return Err(
+                    "the editor is being restarted with editor.restart, and the \
+                            restarted editor has not connected yet"
+                        .to_owned(),
+                );
+            }
             Err(BridgeFailure::NotConnected) => return Ok(None),
             Err(failure) => return Err(failure.message()),
         };

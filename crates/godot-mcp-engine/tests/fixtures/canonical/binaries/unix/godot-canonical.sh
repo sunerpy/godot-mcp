@@ -151,7 +151,7 @@ write_response() {
 }
 
 refuse() {
-  write_response "helper_version=3
+  write_response "helper_version=4
 reason=$1
 status=refused
 "
@@ -164,7 +164,7 @@ case "$artifact" in
   *) refuse artifact_outside_staging ;;
 esac
 case "$artifact" in
-  godot_mcp_helpers/3/staging/*) ;;
+  godot_mcp_helpers/4/staging/*) ;;
   *) refuse artifact_outside_staging ;;
 esac
 
@@ -172,7 +172,7 @@ if [ -n "$target" ]; then
   extension=$(printf '%s' "$target" | tr 'A-Z' 'a-z' | sed -n 's/.*\.\([a-z0-9]*\)$/\1/p')
   case "$extension" in
     scn | res)
-      write_response "helper_version=3
+      write_response "helper_version=4
 reason=binary_resource
 status=refused
 target=res://$target
@@ -202,7 +202,7 @@ esac
 # ---- configured failure modes ----------------------------------------------
 if [ "$operation" = "apply_batch" ] && [ "$mode" = "batch-refused" ]; then
   write_response "detail=Missing
-helper_version=3
+helper_version=4
 op_index=0
 reason=node_not_found
 status=refused
@@ -211,7 +211,7 @@ status=refused
 fi
 case "$mode" in
   save-failed)
-    write_response "helper_version=3
+    write_response "helper_version=4
 reason=save_failed
 status=failed
 "
@@ -220,7 +220,7 @@ status=failed
   uid-conflict:*)
     existing=$(printf '%s' "$mode" | sed 's/^uid-conflict://')
     write_response "existing_path=res://$existing
-helper_version=3
+helper_version=4
 reason=uid_conflict
 requested_path=res://$target
 status=refused
@@ -276,7 +276,7 @@ if [ "$mode" = "no-response" ]; then
 fi
 
 write_response "artifact=res://$artifact
-helper_version=3
+helper_version=4
 status=ok
 target=res://$target
 uid=$uid

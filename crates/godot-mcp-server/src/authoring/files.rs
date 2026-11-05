@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use godot_mcp_analysis::insight::glob::{MAX_GLOB_LENGTH, PathGlob};
 use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::catalog::AuthoringOperation;
 use godot_mcp_domain::contracts::OutcomeError;
@@ -35,6 +36,14 @@ pub(super) fn list_schema() -> Value {
                 "type": "string",
                 "maxLength": 1024,
                 "description": "Only list files under this project-relative directory."
+            },
+            "glob": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_GLOB_LENGTH,
+                "description": "Only list files whose project-relative path matches this glob: `*` \
+                    and `?` stay within one path segment, `**` crosses segments, `[...]` is a class \
+                    and `{a,b}` an alternation; a glob without `/` matches the file name at any depth."
             },
             "offset": {
                 "type": "integer",
@@ -227,6 +236,15 @@ pub(super) fn list(
         }
         _ => None,
     };
+    let glob = match optional_str(arguments, "glob")? {
+        Some(raw) => Some(PathGlob::new(raw).map_err(|error| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`glob` is invalid: {error}"),
+            )
+        })?),
+        None => None,
+    };
     let (offset, limit) = page(arguments)?;
     let snapshot = runtime.workspace.snapshot();
     let matching: Vec<String> = snapshot
@@ -238,6 +256,7 @@ pub(super) fn list(
                     .is_some_and(|rest| rest.starts_with('/'))
             })
         })
+        .filter(|path| glob.as_ref().is_none_or(|glob| glob.matches(path)))
         .map(str::to_owned)
         .collect();
     let page: Vec<String> = matching.iter().skip(offset).take(limit).cloned().collect();

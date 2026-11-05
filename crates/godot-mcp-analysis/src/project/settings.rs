@@ -135,7 +135,7 @@ pub enum ProjectDiagnosticKind {
     MissingAssignment,
     /// A line assigns to an empty key.
     EmptyKey,
-    /// A brace-opened value never closed before end of file.
+    /// A brace-opened value or a string never closed before end of file.
     UnterminatedValue,
     /// A recognized key's value could not be interpreted in its expected shape.
     UninterpretableValue,
@@ -636,23 +636,26 @@ impl Parser {
                 continue;
             };
 
-            // A brace-opened value may span several lines; consume them verbatim
-            // so an inner `"key": value` pair is never mistaken for a new key.
+            // A brace-opened value or a string may span several lines; consume
+            // them verbatim so an inner `"key": value` pair or a line of text is
+            // never mistaken for a new key.
             let mut value = first_value.to_owned();
-            let mut depth = brace_delta(first_value);
+            let mut scan = ValueScan::default();
+            scan.feed(first_value);
             let mut consumed = 1usize;
-            while depth > 0 && index + consumed < lines.len() {
+            while scan.open() && index + consumed < lines.len() {
                 let continuation = lines[index + consumed];
                 value.push('\n');
                 value.push_str(continuation);
-                depth += brace_delta(continuation);
+                scan.feed("\n");
+                scan.feed(continuation);
                 consumed += 1;
             }
-            if depth > 0 {
+            if scan.open() {
                 self.diagnose(
                     ProjectDiagnosticKind::UnterminatedValue,
                     line_no,
-                    format!("value of `{key}` opens a brace that is never closed"),
+                    format!("value of `{key}` opens a brace or a string that is never closed"),
                 );
             }
             index += consumed;
@@ -846,16 +849,41 @@ fn split_key_value(line: &str) -> Option<(&str, &str)> {
 
 /// Net `{` minus `}` on a line. String-content unaware, which is sufficient for
 /// the brace-balanced dictionary values Godot writes into `[input]`.
-fn brace_delta(line: &str) -> i32 {
-    let mut delta = 0i32;
-    for byte in line.bytes() {
-        match byte {
-            b'{' => delta += 1,
-            b'}' => delta -= 1,
-            _ => {}
+/// How far a value's text has got: its brace depth outside strings, and
+/// whether it ends inside a string. Godot writes a string's newlines as they
+/// are, so a string may span lines, and a brace inside one opens nothing.
+#[derive(Debug, Clone, Copy, Default)]
+struct ValueScan {
+    depth: i32,
+    in_string: bool,
+    escaped: bool,
+}
+
+impl ValueScan {
+    fn feed(&mut self, text: &str) {
+        for byte in text.bytes() {
+            if self.in_string {
+                match byte {
+                    _ if self.escaped => self.escaped = false,
+                    b'\\' => self.escaped = true,
+                    b'"' => self.in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match byte {
+                b'"' => self.in_string = true,
+                b'{' => self.depth += 1,
+                b'}' => self.depth -= 1,
+                _ => {}
+            }
         }
     }
-    delta
+
+    /// Whether the value goes on to the next line.
+    const fn open(&self) -> bool {
+        self.depth > 0 || self.in_string
+    }
 }
 
 /// Remove one matching pair of surrounding double quotes, if present.
@@ -915,4 +943,43 @@ pub fn resource_target(value: &str) -> ResourceTarget {
         return ResourceTarget::Uid(uri.to_owned());
     }
     ResourceTarget::Unsupported(uri.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Godot writes a string's newlines as they are, so a string may span
+    /// lines; it is one value, even where a later line of it looks like an
+    /// assignment or holds a brace.
+    #[test]
+    fn a_string_spanning_lines_is_one_value() {
+        let text = "config_version=5\n\n[application]\n\nconfig/name=\"Demo\"\n\
+                    config/description=\"first {\nsecond = line\"\nconfig/version=\"1.0\"\n";
+        let settings = ProjectSettings::parse(text, 1).expect("parses");
+        assert!(
+            settings.diagnostics().is_empty(),
+            "{:?}",
+            settings.diagnostics()
+        );
+        assert_eq!(
+            settings.application().description(),
+            Some("first {\nsecond = line")
+        );
+        assert_eq!(settings.application().version(), Some("1.0"));
+    }
+
+    #[test]
+    fn a_string_never_closed_is_an_unterminated_value() {
+        let text = "[application]\n\nconfig/description=\"never closed\nconfig/name=\"Demo\"\n";
+        let settings = ProjectSettings::parse(text, 1).expect("parses");
+        assert!(
+            settings
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.kind() == ProjectDiagnosticKind::UnterminatedValue),
+            "{:?}",
+            settings.diagnostics()
+        );
+    }
 }

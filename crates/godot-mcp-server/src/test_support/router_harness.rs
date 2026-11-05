@@ -109,6 +109,8 @@ impl OutcomeRouterHarness {
             observed_at_unix_ms: OBSERVED_AT_UNIX_MS,
             limits: Limits::default(),
             process: Default::default(),
+            allow_scripts: false,
+            android: Default::default(),
         };
         let runtime =
             ProjectRuntime::open_with_survivors(&options, Arc::clone(&survivors) as Arc<_>)

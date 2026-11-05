@@ -13,7 +13,7 @@ profile 是你对「服务器能对项目做什么」的一个明确选择。它
 
 `full` 恰好就是 `core`、`editor` 与 `runtime` 的合集。每个工具以及列出它的 profile，见生成的[工具清单](../../../protocol/tool-inventory.md)。
 
-任何 profile 都没有执行任意 GDScript 或调用任意引擎方法的工具。这是它与提供「执行这段脚本」入口的服务器之间最大、也是有意为之的区别：加载 Godot 项目本身就会运行项目代码，再加一个直接执行的工具，就失去了让整个接口可以审查的那一点。
+有三个工具会执行 Agent 自己写的 GDScript：`script.run` 在无头 Godot 里运行，`editor.script.run` 在打开的编辑器里运行，`runtime.script.run` 在运行中的游戏里运行。包含它们的 profile 都会列出它们，但在你用 `--allow-scripts` 启动服务器之前，它们一律返回 `permission_denied`。开关打开后，脚本不受任何限制：它以你的权限运行，做过的事不会被撤销。有合适的类型化工具时，仍然优先用类型化工具：它们写入前会检查改动，编辑器也能撤销。一次运行会答复什么、什么能结束它，见[Profile 与工具结果](../../../operator/profiles-and-outcomes.md#script-execution)。
 
 ## 列出不等于可用
 

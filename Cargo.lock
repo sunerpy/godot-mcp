@@ -706,6 +706,7 @@ version = "0.2.0"
 dependencies = [
  "godot-mcp-domain",
  "notify",
+ "regex",
  "rstest",
  "rusqlite",
  "serde",

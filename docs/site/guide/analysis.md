@@ -9,7 +9,7 @@ a machine with no Godot installed, and they never start a process.
 | --- | --- |
 | `project.info.get` | The project's identity, a summary of its settings and the workspace revision |
 | `project.discover` | Every script, scene, resource and other file, with its kind |
-| `project.files.list` | Every file, or those under a prefix, with its kind, size and SHA-256 — the hash a later write names |
+| `project.files.list` | Every file, or those under a prefix or matching a glob, with its kind, size and SHA-256 — the hash a later write names |
 | `project.settings.get` | The typed settings: application name, main scene, autoloads, input actions and their events, enabled plugins, with the SHA-256 of `project.godot` |
 | `project.validate` | Parse errors, dangling references and invalid settings across the project, stating that the engine was not run |
 
@@ -61,6 +61,34 @@ text. The server does not guess at a binary format.
 
 An edge whose target does not exist is reported as dangling rather than dropped, and
 `project.validate` lists every dangling reference in the project.
+
+## The whole project at once
+
+| Tool | Answers |
+| --- | --- |
+| `project.dependencies.audit` | The files nothing in the project reaches, each with why, or with `view: "cycles"` the files that reference each other in a ring and what Godot does with that ring |
+| `project.signals.get` | Every signal a script declares, with the scenes and scripts that connect it and the lines that emit it, or with `view: "problems"` connections to missing methods, signals emitted but never connected and connections to undeclared signals |
+| `project.metrics.get` | Files and bytes by kind and extension, with GDScript code, comment and blank lines, or with `view: "complexity"` functions ranked by complexity, length or nesting and scenes by nodes, depth or instances |
+| `project.search` | Every line matching a literal string or a regular expression, with context lines |
+| `project.uid.get` | The file a `uid://` names, or the UID of a file, from the scene headers, `.uid` files and `.import` files the project holds |
+| `scene.nodes.find` | Nodes in every scene by type, group, name, script or stored property, instanced scenes included |
+| `scene.exports.get` | The exported variables of one scene's scripted nodes, with each script default and the value the scene stores |
+
+The unused list is a starting point, not a verdict: a script that builds a path at run time,
+such as `load("res://levels/" + name + ".tscn")`, can load files nothing names. The answer lists
+every such call, and every unused file under its literal prefix names the calls that may load
+it.
+
+Godot's editor skips hidden files and folders and every folder that holds a `.gdignore`; these
+tools skip the same files, and every answer says how many it left out. A scene connection to a
+method its receiver lacks is reported as a problem because Godot is silent about it: the scene
+loads and the signal fires without an error. A UID that only Godot's cache in `.godot/` holds
+is reported as `unknown`, not as missing.
+
+`include` and `exclude` take globs: `*` and `?` stay within one folder, `**` crosses folders,
+and a pattern without a `/` matches file names in any folder, as `*.tscn` does. The
+[project-wide analysis reference](../../operator/project-analysis.md) lists every view, field
+and bound.
 
 ## Reading the answers
 

@@ -390,6 +390,11 @@
           "description": "Live editor operability: editor-owned saves, captures, scans, play and settings.",
           "type": "string",
           "const": "0.3.0"
+        },
+        {
+          "description": "Agent development: declared script execution, generic settings and the\ntools contract 0.4.0 lists.",
+          "type": "string",
+          "const": "0.4.0"
         }
       ]
     },

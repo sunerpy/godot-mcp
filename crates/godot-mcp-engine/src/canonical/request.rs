@@ -34,6 +34,8 @@ pub enum TextResourceKind {
     Scene,
     /// A resource, saved by `ResourceSaver` as canonical TRES text.
     Resource,
+    /// A `.gdshader` shader. A read loads one; nothing here ever writes one.
+    Shader,
 }
 
 impl TextResourceKind {
@@ -43,6 +45,7 @@ impl TextResourceKind {
         match self {
             Self::Scene => "tscn",
             Self::Resource => "tres",
+            Self::Shader => "gdshader",
         }
     }
 }
@@ -102,6 +105,23 @@ pub fn classify_target(path: &str) -> Result<TextResourceKind, CanonicalError> {
     }
 }
 
+/// Classify the target of a read: a text scene or resource, as
+/// [`classify_target`] does, or a `.gdshader` shader, which a read loads but
+/// nothing writes.
+///
+/// # Errors
+/// Returns the refusals of [`classify_target`] for every other target.
+pub fn classify_read_target(path: &str) -> Result<TextResourceKind, CanonicalError> {
+    match classify_target(path) {
+        Err(CanonicalError::NotATextResource { path })
+            if path.to_ascii_lowercase().ends_with(".gdshader") =>
+        {
+            Ok(TextResourceKind::Shader)
+        }
+        classified => classified,
+    }
+}
+
 /// The four things a canonical-write transaction can ask the engine to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanonicalOperation {
@@ -116,16 +136,20 @@ pub enum CanonicalOperation {
     /// Apply a batch of typed operations to an existing text scene or
     /// resource, through the engine.
     ApplyBatch,
+    /// Call reading methods on an existing text scene or resource, through the
+    /// engine. Read-only: never stages or publishes bytes.
+    ReadCalls,
 }
 
 impl CanonicalOperation {
-    /// Every operation. There are five.
-    pub const ALL: [Self; 5] = [
+    /// Every operation. There are six.
+    pub const ALL: [Self; 6] = [
         Self::CreateResource,
         Self::UpdateResource,
         Self::RegisterUid,
         Self::QueryUid,
         Self::ApplyBatch,
+        Self::ReadCalls,
     ];
 
     /// The helper's own operation spelling.
@@ -137,13 +161,14 @@ impl CanonicalOperation {
             Self::RegisterUid => "register_uid",
             Self::QueryUid => "query_uid",
             Self::ApplyBatch => "apply_batch",
+            Self::ReadCalls => "read_calls",
         }
     }
 
     /// Whether this operation publishes bytes onto a target path.
     #[must_use]
     pub const fn mutates(self) -> bool {
-        !matches!(self, Self::QueryUid)
+        !matches!(self, Self::QueryUid | Self::ReadCalls)
     }
 
     /// Whether the target must already exist for this operation to make sense.
@@ -151,7 +176,7 @@ impl CanonicalOperation {
     pub const fn requires_existing_target(self) -> bool {
         matches!(
             self,
-            Self::UpdateResource | Self::RegisterUid | Self::ApplyBatch
+            Self::UpdateResource | Self::RegisterUid | Self::ApplyBatch | Self::ReadCalls
         )
     }
 }
@@ -215,6 +240,17 @@ impl CanonicalRequest {
         Self {
             operation: CanonicalOperation::ApplyBatch,
             batch: Some(batch),
+            ..Self::create(target)
+        }
+    }
+
+    /// A minimal read request: `calls` is the compact JSON array of reading
+    /// calls the engine makes.
+    #[must_use]
+    pub fn read_calls(target: &str, calls: String) -> Self {
+        Self {
+            operation: CanonicalOperation::ReadCalls,
+            batch: Some(calls),
             ..Self::create(target)
         }
     }
@@ -316,11 +352,21 @@ impl CanonicalRequest {
     /// session, or [`CanonicalError::UnusablePath`] when a UID query carries no
     /// query string.
     pub fn validate(&self) -> Result<TextResourceKind, CanonicalError> {
-        let kind = classify_target(&self.target)?;
+        let kind = if self.operation == CanonicalOperation::ReadCalls {
+            classify_read_target(&self.target)?
+        } else {
+            classify_target(&self.target)?
+        };
         if self.operation == CanonicalOperation::ApplyBatch && self.batch.is_none() {
             return Err(CanonicalError::UnusablePath {
                 path: self.target.clone(),
                 reason: "a batch request needs its operations".to_owned(),
+            });
+        }
+        if self.operation == CanonicalOperation::ReadCalls && self.batch.is_none() {
+            return Err(CanonicalError::UnusablePath {
+                path: self.target.clone(),
+                reason: "a read needs its calls".to_owned(),
             });
         }
         if [&self.batch, &self.handles].into_iter().any(|fact| {
@@ -374,6 +420,186 @@ impl CanonicalRequest {
     }
 }
 
+/// The helper's spelling of a multi-file batch, which no [`CanonicalRequest`]
+/// carries: [`BatchesRequest`] is its only request.
+pub const APPLY_BATCHES: &str = "apply_batches";
+
+/// The most files one multi-file batch may edit.
+pub const MAX_BATCH_TARGETS: usize = 16;
+
+/// One file of a multi-file batch: an existing text scene or resource and the
+/// batch the engine applies to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchTarget {
+    /// The project-relative target.
+    pub target: String,
+    /// The compact JSON array of typed operations, as [`CanonicalRequest::batch`].
+    pub batch: String,
+    /// The compact JSON object binding each node handle the operations use, as
+    /// [`CanonicalRequest::handles`].
+    pub handles: Option<String>,
+}
+
+/// Several batches, one per existing file, that one helper run applies and
+/// stages together, so that one linked launch proof covers every staged file.
+///
+/// Each file is edited as it is on disk: none sees what the run does to
+/// another. The first file the engine cannot apply refuses the whole run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchesRequest {
+    /// The files, in the order the engine applies them.
+    pub targets: Vec<BatchTarget>,
+    /// Resources open in a live editor session; a target among them is refused.
+    pub open_resources: Vec<String>,
+    /// When set, nothing is ever published.
+    pub dry_run: bool,
+}
+
+impl BatchesRequest {
+    /// The targets as the canonical facts and the helper see them, with each
+    /// file's staged artifact when `artifacts` names them.
+    fn targets_json(&self, artifacts: Option<&[String]>) -> String {
+        let listed: Vec<Value> = self
+            .targets
+            .iter()
+            .enumerate()
+            .map(|(index, target)| {
+                let mut entry = serde_json::Map::new();
+                entry.insert("target".to_owned(), Value::String(target.target.clone()));
+                entry.insert("batch".to_owned(), Value::String(target.batch.clone()));
+                if let Some(handles) = &target.handles {
+                    entry.insert("handles".to_owned(), Value::String(handles.clone()));
+                }
+                if let Some(artifact) = artifacts.and_then(|artifacts| artifacts.get(index)) {
+                    entry.insert("artifact".to_owned(), Value::String(artifact.clone()));
+                }
+                Value::Object(entry)
+            })
+            .collect();
+        serde_json::to_string(&listed).unwrap_or_default()
+    }
+
+    /// The canonical request value: the same shape a [`CanonicalRequest`]
+    /// binds its transaction with.
+    #[must_use]
+    pub fn canonical_value(&self) -> Value {
+        let mut open = self.open_resources.clone();
+        open.sort();
+        open.dedup();
+        let mut facts = BTreeMap::new();
+        facts.insert("operation".to_owned(), APPLY_BATCHES.to_owned());
+        facts.insert("targets".to_owned(), self.targets_json(None));
+        json!({
+            "dry_run": self.dry_run,
+            "facts": facts,
+            "open_resources": open,
+        })
+    }
+
+    /// The canonical request bytes.
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(&self.canonical_value()).unwrap_or_default()
+    }
+
+    /// Deterministic 16-hex staging ID, derived from the canonical bytes.
+    #[must_use]
+    pub fn staging_id(&self) -> String {
+        hex_sha256(&self.canonical_bytes())
+            .chars()
+            .take(16)
+            .collect()
+    }
+
+    /// The staging ID of the file at `index`.
+    #[must_use]
+    pub fn target_staging_id(staging_id: &str, index: usize) -> String {
+        format!("{staging_id}-{index}")
+    }
+
+    /// Validate the request against everything decidable without touching disk,
+    /// and classify each target.
+    ///
+    /// # Errors
+    /// Returns [`CanonicalError::UnusablePath`] for no target, too many, a
+    /// target named twice (letter case aside, since Windows and macOS file
+    /// systems ignore it) or a batch that is not compact single-line JSON; the
+    /// classification refusal of a target; and [`CanonicalError::ResourceOpen`]
+    /// for a target open in an editor session.
+    pub fn validate(&self) -> Result<Vec<TextResourceKind>, CanonicalError> {
+        if self.targets.is_empty() || self.targets.len() > MAX_BATCH_TARGETS {
+            return Err(CanonicalError::UnusablePath {
+                path: String::new(),
+                reason: format!(
+                    "a multi-file batch edits between 1 and {MAX_BATCH_TARGETS} files, not {}",
+                    self.targets.len()
+                ),
+            });
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut kinds = Vec::with_capacity(self.targets.len());
+        for target in &self.targets {
+            let kind = classify_target(&target.target)?;
+            if !seen.insert(target.target.to_lowercase()) {
+                return Err(CanonicalError::UnusablePath {
+                    path: target.target.clone(),
+                    reason: "a multi-file batch names each file once".to_owned(),
+                });
+            }
+            if std::iter::once(Some(&target.batch))
+                .chain(std::iter::once(target.handles.as_ref()))
+                .flatten()
+                .any(|text| text.contains('\n') || text.contains('\r'))
+            {
+                return Err(CanonicalError::UnusablePath {
+                    path: target.target.clone(),
+                    reason: "a batch and its handles must be compact single-line JSON".to_owned(),
+                });
+            }
+            let normalized = target.target.replace('\\', "/");
+            if self
+                .open_resources
+                .iter()
+                .any(|open| project_relative_path(&open.replace('\\', "/")) == normalized)
+            {
+                return Err(CanonicalError::ResourceOpen { path: normalized });
+            }
+            kinds.push(kind);
+        }
+        Ok(kinds)
+    }
+
+    /// Each file's staged artifact, in target order.
+    #[must_use]
+    pub fn artifact_paths(staging_id: &str, kinds: &[TextResourceKind]) -> Vec<String> {
+        kinds
+            .iter()
+            .enumerate()
+            .map(|(index, kind)| {
+                HelperScript::artifact_path(
+                    &Self::target_staging_id(staging_id, index),
+                    kind.extension(),
+                )
+            })
+            .collect()
+    }
+
+    /// The helper request document's pairs: the operation and every target
+    /// with the staging artifact it is permitted to write.
+    #[must_use]
+    pub fn helper_pairs(
+        &self,
+        staging_id: &str,
+        kinds: &[TextResourceKind],
+    ) -> BTreeMap<String, String> {
+        let artifacts = Self::artifact_paths(staging_id, kinds);
+        let mut pairs = BTreeMap::new();
+        pairs.insert("operation".to_owned(), APPLY_BATCHES.to_owned());
+        pairs.insert("targets".to_owned(), self.targets_json(Some(&artifacts)));
+        pairs
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,7 +643,7 @@ mod tests {
             "scenes\\main.tscn",
             "https://example.test/main.tscn",
             "scenes/a\u{0085}b.tscn",
-            "godot_mcp_helpers/3/staging/x.tscn",
+            "godot_mcp_helpers/4/staging/x.tscn",
             "",
         ] {
             assert!(
@@ -495,7 +721,7 @@ mod tests {
         let staging_id = request.staging_id();
         let pairs = request.helper_pairs(&staging_id, TextResourceKind::Scene);
         let artifact = pairs.get("artifact").expect("an artifact path");
-        assert!(artifact.starts_with("godot_mcp_helpers/3/staging/"));
+        assert!(artifact.starts_with("godot_mcp_helpers/4/staging/"));
         assert!(artifact.ends_with(".tscn"));
         assert_eq!(
             pairs.get("target").map(String::as_str),
@@ -506,7 +732,7 @@ mod tests {
 
     #[test]
     fn only_a_uid_query_is_non_mutating() {
-        assert_eq!(CanonicalOperation::ALL.len(), 5);
+        assert_eq!(CanonicalOperation::ALL.len(), 6);
         let mutating: Vec<&str> = CanonicalOperation::ALL
             .iter()
             .filter(|operation| operation.mutates())
@@ -525,5 +751,144 @@ mod tests {
         assert!(CanonicalOperation::UpdateResource.requires_existing_target());
         assert!(CanonicalOperation::RegisterUid.requires_existing_target());
         assert!(!CanonicalOperation::CreateResource.requires_existing_target());
+    }
+    #[test]
+    fn a_read_publishes_nothing_and_needs_its_calls() {
+        let read = CanonicalOperation::ReadCalls;
+        assert_eq!(read.as_str(), "read_calls");
+        assert!(!read.mutates(), "a read never publishes onto its target");
+        assert!(read.requires_existing_target());
+
+        let mut request = CanonicalRequest::read_calls(
+            "scenes/main.tscn",
+            "[{\"method\":\"get_used_cells\"}]".to_owned(),
+        );
+        assert_eq!(
+            request.validate().expect("a valid read"),
+            TextResourceKind::Scene
+        );
+        request.open_resources = vec!["res://scenes/main.tscn".to_owned()];
+        assert!(
+            request.validate().is_ok(),
+            "an open editor buffer does not conflict with a read of the file"
+        );
+        request.batch = None;
+        assert!(matches!(
+            request.validate(),
+            Err(CanonicalError::UnusablePath { reason, .. }) if reason == "a read needs its calls"
+        ));
+        let binary = CanonicalRequest::read_calls("scenes/main.scn", "[]".to_owned());
+        assert!(matches!(
+            binary.validate(),
+            Err(CanonicalError::BinaryResource { .. })
+        ));
+        let shader = CanonicalRequest::read_calls("fx/water.gdshader", "[]".to_owned());
+        assert_eq!(
+            shader.validate().expect("a read may load a shader"),
+            TextResourceKind::Shader
+        );
+        let mut write = shader.clone();
+        write.operation = CanonicalOperation::UpdateResource;
+        assert!(
+            matches!(
+                write.validate(),
+                Err(CanonicalError::NotATextResource { .. })
+            ),
+            "only a read takes a shader"
+        );
+    }
+
+    fn batches(targets: &[(&str, &str)]) -> BatchesRequest {
+        BatchesRequest {
+            targets: targets
+                .iter()
+                .map(|(target, batch)| BatchTarget {
+                    target: (*target).to_owned(),
+                    batch: (*batch).to_owned(),
+                    handles: None,
+                })
+                .collect(),
+            open_resources: Vec::new(),
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn a_multi_file_batch_classifies_every_file_and_names_each_once() {
+        let request = batches(&[
+            ("scenes/a.tscn", "[{\"op\":\"add_node\"}]"),
+            ("themes/b.tres", "[{\"op\":\"set_property\"}]"),
+        ]);
+        assert_eq!(
+            request.validate().expect("a valid multi-file batch"),
+            vec![TextResourceKind::Scene, TextResourceKind::Resource]
+        );
+
+        assert!(matches!(
+            batches(&[]).validate(),
+            Err(CanonicalError::UnusablePath { reason, .. }) if reason.contains("between 1 and 16")
+        ));
+        let many: Vec<(String, &str)> = (0..=MAX_BATCH_TARGETS)
+            .map(|index| (format!("scenes/{index}.tscn"), "[]"))
+            .collect();
+        let many: Vec<(&str, &str)> = many.iter().map(|(t, b)| (t.as_str(), *b)).collect();
+        assert!(batches(&many).validate().is_err(), "17 files are refused");
+
+        assert!(matches!(
+            batches(&[("scenes/a.tscn", "[]"), ("Scenes/A.tscn", "[]")]).validate(),
+            Err(CanonicalError::UnusablePath { reason, .. }) if reason.contains("each file once")
+        ));
+        assert!(matches!(
+            batches(&[("scenes/a.tscn", "[]"), ("scenes/b.scn", "[]")]).validate(),
+            Err(CanonicalError::BinaryResource { .. })
+        ));
+        assert!(matches!(
+            batches(&[("scenes/a.tscn", "[\n]")]).validate(),
+            Err(CanonicalError::UnusablePath { .. })
+        ));
+        let mut open = batches(&[("scenes/a.tscn", "[]"), ("scenes/b.tscn", "[]")]);
+        open.open_resources = vec!["res://scenes/b.tscn".to_owned()];
+        assert!(matches!(
+            open.validate(),
+            Err(CanonicalError::ResourceOpen { path }) if path == "scenes/b.tscn"
+        ));
+    }
+
+    #[test]
+    fn each_file_of_a_multi_file_batch_stages_its_own_artifact() {
+        let request = batches(&[("scenes/a.tscn", "[1]"), ("themes/b.tres", "[2]")]);
+        let kinds = request.validate().expect("valid");
+        let staging_id = request.staging_id();
+        assert_eq!(staging_id.len(), 16);
+        let pairs = request.helper_pairs(&staging_id, &kinds);
+        assert_eq!(pairs["operation"], APPLY_BATCHES);
+        let targets: Value = serde_json::from_str(&pairs["targets"]).expect("JSON targets");
+        assert_eq!(
+            targets,
+            json!([
+                {
+                    "target": "scenes/a.tscn",
+                    "batch": "[1]",
+                    "artifact": HelperScript::artifact_path(&format!("{staging_id}-0"), "tscn"),
+                },
+                {
+                    "target": "themes/b.tres",
+                    "batch": "[2]",
+                    "artifact": HelperScript::artifact_path(&format!("{staging_id}-1"), "tres"),
+                },
+            ])
+        );
+        assert!(!pairs["targets"].contains('\n'), "one request line");
+
+        let mut reordered = request.clone();
+        reordered.targets.reverse();
+        assert_ne!(
+            reordered.staging_id(),
+            staging_id,
+            "the order is part of the request"
+        );
+        let mut dry = request.clone();
+        dry.dry_run = true;
+        assert_ne!(dry.canonical_bytes(), request.canonical_bytes());
     }
 }

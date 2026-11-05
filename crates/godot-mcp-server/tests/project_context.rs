@@ -35,6 +35,8 @@ fn options(project: &Path) -> StdioOptions {
         observed_at_unix_ms: 1_700_000_000_000,
         limits: Limits::default(),
         process: Default::default(),
+        allow_scripts: false,
+        android: Default::default(),
     }
 }
 

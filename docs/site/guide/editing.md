@@ -48,10 +48,29 @@ with a string.
 When the scene is open in an editor connected through the add-on, the same call runs in the
 editor and becomes one undoable action there ([The editor add-on](editor.md)).
 
+`project.batch.apply` takes one such batch for each of several existing scenes and resources, up
+to 16 files, each with its own `expectedSha256`. One Godot process applies every batch, and the
+files are published as one transaction: every file changes or none does. An operation refused in
+one file refuses them all and the answer names that file; a file that changed on disk refuses
+them all before Godot starts; and when a later file cannot be written, the files already written
+get their earlier bytes back. Each file is edited as it is on disk, so a scene that instances
+another file of the same batch sees the new content only once both are written. A file open in
+the connected editor is refused; change an open scene with `scene.batch.apply`, which goes
+through the editor. `dryRun` answers every file's diff and tree and writes nothing.
+
+Common setups — a character body, lights and a sky, particles, navigation, a sound, a shader
+material, a theme, a HUD, a grid map, an on-screen joystick — are written out as batches in the
+[recipes reference](../../operator/recipes.md), each one checked on every Godot version the
+server supports.
+
 ## Settings and assets
 
 `project.settings.patch` changes `project.godot` through typed operations: the main scene,
-autoloads, input actions with their events, plugins, and individual settings. `asset.put` writes
+autoloads, input actions with their events, plugins, a short list of common settings with plain
+JSON values (`set_value`), and any other setting with a tagged value (`set_setting`, with
+`clear_setting` to go back to Godot's default). `project.settings.get` answers a typed view, and
+with `settings` or `prefix` also each selected setting's text in the file and its tagged value,
+such as every `layer_names/` entry. `asset.put` writes
 a binary asset, in chunks when it is large, against the SHA-256 of the whole file;
 `asset.status` and `asset.delete` read and remove one. `project.uid.update` registers or repairs
 the UID of one text resource through a Godot re-save.

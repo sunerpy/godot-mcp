@@ -993,3 +993,160 @@ fn an_adapter_boundary_takes_exactly_its_adapter() {
         "{invalid:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Script execution: off unless asked for, never for a remote principal
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scripts_are_off_unless_the_file_the_environment_or_the_cli_turns_them_on() {
+    let off = load_config(None, &no_env(), &CliOverrides::default()).expect("defaults");
+    assert!(!off.allow_scripts, "script execution is off by default");
+    let file = load_config(
+        Some("allow_scripts = true\n"),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("file");
+    assert!(file.allow_scripts);
+    let environment = load_config(
+        None,
+        &env(&[("GODOT_MCP_ALLOW_SCRIPTS", "true")]),
+        &CliOverrides::default(),
+    )
+    .expect("environment");
+    assert!(environment.allow_scripts);
+    let cli = load_config(
+        Some("allow_scripts = true\n"),
+        &env(&[("GODOT_MCP_ALLOW_SCRIPTS", "true")]),
+        &CliOverrides {
+            allow_scripts: Some(false),
+            ..CliOverrides::default()
+        },
+    )
+    .expect("cli");
+    assert!(!cli.allow_scripts, "the CLI wins");
+    let error = load_config(
+        None,
+        &env(&[("GODOT_MCP_ALLOW_SCRIPTS", "yes")]),
+        &CliOverrides::default(),
+    )
+    .expect_err("only true or false");
+    assert!(
+        matches!(error, ConfigError::InvalidEnvValue { .. }),
+        "{error}"
+    );
+    let trusted = load_config(
+        Some(&format!("allow_scripts = true\n{TRUSTED_LOCAL_FILE}")),
+        &env(&[("GODOT_MCP_LAUNCH_SECRET", "s3cret-value-for-tests")]),
+        &CliOverrides::default(),
+    )
+    .expect("trusted_local may run scripts");
+    assert!(trusted.allow_scripts);
+}
+
+#[test]
+fn scripts_are_refused_for_a_proxied_principal() {
+    let error = load_config(
+        Some(&format!("allow_scripts = true\n{PROXIED_OIDC_FILE}")),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect_err("a remote principal never runs scripts");
+    assert!(
+        matches!(error, ConfigError::ScriptsForProxiedPrincipal),
+        "{error}"
+    );
+    load_config(Some(PROXIED_OIDC_FILE), &no_env(), &CliOverrides::default())
+        .expect("proxied_oidc without scripts is unchanged");
+}
+
+// ---------------------------------------------------------------------------
+// The Android SDK and JDK: layered like every leaf, absolute paths only
+// ---------------------------------------------------------------------------
+
+/// An absolute directory on this host, as TOML literal text.
+fn absolute(name: &str) -> String {
+    if cfg!(windows) {
+        format!(r"C:\tools\{name}")
+    } else {
+        format!("/opt/{name}")
+    }
+}
+
+#[test]
+fn the_android_sdk_and_jdk_are_layered_cli_over_env_over_file() {
+    let none = load_config(None, &no_env(), &CliOverrides::default()).expect("defaults");
+    assert_eq!(none.android.sdk, None, "no SDK unless one is configured");
+    assert_eq!(none.android.java_home, None);
+    let file_text = format!(
+        "[android]\nsdk = '{}'\njava_home = '{}'\n",
+        absolute("file-sdk"),
+        absolute("file-jdk")
+    );
+    let file = load_config(Some(&file_text), &no_env(), &CliOverrides::default()).expect("file");
+    assert_eq!(file.android.sdk, Some(absolute("file-sdk")));
+    assert_eq!(file.android.java_home, Some(absolute("file-jdk")));
+    let environment = load_config(
+        Some(&file_text),
+        &env(&[
+            ("GODOT_MCP_ANDROID_SDK", &absolute("env-sdk")),
+            ("GODOT_MCP_ANDROID_JAVA_HOME", &absolute("env-jdk")),
+        ]),
+        &CliOverrides::default(),
+    )
+    .expect("environment");
+    assert_eq!(environment.android.sdk, Some(absolute("env-sdk")));
+    assert_eq!(environment.android.java_home, Some(absolute("env-jdk")));
+    let cli = load_config(
+        Some(&file_text),
+        &env(&[("GODOT_MCP_ANDROID_SDK", &absolute("env-sdk"))]),
+        &CliOverrides {
+            android_sdk: Some(absolute("cli-sdk")),
+            android_java_home: Some(absolute("cli-jdk")),
+            ..CliOverrides::default()
+        },
+    )
+    .expect("cli");
+    assert_eq!(cli.android.sdk, Some(absolute("cli-sdk")), "the CLI wins");
+    assert_eq!(cli.android.java_home, Some(absolute("cli-jdk")));
+}
+
+#[test]
+fn the_android_sdk_and_jdk_must_be_absolute_and_known() {
+    for (text, field) in [
+        ("[android]\nsdk = 'relative/sdk'\n", "android.sdk"),
+        ("[android]\njava_home = 'jdk'\n", "android.java_home"),
+    ] {
+        let error = load_config(Some(text), &no_env(), &CliOverrides::default())
+            .expect_err("a relative path is refused");
+        assert!(
+            matches!(error, ConfigError::NotAbsolute { field: refused } if refused == field),
+            "{text}: {error}"
+        );
+    }
+    let error = load_config(
+        Some("[android]\nsdk = ''\n"),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect_err("an empty path is refused");
+    assert!(matches!(error, ConfigError::EmptyValue { .. }), "{error}");
+    let error = load_config(
+        Some("[android]\nndk = '/opt/ndk'\n"),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect_err("an unknown key is refused");
+    assert!(matches!(error, ConfigError::Parse(_)), "{error}");
+    let error = load_config(
+        None,
+        &env(&[("GODOT_MCP_ANDROID_NDK", "/opt/ndk")]),
+        &CliOverrides::default(),
+    )
+    .expect_err("an unknown variable is refused");
+    assert!(
+        matches!(error, ConfigError::UnknownEnvVar { .. }),
+        "{error}"
+    );
+}

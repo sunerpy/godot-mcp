@@ -114,6 +114,21 @@ enum Command {
         /// `unavailable` and names the plane.
         #[arg(long, default_value = "core")]
         profile: String,
+        /// Let the script tools run caller-written GDScript, with the user's
+        /// privileges; nothing confines what it does.
+        /// Off unless given here or as `allow_scripts = true` in `--config`;
+        /// refused for `proxied_oidc`.
+        #[arg(long)]
+        allow_scripts: bool,
+        /// The Android SDK an Android export and a device deploy use, by
+        /// absolute path; overrides `sdk` in the `[android]` section of
+        /// `--config`. Nothing is downloaded or installed.
+        #[arg(long, value_name = "DIR")]
+        android_sdk: Option<PathBuf>,
+        /// The JDK an Android export signs with, by absolute path; overrides
+        /// `java_home` in the `[android]` section of `--config`.
+        #[arg(long, value_name = "DIR")]
+        android_java_home: Option<PathBuf>,
     },
     /// Durable-transaction operator commands. Local owner only.
     Transaction {
@@ -461,11 +476,19 @@ enum ServeTarget {
     Workspace(PathBuf),
 }
 
+/// The Android SDK and JDK `serve` was given on its command line.
+struct AndroidFlags {
+    sdk: Option<PathBuf>,
+    java_home: Option<PathBuf>,
+}
+
 fn serve(
     stdio: bool,
     config_path: Option<&std::path::Path>,
     target: &ServeTarget,
     profile: &str,
+    allow_scripts: bool,
+    android: AndroidFlags,
 ) -> ExitCode {
     if !stdio {
         eprintln!("godot-mcp serve: only --stdio is available in this build");
@@ -494,6 +517,25 @@ fn serve(
         config.project_root = Some(project.display().to_string());
     }
     config.profile = Some(profile);
+    let android_given = android.sdk.is_some() || android.java_home.is_some();
+    if let Some(sdk) = android.sdk {
+        config.android.sdk = Some(sdk.display().to_string());
+    }
+    if let Some(java_home) = android.java_home {
+        config.android.java_home = Some(java_home.display().to_string());
+    }
+    if allow_scripts {
+        config.allow_scripts = true;
+    }
+    if (allow_scripts || android_given)
+        && let Err(error) = config.validate()
+    {
+        eprintln!(
+            "godot-mcp serve: configuration rejected [{}]: {error}",
+            error.error_kind().code()
+        );
+        return ExitCode::from(2);
+    }
     if matches!(target, ServeTarget::Workspace(_)) && config.transport != Transport::Stdio {
         eprintln!("godot-mcp serve: --workspace bootstrap is available over stdio only");
         return ExitCode::from(2);
@@ -538,6 +580,8 @@ fn serve(
                 observed_at_unix_ms,
                 limits: config.limits.clone(),
                 process: config.process.clone(),
+                allow_scripts: config.allow_scripts,
+                android: config.android.clone(),
             });
         }
     };
@@ -549,6 +593,8 @@ fn serve(
         observed_at_unix_ms,
         limits: config.limits.clone(),
         process: config.process.clone(),
+        allow_scripts: config.allow_scripts,
+        android: config.android.clone(),
     };
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -680,6 +726,9 @@ fn main() -> ExitCode {
             project,
             workspace,
             profile,
+            allow_scripts,
+            android_sdk,
+            android_java_home,
         }) => {
             let target = match (project, workspace) {
                 (Some(project), None) => ServeTarget::Project(project),
@@ -689,7 +738,17 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            serve(stdio, config.as_deref(), &target, &profile)
+            serve(
+                stdio,
+                config.as_deref(),
+                &target,
+                &profile,
+                allow_scripts,
+                AndroidFlags {
+                    sdk: android_sdk,
+                    java_home: android_java_home,
+                },
+            )
         }
         Some(Command::Transaction {
             command: TransactionCommand::Repair(arguments),

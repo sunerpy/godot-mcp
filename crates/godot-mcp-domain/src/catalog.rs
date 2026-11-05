@@ -181,6 +181,15 @@ const EXECUTE: ToolAnnotations = ToolAnnotations {
     open_world: true,
 };
 
+/// Running caller-written code: it may change or remove anything the user
+/// can, and reach anything the user can reach.
+const SCRIPT: ToolAnnotations = ToolAnnotations {
+    read_only: false,
+    destructive: true,
+    idempotent: false,
+    open_world: true,
+};
+
 const CREATE: ToolAnnotations = ToolAnnotations {
     read_only: false,
     destructive: false,
@@ -196,7 +205,8 @@ const ALL_PROFILES: &[CapabilityProfile] = &[
 ];
 const EDITOR_PROFILES: &[CapabilityProfile] = &[CapabilityProfile::Editor, CapabilityProfile::Full];
 /// The contract 0.2 authoring reads accompany the profiles that author or run
-/// a project; `core` remains exactly the contract 0.1 static-analysis surface.
+/// a project; `core` remains the static-analysis surface: the contract 0.1
+/// reads plus the contract 0.3 project-wide views.
 const AUTHORING_READ_PROFILES: &[CapabilityProfile] = &[
     CapabilityProfile::Editor,
     CapabilityProfile::Runtime,
@@ -431,10 +441,48 @@ const fn editor_execute(
     }
 }
 
+/// A read of the project answered by a supervised headless Godot process,
+/// introduced by contract 0.4.0. It changes nothing in the project, but its
+/// process starts the project's autoloads and so runs the project's code: like
+/// `script.check`, it is a diagnostic probe of the runtime capability.
+const fn engine_read(
+    handler: HandlerKey,
+    name: &'static str,
+    title: &'static str,
+    description: &'static str,
+) -> ToolDescriptor {
+    ToolDescriptor {
+        name,
+        title,
+        description,
+        capability: Capability::RuntimeExecute,
+        plane: OperationPlane::Project,
+        boundary: Some(ToolBoundary::Process),
+        composed: &[],
+        consult_editor: false,
+        family: Some(ToolFamily::DiagnosticProbe),
+        identity_family: IdentityFamily::DiagnosticProbe,
+        needs: ToolNeeds::HeadlessEngine,
+        annotations: PROBE,
+        profiles: RUNTIME_PROFILES,
+        introduced_in: ContractVersion::V0_4_0,
+        states: BOUND,
+        handler: Some(handler),
+    }
+}
+
 /// `descriptor`, first offered by contract 0.3.0.
 const fn since_0_3(descriptor: ToolDescriptor) -> ToolDescriptor {
     ToolDescriptor {
         introduced_in: ContractVersion::V0_3_0,
+        ..descriptor
+    }
+}
+
+/// `descriptor`, first offered by contract 0.4.0.
+const fn since_0_4(descriptor: ToolDescriptor) -> ToolDescriptor {
+    ToolDescriptor {
+        introduced_in: ContractVersion::V0_4_0,
         ..descriptor
     }
 }
@@ -447,6 +495,15 @@ const EDITOR_STATE: ToolAnnotations = ToolAnnotations {
 };
 
 const HISTORY: ToolAnnotations = ToolAnnotations {
+    read_only: false,
+    destructive: true,
+    idempotent: false,
+    open_world: false,
+};
+
+/// A change whose effects the editor decides: a dialog button pressed, the
+/// editor restarted.
+const EDITOR_EFFECT: ToolAnnotations = ToolAnnotations {
     read_only: false,
     destructive: true,
     idempotent: false,
@@ -557,12 +614,39 @@ const INPUT: ToolAnnotations = ToolAnnotations {
     open_world: false,
 };
 
+/// A change to the running game's own state — a property written, a node
+/// moved — which replaces what was there and is never repeated by a replay.
+const GAME_STATE: ToolAnnotations = ToolAnnotations {
+    read_only: false,
+    destructive: true,
+    idempotent: false,
+    open_world: false,
+};
+
 /// Stopping a session: repeating it changes nothing further.
 const STOP: ToolAnnotations = ToolAnnotations {
     read_only: false,
     destructive: true,
     idempotent: true,
     open_world: false,
+};
+
+/// A read of what the operator's Android tools see outside this host: the
+/// devices `adb` reaches.
+const DEVICE_READ: ToolAnnotations = ToolAnnotations {
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    open_world: true,
+};
+
+/// A change made on a device outside this host: an install replaces what the
+/// device held, and every launch starts the app again.
+const DEVICE: ToolAnnotations = ToolAnnotations {
+    read_only: false,
+    destructive: true,
+    idempotent: false,
+    open_world: true,
 };
 
 /// `scene.batch.apply`. Its headless helper writes through the file boundary;
@@ -771,6 +855,91 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          Godot process.",
         IdentityFamily::StaticAnalysis,
     ),
+    // --- contract 0.3.0: project-wide static views ---------------------------
+    since_0_4(static_read(
+        CoreOperation::ProjectAudit.key(),
+        "project.dependencies.audit",
+        "Project reference audit",
+        "Audit the project's file reference graph from the coherent workspace snapshot. `view` \
+         `unused` lists the scripts, scenes, resources, shaders and assets no root reaches (main \
+         scene, autoloads, project settings, enabled plugins, export filters), each with why; \
+         loads whose path is computed at run time are listed as `dynamic_loads`, so the used set \
+         is a lower bound. `view` `cycles` lists strongly connected file sets, classified as \
+         `inheritance` or `resource_load` (Godot fails on these) or `tolerated`. `include` / \
+         `exclude` globs narrow what is reported; paged with `offset`/`limit`. Read-only; needs \
+         no Godot process.",
+        IdentityFamily::StaticAnalysis,
+    )),
+    since_0_4(static_read(
+        CoreOperation::ProjectMetrics.key(),
+        "project.metrics.get",
+        "Project statistics and complexity",
+        "Report project statistics (`view` `statistics`: files and bytes by kind and extension, \
+         GDScript code, comment and blank lines, classes, functions, signals, scene nodes) or rank \
+         complexity (`view` `complexity`: GDScript functions by McCabe complexity, length or \
+         nesting, or scenes by nodes, depth or instances, with `min_*` thresholds), from the \
+         coherent workspace snapshot, paged with `offset`/`limit`. Read-only; needs no Godot \
+         process.",
+        IdentityFamily::StaticAnalysis,
+    )),
+    since_0_4(static_read(
+        CoreOperation::ProjectSearch.key(),
+        "project.search",
+        "Project content search",
+        "Search the project's text files for a literal `query`, or a linear-time regular \
+         expression with `regex`, with optional `case_sensitive`, `whole_word`, `include` / \
+         `exclude` globs and `context` lines. Matches stop at `max_matches` and are paged with \
+         `offset`/`limit`; binary, oversized and unread files are counted, never silently \
+         skipped, and files Godot's editor ignores (hidden, or under a `.gdignore`) are left \
+         out and counted. Read-only; needs no Godot process.",
+        IdentityFamily::StaticAnalysis,
+    )),
+    since_0_4(static_read(
+        CoreOperation::ProjectSignals.key(),
+        "project.signals.get",
+        "Signal flow",
+        "Trace signal flow from the coherent workspace snapshot: every declared signal with its \
+         scene connections (resolved through instanced scenes and script inheritance), code \
+         connections and emission sites. `view` `problems` lists handlers missing from the \
+         receiving scripts, signals emitted but never connected, and connections to signals the \
+         emitter's scripts never declare; `view` `undeclared_connections` lists connections to \
+         engine or unknown signals. Optional `signal` and `script` narrow it; paged with \
+         `offset`/`limit`. Read-only; needs no Godot process.",
+        IdentityFamily::StaticAnalysis,
+    )),
+    since_0_4(static_read(
+        CoreOperation::ProjectUid.key(),
+        "project.uid.get",
+        "UID lookup",
+        "Look a `uid` up as a project path, or a project `path` up as its UID, from the scene and \
+         resource headers, `.uid` sidecars and `.import` files the project records; Godot's own \
+         `.godot/uid_cache.bin` is not read, so an unrecorded UID is `unknown`. With neither, page \
+         the whole table with `offset`/`limit`. Conflicts and orphaned sidecars are reported as \
+         such. Read-only; needs no Godot process.",
+        IdentityFamily::StaticDiscovery,
+    )),
+    since_0_4(static_read(
+        CoreOperation::SceneExports.key(),
+        "scene.exports.get",
+        "Scene exported variables",
+        "List the `@export` variables of every scripted node of one text `scene` (.tscn), through \
+         instanced scenes and script inheritance: each variable's type hint and script default, \
+         the value the scene or an instanced scene stores, and which applies. Optional `node` \
+         narrows it to one node path; paged with `offset`/`limit`. Read-only; needs no Godot \
+         process.",
+        IdentityFamily::StaticSceneGraph,
+    )),
+    since_0_4(static_read(
+        CoreOperation::SceneNodes.key(),
+        "scene.nodes.find",
+        "Cross-scene node query",
+        "Find nodes across the project's text scenes by `type` (an engine class exactly, or a \
+         project class_name through script inheritance), `group`, `name` pattern, `script`, or a \
+         stored `property` with an optional exact `value`, resolving instanced scenes. `include` / \
+         `exclude` globs pick the scenes; paged with `offset`/`limit`. Read-only; needs no Godot \
+         process.",
+        IdentityFamily::StaticSceneGraph,
+    )),
     ToolDescriptor {
         name: "project.import.run",
         title: "Import project resources",
@@ -965,6 +1134,66 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         states: BOUND,
         handler: Some(EngineOperation::CheckScript.key()),
     },
+    ToolDescriptor {
+        name: "script.run",
+        title: "Run a GDScript headlessly",
+        description: "Run caller-written GDScript `source`, which defines `func run()`, in a \
+             supervised headless Godot process against the held project (`context` \
+             `project`, the default) or a disposable copy of it (`copy`), and answer what \
+             `run()` returned as a tagged value, the engine diagnostics, bounded output and \
+             every project file the run added, changed or removed. Nothing is undone: changes \
+             in the project stay, and a copy's are reported and discarded. The code runs with \
+             the user's privileges, and nothing confines what it does. Off unless the server \
+             was started with --allow-scripts; refused while an editor is connected (use \
+             `context` `copy`).",
+        capability: Capability::ProjectWrite,
+        plane: OperationPlane::Project,
+        boundary: Some(ToolBoundary::Process),
+        composed: &[ToolBoundary::Process, ToolBoundary::File],
+        consult_editor: false,
+        family: Some(ToolFamily::ProjectMutation),
+        identity_family: IdentityFamily::ProjectImport,
+        needs: ToolNeeds::HeadlessEngine,
+        annotations: SCRIPT,
+        profiles: EDITOR_PROFILES,
+        introduced_in: ContractVersion::V0_4_0,
+        states: BOUND,
+        handler: Some(EngineOperation::RunScript.key()),
+    },
+    engine_read(
+        EngineOperation::SceneRead.key(),
+        "scene.read",
+        "Read a scene through the engine",
+        "Make up to 64 `calls` of read-only engine methods from the reading table on nodes of \
+         the text scene at `path`, or on resources they hold: painted TileMapLayer cells, \
+         animation tracks and keys, state machine states, navigation polygons, shader \
+         uniforms. Each call answers its value as a tagged value, or why it was not made, with \
+         the engine errors it raised. A supervised headless Godot process makes the calls and \
+         saves nothing; it starts the project's autoloads, and instancing the scene runs its \
+         scripts' `_init`.",
+    ),
+    engine_read(
+        EngineOperation::ResourceRead.key(),
+        "resource.read",
+        "Read a resource through the engine",
+        "Make up to 64 `calls` of read-only engine methods from the reading table on the text \
+         resource at `path`, or on resources it holds: an animation's tracks and keys, a \
+         curve's points, a theme's items, a navigation mesh's polygons, a shader's uniforms. \
+         Each call answers its value as a tagged value, or why it was not made, with the \
+         engine errors it raised. A supervised headless Godot process makes the calls and \
+         saves nothing; it starts the project's autoloads.",
+    ),
+    engine_read(
+        EngineOperation::ShaderCheck.key(),
+        "shader.check",
+        "Check a shader through the engine",
+        "Compile the `.gdshader` at `path` with the engine's own shader language front end in a \
+         supervised headless Godot process, and answer whether it `compiled`, each error's \
+         message, file and line, including errors in the files it includes, its `mode` and its \
+         `uniforms` with their types and hints. No rendering backend compiles it, so an error \
+         only a GPU driver's compiler finds is not reported. Saves nothing; the process starts \
+         the project's autoloads.",
+    ),
     // --- contract 0.2.0: bootstrap -------------------------------------------
     ToolDescriptor {
         name: "workspace.projects.list",
@@ -1028,8 +1257,9 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         "project.files.list",
         "Project files",
         "List the project's files with their kind, byte length and SHA-256, optionally under one \
-         `prefix`, paged with `offset`/`limit`, from the coherent workspace snapshot. The hashes \
-         are the preconditions mutations require. Read-only; needs no Godot process.",
+         `prefix` and matching one `glob`, paged with `offset`/`limit`, from the coherent \
+         workspace snapshot. The hashes are the preconditions mutations require. Read-only; needs \
+         no Godot process.",
         IdentityFamily::StaticDiscovery,
     ),
     bound_read(
@@ -1147,6 +1377,18 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          the resource keeps its UID.",
         REWRITE,
     ),
+    since_0_4(engine_write(
+        EngineOperation::ProjectBatch.key(),
+        "project.batch.apply",
+        "Edit several scenes and resources",
+        "Apply a batch of typed `operations` to each of several existing text scenes and \
+         resources (`files`, each with its `kind`, `path`, `expectedSha256` and the operations \
+         scene.batch.apply or resource.batch.apply takes) in one supervised headless Godot run, \
+         and publish every file as one journaled transaction: every file changes or none does. \
+         Each file is edited as it is on disk. A file open in the connected editor refuses. \
+         `dryRun` returns each file's diff and tree without publishing.",
+        REWRITE,
+    )),
     // --- contract 0.2.0: assets ----------------------------------------------
     file_write(
         AuthoringOperation::AssetPut.key(),
@@ -1481,6 +1723,122 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          scripts; the editor reconnects with a new session.",
         EDITOR_STATE,
     ),
+    since_0_4(editor_mutation(
+        EditorOperation::ScriptRun.key(),
+        "editor.script.run",
+        "Run a GDScript in the editor",
+        "Run caller-written GDScript `source`, which defines `func run()`, in the connected \
+         editor on its main thread, as a tool script that reaches the editor through \
+         EditorInterface, and answer what `run()` returned as a tagged value, what the editor \
+         logged meanwhile (Godot 4.5.1 and later) and every project file that differs from before \
+         the run. Nothing is undone, and nothing enters an undo history unless the code puts it \
+         there. Godot cannot stop a script part way: when `deadline_ms` passes first the answer \
+         is `uncertain`, the code may still be running, and writes stay blocked until it is \
+         resolved. The code runs with the user's privileges, and nothing confines what it does. \
+         Off unless the server was started with --allow-scripts.",
+        SCRIPT,
+    )),
+    since_0_4(editor_read(
+        EditorOperation::CameraGet.key(),
+        "editor.camera.get",
+        "Read the editor's cameras",
+        "Read what the connected editor's viewports show: the 2D editor's view, its zoom and \
+         the point at the view's center, and the camera of each of the four 3D viewports, its \
+         transform, position and forward direction, projection, field of view or size and near \
+         and far planes, with whether each viewport is on screen; `view` and `viewport` select \
+         one. Changes nothing.",
+    )),
+    since_0_4(editor_mutation(
+        EditorOperation::CameraSet.key(),
+        "editor.camera.set",
+        "Move an editor camera",
+        "Move the camera of one 3D viewport of the connected editor (`viewport` 0 to 3, 0 by \
+         default) to `position`, looking at `target`, which the editor then takes as its view, \
+         and answer the camera read back a few frames later; the answer is `uncertain` when the \
+         editor did not keep it. The viewport must be on screen: show the 3D main screen with \
+         editor.main_screen.set. Needs Godot 4.5.1 or later. Changes editor state only.",
+        EDITOR_STATE,
+    )),
+    since_0_4(editor_mutation(
+        EditorOperation::ScriptClose.key(),
+        "editor.script.close",
+        "Close a script tab in the editor",
+        "Close the connected editor's script tab of the GDScript file at `path` and answer the \
+         scripts left open, read back. Refused while the tab holds edits its file does not, \
+         which closing would discard: save them in the editor first. Needs Godot 4.7.1 or \
+         later. Changes editor state only; no project file is written.",
+        EDITOR_STATE,
+    )),
+    since_0_4(editor_read(
+        EditorOperation::DialogsGet.key(),
+        "editor.dialogs.get",
+        "List the editor's dialogs",
+        "List the dialogs the connected editor shows, every visible accept, confirmation and \
+         file dialog, up to `limit` (32 by default): each with an `id` that stays the same while \
+         the dialog exists, its class, title and text, whether it blocks the rest of the \
+         editor, and its buttons, each named `ok`, `cancel` or by its action. Changes nothing.",
+    )),
+    since_0_4(editor_mutation(
+        EditorOperation::DialogRespond.key(),
+        "editor.dialog.respond",
+        "Answer an editor dialog",
+        "Press one `button` (`ok`, `cancel` or a button's action, as editor.dialogs.get names \
+         it) of the dialog the connected editor shows with that `dialog` id, as a click does, \
+         and answer whether the dialog closed and the dialogs still shown. The button does \
+         whatever the editor does for it, which may save, discard or delete project files, so \
+         a lost answer blocks writes until it is resolved. Refused when the dialog is no longer \
+         shown.",
+        EDITOR_EFFECT,
+    )),
+    since_0_4(editor_mutation(
+        EditorOperation::Restart.key(),
+        "editor.restart",
+        "Restart the editor",
+        "Restart the connected editor as its Reload Current Project does, and answer once the \
+         add-on of the restarted editor, a different process, connects within `timeoutMs` \
+         (120000 by default); otherwise the answer is `uncertain`. Refused while an open scene \
+         or script is unsaved, unless `save` saves them first (scripts from Godot 4.7.1 on); \
+         while a game runs; for an editor started with --headless, which Godot does not pass \
+         on to the editor it restarts; and for an editor this server runs as a managed \
+         session. A question the editor still asks before restarting is cancelled, and nothing \
+         is restarted.",
+        EDITOR_EFFECT,
+    )),
+    since_0_4(editor_read(
+        EditorOperation::PerformanceGet.key(),
+        "editor.performance.get",
+        "Read the editor's performance monitors",
+        "Read the connected editor process's performance monitors (frame rate and times, \
+         object, node and resource counts, memory and rendering figures) by the names its \
+         Godot build gives them (TIME_FPS, OBJECT_NODE_COUNT, ...), with the project's own \
+         custom monitors, or only the named `monitors`. The set differs between builds, so \
+         every value carries its name; an unknown name is refused. Changes nothing.",
+    )),
+    since_0_4(editor_mutation(
+        EditorOperation::ResourcePreview.key(),
+        "editor.resource.preview",
+        "Preview a resource in the editor",
+        "Ask the connected editor for its preview of the resource at `path`, the image its \
+         FileSystem dock shows, and its small thumbnail; wait up to `timeoutMs` (10000 by \
+         default) and answer each as a PNG artifact read back from the editor and checked \
+         against its digest. Needs an editor with a window: a headless editor makes no \
+         previews, and a resource the editor makes no preview for answers `unavailable`. \
+         Changes nothing in the project.",
+        INPUT,
+    )),
+    since_0_4(editor_read(
+        EditorOperation::SceneRead.key(),
+        "editor.scene.read",
+        "Read engine values of the edited scene",
+        "Call reading methods (the table scene.read uses: painted TileMapLayer cells, GridMap \
+         items, animation tracks and keys, state machines and blend trees, curves, gradients, \
+         theme entries, navigation polygons and more) on nodes of the scene the connected \
+         editor is editing (or the open `scene`, when current), or on resources they hold, and \
+         answer each value as a tagged value, as the editor holds it, unsaved edits included. \
+         Each call carries the errors and warnings the editor logged while it ran, which \
+         Godot 4.5.1 and later hand to the plugin. Carries the scene's semantic digest. \
+         Reading adds no undo history and marks nothing unsaved.",
+    )),
     runtime_read(
         SessionOperation::TreeGet.key(),
         "runtime.tree.get",
@@ -1525,6 +1883,60 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          builds, so every value carries its name; an unknown name is refused. Answers the \
          probe's revision and frame. Changes nothing in the game.",
     )),
+    since_0_4(runtime_read(
+        SessionOperation::PropertiesBatchGet.key(),
+        "runtime.properties.batch.get",
+        "Live properties of several nodes",
+        "Read the properties of up to 32 `targets` in one call — running nodes, or the `Engine` \
+         singleton's time_scale, physics_ticks_per_second and max_fps — each target's named \
+         `properties` (its stored and editor-visible ones by default, at most 64) as tagged \
+         values. A target that cannot be read says why while the others are read; once the \
+         answer nears 2.5 MB the remaining targets are marked skipped. Changes nothing in the \
+         game.",
+    )),
+    since_0_4(runtime_read(
+        SessionOperation::NodesFind.key(),
+        "runtime.nodes.find",
+        "Find live nodes",
+        "Find the running game's nodes under `root` that match every given filter: `class` (an \
+         engine or script class, inheriting ones included), `script` (attached or extended), \
+         `group`, `name` (a glob with * and ?) and `near` (within `radius` of a point or of \
+         another node, in 2D or 3D, nearest first). Answers at most `limit` (default 100) with \
+         paths, classes and positions; a scan stops after 20000 nodes and says so. Changes \
+         nothing in the game.",
+    )),
+    since_0_4(runtime_read(
+        SessionOperation::NavigationPathGet.key(),
+        "runtime.navigation.path.get",
+        "Live navigation path",
+        "Query a path over the navigation map a running Node2D or Node3D uses (its \
+         NavigationAgent's map and layers when it has one, its world's default map otherwise) \
+         from `from` (its position by default) to `to`, once the map has synchronized its \
+         regions, waiting at most `syncTimeoutMs`. Answers the points, the length and whether \
+         the path reaches the target; a map without a navigation region is unavailable. \
+         Changes nothing in the game.",
+    )),
+    since_0_4(runtime_read(
+        SessionOperation::Wait.key(),
+        "runtime.wait",
+        "Wait for a game condition",
+        "Wait in the running game until one `condition`, evaluated every frame, holds or \
+         `timeoutMs` (at most 30 s) passes: a node exists or is gone, a property compares (==, \
+         !=, <, <=, >, >=, contains, approx within `tolerance`) with a tagged value, a signal \
+         was emitted `count` times after the wait began, or a visible Control shows `text`. \
+         Answers whether it held, the last observed value and the time waited; cancelling or \
+         stopping the session ends it at the next frame. Changes nothing in the game.",
+    )),
+    since_0_4(runtime_read(
+        SessionOperation::Sample.key(),
+        "runtime.sample",
+        "Sample the running game",
+        "Sample named properties of running nodes (or the Engine singleton's) and named \
+         performance monitors every `intervalMs` for `durationMs` (at most 10 s and 600 \
+         samples): each series of values, every sample's time, frames and pause and focus \
+         state, and the minimum, maximum, mean and last of each numeric series. Large values \
+         and strings over 256 characters are not sampled. Changes nothing in the game.",
+    )),
     runtime_command(
         SessionOperation::ActionSend.key(),
         "input.action.send",
@@ -1561,6 +1973,88 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          it ends, fails or is cancelled. Answers how many steps ran.",
         INPUT,
     ),
+    since_0_4(runtime_command(
+        SessionOperation::InputRecordingStart.key(),
+        "input.recording.start",
+        "Record the game's input",
+        "Start recording every input event the managed game session's window receives — keys, \
+         mouse buttons and motion, joypad buttons and axes, actions — with its time from now, \
+         at most `maxEvents` (default 3000) for at most `maxDurationMs` (default 30 s). Each \
+         event says whether this server injected it or it came from elsewhere. One recording at \
+         a time; input.recording.stop answers it.",
+        INPUT,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::InputRecordingStop.key(),
+        "input.recording.stop",
+        "Stop recording input",
+        "Stop the managed game session's input recording and answer every event it kept, in \
+         the form input.replay takes, with how many the server injected and how many came from \
+         elsewhere and why the recording ended. The recording is also kept as a JSON artifact, \
+         whose opaque URI is answered.",
+        INPUT,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::InputReplay.key(),
+        "input.replay",
+        "Replay recorded input",
+        "Deliver input `events` — as input.recording.stop answers them, or written by hand — \
+         to a managed game session again at their times from now, for at most 30 s. Everything \
+         the replay pressed and still holds is released when it ends or is cancelled, when the \
+         session stops and when the probe loses the server. Other requests to the session wait \
+         while it runs; cancelling the call ends it at the next frame. Answers how many events \
+         were sent or skipped and how late the latest was.",
+        INPUT,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::UiPress.key(),
+        "runtime.ui.press",
+        "Press a button",
+        "Click one visible, enabled button (any BaseButton) of a managed game session, named by \
+         `node` or by the `text` it shows, with a synthetic left mouse press and release at its \
+         centre, through the same input path as input.mouse.send. Answers whether its `pressed` \
+         signal fired and its state afterwards. A disabled, hidden or ambiguous button, or one \
+         outside the root viewport (64x64 pixels in a headless session), is refused.",
+        INPUT,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::PropertiesSet.key(),
+        "runtime.properties.set",
+        "Write live properties",
+        "Write `properties` of one running node, or the Engine singleton's time_scale, \
+         physics_ticks_per_second and max_fps, from tagged values. A value is converted to the \
+         property's declared type only where nothing is lost; an unknown or read-only property, \
+         or a value that does not convert, refuses the whole write before anything changes. \
+         Each property is read back: answers its value before and after, and whether it holds \
+         what was asked, which a setter may change.",
+        GAME_STATE,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::NodeMove.key(),
+        "runtime.node.move",
+        "Move a live node",
+        "Move a running Node2D or Node3D to `to`: `teleport` sets its global position at once; \
+         `along_path` walks it along its navigation map's path at `speed` units per second, \
+         setting its position every physics frame, until it arrives, makes no progress for 30 \
+         physics frames or `timeoutMs` passes. The node is moved directly: the game's own \
+         movement code and physics collision response do not move it. Other requests to the \
+         session wait while it walks; cancelling the call ends it at the next frame. Answers the \
+         outcome and the final position.",
+        GAME_STATE,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::ScriptRun.key(),
+        "runtime.script.run",
+        "Run a GDScript in a running game",
+        "Run caller-written GDScript in a managed game session, on the game's main thread \
+         through its runtime probe, and answer what its `run()` returned, what it printed and \
+         raised, and which project files differ after it. Only a server whose operator turned \
+         script execution on runs it, and it runs with the user's privileges: nothing confines \
+         it, and nothing it does is undone. Godot cannot stop a script part way through: a run \
+         its deadline outlasts, or one withdrawn, is `uncertain` and goes on until it returns or \
+         the session stops.",
+        SCRIPT,
+    )),
     runtime_command(
         SessionOperation::ScreenshotCapture.key(),
         "runtime.screenshot.capture",
@@ -1579,6 +2073,46 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          its opaque artifact URI, frame count, size and SHA-256. Needs a windowed session.",
         INPUT,
     ),
+    since_0_4(runtime_command(
+        SessionOperation::TimeScaleSet.key(),
+        "runtime.time_scale.set",
+        "Set the game's time scale",
+        "Set the managed game session's Engine.time_scale to `timeScale` (0 to 100; 1 is real \
+         time, 0 stops game time) and read it back: answers the value before, the value asked \
+         for and the value read back. It changes the running game only: nothing is written to \
+         the project or saved, and the scale holds until it is changed again or the session \
+         ends. A read-back that differs from the request is answered as uncertain.",
+        GAME_STATE,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::ImageCompare.key(),
+        "runtime.image.compare",
+        "Compare the game with a reference image",
+        "Capture the managed game session's root viewport after the next drawn frame and \
+         compare it with the project PNG `reference`, both decoded by the game's probe with \
+         Godot's own Image API: answers both sizes, whether they match, how many and what share \
+         of the pixels differ by more than `tolerance` (0 to 255) in a channel, the largest \
+         channel difference and the box around the differing pixels, with the capture and a \
+         difference image as artifacts. A size mismatch fails the comparison; nothing is \
+         resized. Needs a windowed session.",
+        INPUT,
+    )),
+    since_0_4(runtime_command(
+        SessionOperation::ScenarioRun.key(),
+        "test.scenario.run",
+        "Run a test scenario",
+        "Run an ordered list of `steps` against one managed game session and answer one \
+         report: input (input.sequence.send's steps), waits (runtime.wait's conditions), \
+         property writes, button presses, time-scale changes, property and Control-text \
+         assertions, screenshots, image comparisons and stress windows that instance a project \
+         scene, sample the performance monitors and check the instances are freed. Each step is \
+         passed, failed (with expected and actual), error, skipped or uncertain; \
+         `stopOnFailure` (default true) skips the steps after the first failure or error, and \
+         an uncertain step ends the run. The verdict is passed only when every step passed, \
+         the run is bounded by `maxDurationMs`, and the report is also kept as a JSON artifact. \
+         A text assertion reads a Control's text property; nothing reads the screen as text.",
+        GAME_STATE,
+    )),
     ToolDescriptor {
         name: "editor.session.start",
         title: "Start an editor session",
@@ -1664,9 +2198,13 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
              the server's private storage, never into the project; every file a successful \
              export produces becomes an artifact, and `smoke` runs the build headless once where \
              this host can run it: a Linux build on Linux, a Windows build on Windows, a macOS \
-             app bundle, exported as one zip, on a Mac. A preset with a secret written into it, \
-             a missing template and an unsupported platform are refused before anything runs. \
-             Executes project code; needs a Godot editor build.",
+             app bundle, exported as one zip, on a Mac. `kind` pack exports the project's data \
+             as one PCK or ZIP, and patch only the files that differ from the base packs \
+             `patches` names (an earlier export's artifact or a project path); the pack's file \
+             table is read back and answered. An Android preset exports an APK through the \
+             configured Android SDK and JDK, read back and verified with apksigner. A preset \
+             with a secret written into it, a missing template and an unsupported platform are \
+             refused before anything runs. Executes project code; needs a Godot editor build.",
         capability: Capability::ExportDestructive,
         plane: OperationPlane::Project,
         boundary: Some(ToolBoundary::Process),
@@ -1722,6 +2260,53 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         states: BOUND,
         handler: Some(SessionOperation::ExportCancel.key()),
     },
+    since_0_4(ToolDescriptor {
+        name: "android.devices.list",
+        title: "Android devices",
+        description: "List the Android devices `adb devices -l` of the configured Android SDK \
+             reports: each one's serial, state (device, unauthorized, offline, ...), whether it \
+             is ready, model, product and transport. adb starts its own background server when \
+             none runs, as adb always does. Without a configured SDK holding adb it is \
+             unavailable; nothing is installed. Changes nothing on any device.",
+        capability: Capability::Read,
+        plane: OperationPlane::Runtime,
+        boundary: None,
+        composed: &[],
+        consult_editor: false,
+        family: None,
+        identity_family: IdentityFamily::RuntimeInspection,
+        needs: ToolNeeds::HeadlessEngine,
+        annotations: DEVICE_READ,
+        profiles: RUNTIME_PROFILES,
+        introduced_in: ContractVersion::V0_2_0,
+        states: BOUND,
+        handler: Some(SessionOperation::AndroidDevicesList.key()),
+    }),
+    since_0_4(ToolDescriptor {
+        name: "android.deploy",
+        title: "Deploy to an Android device",
+        description: "Install the APK of one finished Android export (`export`) on one device \
+             (`serial`) and prove it runs, phase by phase: the device is listed ready, \
+             `adb install -r` reports success, the activity manager starts the launcher the \
+             APK's own manifest declares, a process of its package appears within \
+             `runningTimeoutMs`, and a bounded logcat excerpt of that process is read. Every \
+             phase answers its outcome and bounded adb output; the call succeeds only when \
+             every phase did, and a failure names its phase. An install adb gave no verdict \
+             for is uncertain. Changes the device.",
+        capability: Capability::RuntimeExecute,
+        plane: OperationPlane::Runtime,
+        boundary: Some(ToolBoundary::Process),
+        composed: &[],
+        consult_editor: false,
+        family: Some(ToolFamily::RuntimeExecution),
+        identity_family: IdentityFamily::RuntimeExecution,
+        needs: ToolNeeds::HeadlessEngine,
+        annotations: DEVICE,
+        profiles: RUNTIME_PROFILES,
+        introduced_in: ContractVersion::V0_2_0,
+        states: BOUND,
+        handler: Some(SessionOperation::AndroidDeploy.key()),
+    }),
 ];
 
 /// The version 0.1 planned editor and runtime operations, exactly as the
@@ -2077,24 +2662,40 @@ mod tests {
         }
     }
 
-    /// A tool the frozen contract 0.2 lists was introduced by 0.2 or earlier;
-    /// every other tool was introduced by contract 0.3.
+    /// A tool the frozen contract 0.2 lists was introduced by 0.2 or earlier,
+    /// and one the frozen contract 0.3 lists by 0.3 or earlier; every other
+    /// tool was introduced by contract 0.4.
     #[test]
     fn every_tool_says_which_contract_introduced_it() {
-        use crate::manifests::historical_manifest_v0_2;
+        use crate::manifests::{historical_manifest_v0_2, historical_manifest_v0_3};
 
-        let v0_2: BTreeSet<String> = historical_manifest_v0_2(CapabilityProfile::Full)
-            .tools
-            .into_iter()
-            .chain(historical_manifest_v0_2(CapabilityProfile::Full).bootstrap_tools)
-            .collect();
+        let listed = |manifest: crate::manifests::ProfileManifest| -> BTreeSet<String> {
+            manifest
+                .tools
+                .into_iter()
+                .chain(manifest.bootstrap_tools)
+                .collect()
+        };
+        let v0_2 = listed(historical_manifest_v0_2(CapabilityProfile::Full));
+        let v0_3 = listed(historical_manifest_v0_3(CapabilityProfile::Full));
         for tool in TOOL_CATALOG {
-            assert_eq!(
-                tool.introduced_in == ContractVersion::V0_3_0,
-                !v0_2.contains(tool.name),
-                "{} says it was introduced by {:?}",
+            let expected = if v0_2.contains(tool.name) {
+                tool.introduced_in
+            } else if v0_3.contains(tool.name) {
+                ContractVersion::V0_3_0
+            } else {
+                ContractVersion::V0_4_0
+            };
+            assert!(
+                tool.introduced_in <= ContractVersion::V0_2_0 || !v0_2.contains(tool.name),
+                "{} is listed by contract 0.2 but says it was introduced by {:?}",
                 tool.name,
                 tool.introduced_in
+            );
+            assert_eq!(
+                tool.introduced_in, expected,
+                "{} says it was introduced by {:?}",
+                tool.name, tool.introduced_in
             );
         }
     }

@@ -63,6 +63,19 @@ measured why each is needed:
 - on 4.4.1 and 4.5.1 setting an animation track's path to an empty one raises an engine error,
   so a write-back skips empty node paths, which emptying recreates as empty anyway.
 
+Two later strategies keep the same rules (contract 0.4.0, 2026-11-05). The graph resources —
+AnimationNodeStateMachine, AnimationNodeBlendTree, the two blend spaces, VisualShader, TileSet,
+TileSetAtlasSource and MeshLibrary — add, rename and remove stored entries that no write takes
+away again, so a call on one is made on a rebuilt copy of the outermost embedded resource it
+reached, which the node then holds, and undo gives the node the untouched original back. The
+navigation regions' bakes rebuild the navigation resource the region holds, which the scene
+must embed. A bake is always made with `on_thread` false, so the batch goes on only once the
+engine has finished; in the editor it bakes into a rebuilt copy the region then holds, and the
+headless helper bakes in a copy of the scene, without its scripts, added to the helper's running
+tree, because the engine parses geometry only for nodes inside a running SceneTree: on 4.4.1
+and 4.7.1 a bake outside the tree left a 3D navigation mesh with no polygon and a 2D navigation
+polygon holding only its outline.
+
 ### A save is proven by the editor's report or by the file
 
 The editor emits `scene_saved` right after it tries to write a scene, whether the write
@@ -148,6 +161,8 @@ own restart first asks whether to save each scene with unsaved changes, a questi
 person using the editor can answer, and Godot 4.4.1's restart does not pass `--headless` on to the
 editor it starts. A setting whose answer says `restart_required` takes effect once the editor has
 restarted.
+
+[ADR 0013](0013-editor-restart.md) takes the restart up for the 2026-11-05 parity goal.
 
 ### The editor owns the project file and caches while it is connected
 

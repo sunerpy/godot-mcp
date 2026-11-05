@@ -40,8 +40,9 @@ which, so a client can rely on the tool list and learn about the machine from th
 
 ## What it is not
 
-There is no tool that executes arbitrary GDScript or calls an arbitrary engine method, in any
-profile. godot-mcp never downloads Godot or export templates. It serves one project for one user;
+An agent's own GDScript runs only after you start the server with `--allow-scripts`, and no typed
+tool calls an engine method outside its fixed set. godot-mcp never downloads Godot or export
+templates. It serves one project for one user;
 it is not a shared or remote service. And loading a Godot project runs that project's code, so
 the server's process boundaries contain and stop what it starts without making an untrusted
 project safe to open — the [threat model](../../security/threat-model.md) says exactly where the
