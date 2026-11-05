@@ -406,7 +406,6 @@ fn the_deadline_withdraws_the_running_step() {
     let tree = ProjectTree::new("scenario-deadline");
     let mut session = server(&tree);
     let game = start(&mut session, 2, "deadline-start");
-    let started = Instant::now();
     let report = structured(&session.call_tool(
         3,
         "test.scenario.run",
@@ -420,9 +419,14 @@ fn the_deadline_withdraws_the_running_step() {
             ]
         }),
     ));
+    // The scenario's own clock, not the call's: what the server does around
+    // the run, such as keeping the report, is no part of its deadline, and a
+    // loaded Windows runner once spent over 8 s on the call as a whole.
     assert!(
-        started.elapsed() < Duration::from_secs(8),
-        "the stand-in's wait runs 10 s unless withdrawn"
+        report["elapsed_ms"]
+            .as_u64()
+            .is_some_and(|elapsed| elapsed < 8_000),
+        "the stand-in's wait runs 10 s unless withdrawn: {report}"
     );
     marker(&tree, "fake-game.wait", "withdrawn runtime.wait");
     assert_eq!(report["steps"][0]["status"], json!("uncertain"), "{report}");
