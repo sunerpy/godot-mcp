@@ -364,10 +364,7 @@ impl Game {
     /// may raise one.
     fn stop(&mut self) {
         let stderr = self.stderr();
-        let errors: Vec<&str> = stderr
-            .lines()
-            .filter(|line| line.contains("ERROR"))
-            .collect();
+        let errors = support::game_errors(&stderr);
         assert!(
             errors.is_empty(),
             "{}: the game printed errors: {errors:?}\n{stderr}",

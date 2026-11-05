@@ -265,10 +265,7 @@ impl Game {
     /// may raise one.
     fn assert_no_errors(&mut self) {
         let stderr = self.stderr();
-        let errors: Vec<&str> = stderr
-            .lines()
-            .filter(|line| line.contains("ERROR"))
-            .collect();
+        let errors = support::game_errors(&stderr);
         assert!(
             errors.is_empty(),
             "{}: the game printed errors: {errors:?}\n{stderr}",
@@ -380,6 +377,21 @@ fn names(found: &Value) -> Vec<String> {
         .iter()
         .map(|node| node["name"].as_str().expect("a name").to_owned())
         .collect()
+}
+
+/// What a windowed game prints on a hosted CI runner, which has no sound
+/// device: the ALSA driver's failure is not counted, any other error is.
+#[test]
+fn a_missing_sound_device_is_no_game_error() {
+    let stderr = "ERROR: Condition \"status < 0\" is true. Returning: ERR_CANT_OPEN\n   \
+                  at: init_output_device (drivers/alsa/audio_driver_alsa.cpp:97)\n\
+                  WARNING: All audio drivers failed, falling back to the dummy driver.\n\
+                  SCRIPT ERROR: Invalid call. Nonexistent function 'jump'.\n   \
+                  at: _ready (res://main.gd:3)\n";
+    assert_eq!(
+        support::game_errors(stderr),
+        ["SCRIPT ERROR: Invalid call. Nonexistent function 'jump'."]
+    );
 }
 
 #[test]
