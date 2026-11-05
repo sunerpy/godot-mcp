@@ -858,7 +858,9 @@ const EXPORT_MODES: [&str; 4] = [
 ];
 
 /// Every file of the project an export packs, by its path in the pack:
-/// nothing hidden, none of this stand-in's own files, not the presets, and
+/// nothing hidden, none of this stand-in's own files (its `fake-*` records,
+/// and the `*.profraw` profiles a coverage build of it or of the test server
+/// writes into the directory it runs in), not the presets, and
 /// `project.godot` as `project.binary`, as Godot packs it.
 fn project_files(project: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     fn walk(directory: &std::path::Path, prefix: &str, out: &mut Vec<(String, Vec<u8>)>) {
@@ -867,7 +869,7 @@ fn project_files(project: &std::path::Path) -> Vec<(String, Vec<u8>)> {
         };
         for entry in listing.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name.starts_with("fake-") {
+            if name.starts_with('.') || name.starts_with("fake-") || name.ends_with(".profraw") {
                 continue;
             }
             let path = format!("{prefix}{name}");

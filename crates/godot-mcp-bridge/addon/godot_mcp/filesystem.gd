@@ -91,6 +91,12 @@ func scan(handlers, payload: Dictionary, context: Dictionary) -> Dictionary:
 	var deadline := int(context.get("deadline_unix_ms", 0))
 	var logged_before: int = handlers.editor_log.last() if handlers.log_capture() else -1
 	var filesystem := EditorInterface.get_resource_filesystem()
+	# A scan or import the editor runs already is waited for first. The first
+	# import of a project runs this plugin from its progress dialog, and a scan
+	# asked for then would start the editor's first scan over on top of that
+	# import, which then cannot find its files.
+	if not await _settled(deadline):
+		return _fail("unavailable", "the editor was still scanning or importing the project when the deadline passed; nothing was scanned")
 	filesystem.scan()
 	if not await _settled(deadline):
 		return _fail("unavailable", "the scan did not finish before its deadline; the editor may still be importing", "unresolved")

@@ -142,7 +142,7 @@ own requests still run, and a mutation already running finishes.
 | `editor.undo`, `editor.redo` | mutation | Undo or redo in the edited scene's history through the editor's own Undo and Redo; refused, changing nothing, while the editor's global or remote history also has a step to take. `save: true` also saves the scene. Each answers the scene's semantic digest. |
 | `editor.main_screen.set` | mutation | Shows the 2D, 3D or Script main screen. |
 | `editor.screenshot.capture` | mutation | Captures the editor's window, or its 2D or one 3D viewport, as a PNG artifact. |
-| `editor.filesystem.scan` | mutation | Rescans and imports what changed, then reloads the open script tabs whose files changed. |
+| `editor.filesystem.scan` | mutation | Waits for a scan or import the editor is running, rescans and imports what changed, then reloads the open script tabs whose files changed. |
 | `editor.script.open` | mutation | Opens a GDScript file in the built-in script editor at a line and column. |
 | `editor.script.close` | mutation | Closes a script tab that holds no unsaved edit; Godot 4.7.1. See [Closing a script tab](#closing-a-script-tab). |
 | `editor.camera.set` | mutation | Moves the camera of a 3D viewport on screen to look from one point at another, read back; Godot 4.5.1 or later. See [Cameras](#cameras). |

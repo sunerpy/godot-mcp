@@ -915,6 +915,89 @@ fn windowed_previews_in(binary: &Path) {
     drop(editor);
 }
 
+// --- a scan while the editor imports ------------------------------------------------
+
+/// An SVG the importer takes a while over: rasterized at 4096x4096 and
+/// compressed losslessly, so a windowed editor is still importing a dozen of
+/// them when its add-on connects.
+fn heavy_svg(index: usize) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4096\" height=\"4096\" \
+         viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" fill=\"#{:02x}3040\"/>\
+         <circle cx=\"32\" cy=\"32\" r=\"{}\" fill=\"#e04020\"/></svg>\n",
+        index * 16 % 256,
+        8 + index
+    )
+}
+
+#[test]
+#[ignore = "needs real Godot editors and a display: GODOT_MCP_DISPLAY_REQUIRED=1 under xvfb-run"]
+fn a_scan_asked_while_the_editor_imports_waits_for_the_import() {
+    if std::env::var("GODOT_MCP_DISPLAY_REQUIRED").as_deref() != Ok("1") {
+        eprintln!(
+            "GODOT_MCP_DISPLAY_REQUIRED is not 1; a scan during the first import was not checked"
+        );
+        return;
+    }
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "GODOT_MCP_DISPLAY_REQUIRED=1 needs a display: run under xvfb-run"
+    );
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        scan_during_import_in(binary);
+    }
+}
+
+/// A windowed editor imports a new project's files after it loads its
+/// plugins, and while it does, its progress dialog runs the add-on. A scan
+/// asked for then must wait for the import: started on top of the editor's
+/// first scan, it scans the project a second time while the first import
+/// runs, and that import then cannot find its files.
+fn scan_during_import_in(binary: &Path) {
+    let art: Vec<(String, String)> = (0..12)
+        .map(|index| (format!("art/{index}.svg"), heavy_svg(index)))
+        .collect();
+    let files: Vec<(&str, &str)> = art
+        .iter()
+        .map(|(path, svg)| (path.as_str(), svg.as_str()))
+        .collect();
+    let (tree, mut session, mut ids) = project_with_addon("live-scan-importing", &files);
+    let editor = Editor::launch_windowed(binary, &tree.root, &tree.base.join("home"));
+    wait_connected(&mut session, &mut ids, &editor);
+    let mark = editor.mark();
+    scanned(&mut session, &mut ids, &editor);
+    editor.assert_no_errors_since(mark, "a scan asked while the editor imported the project");
+    for (path, _) in &art {
+        let import = std::fs::read_to_string(tree.root.join(format!("{path}.import")))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{}: {path} was not imported: {error}\n{}",
+                    editor.binary,
+                    editor.output()
+                )
+            });
+        let imported = import
+            .lines()
+            .find_map(|line| line.strip_prefix("path=\"res://"))
+            .map(|rest| rest.trim_end_matches('"').to_owned())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: {path}.import names no import:\n{import}",
+                    editor.binary
+                )
+            });
+        assert!(
+            tree.root.join(&imported).is_file(),
+            "{}: {path} has no imported texture {imported}\n{}",
+            editor.binary,
+            editor.output()
+        );
+    }
+    let _ = session.finish();
+    drop(editor);
+}
+
 // --- restarts -----------------------------------------------------------------------
 
 /// Whether process `pid` runs and is not a zombie.
