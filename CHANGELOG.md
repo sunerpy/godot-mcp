@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/sunerpy/godot-mcp/compare/v0.2.0...v0.3.0) (2026-11-05)
+
+
+### Features
+
+* **analysis:** audit dependencies, measure, search and list signals, UIDs, exported properties and nodes across a project ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **editor:** read the edited scene, move the editor camera, answer dialogs, close script tabs, restart, and read performance and resource previews ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **editor:** show the server's status in an editor panel ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **editor:** write property paths, create any resource class and call more editing methods ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **engine:** read engine values from scenes and resources, check shaders, bake navigation and save audio bus layouts ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **export:** export patch packs and Android APKs, and deploy an APK to a device ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **runtime:** run test scenarios with time scale and image comparison ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **runtime:** set properties, find and move nodes, wait, sample, record and replay input, press UI and query navigation in a managed game ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **server:** apply batches to several scenes and resources in one transaction ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **server:** run caller-written GDScript headlessly, in the live editor and in a managed game when the operator allows scripts ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+
+
+### Bug Fixes
+
+* **editor:** wait for the editor's own scan or import before scanning ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+* **engine:** refuse a write whose value Godot replaces instead of answering success ([7d69450](https://github.com/sunerpy/godot-mcp/commit/7d69450c870f17b7582945aa35055a0856b1beae))
+
 ## [0.2.0](https://github.com/sunerpy/godot-mcp/compare/v0.1.2...v0.2.0) (2026-11-03)
 
 
