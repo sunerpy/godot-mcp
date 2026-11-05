@@ -10,9 +10,7 @@ use godot_mcp_engine::discovery::{EnvironmentSnapshot, HostPlatform, discover};
 use godot_mcp_engine::probe::{ProbeCache, ProbeError, ProbeRequest};
 use godot_mcp_engine::releases::ReleaseLock;
 use godot_mcp_engine::supervision::journal::TransportMode as EngineTransportMode;
-use godot_mcp_engine::supervision::protocol::{
-    EnvironmentAllowlist, OutputCaps, bundled_supervisor,
-};
+use godot_mcp_engine::supervision::protocol::{EnvironmentAllowlist, OutputCaps};
 use godot_mcp_engine::validation::runner::EngineBinding;
 
 use super::journal::EngineJournal;
@@ -42,6 +40,9 @@ pub(crate) struct EngineRuntimeConfig {
     pub(crate) editor: Option<Arc<crate::editor::bridge::EditorBridge>>,
     /// The boundary every launch is contained in, and the project's trust.
     pub(crate) providers: Arc<LaunchProviders>,
+    /// Whether `script.run` and `runtime.script.run` run caller-written
+    /// GDScript (ADR 0012).
+    pub(crate) allow_scripts: bool,
 }
 
 pub(crate) struct EngineRuntime {
@@ -55,6 +56,7 @@ pub(crate) struct EngineRuntime {
     pub(super) workspace: Arc<WorkspaceCoordinator>,
     pub(super) editor: Option<Arc<crate::editor::bridge::EditorBridge>>,
     pub(super) providers: Arc<LaunchProviders>,
+    pub(super) allow_scripts: bool,
 }
 
 pub(super) struct ResolvedEngine {
@@ -82,6 +84,7 @@ impl EngineRuntime {
             workspace: config.workspace,
             editor: config.editor,
             providers: config.providers,
+            allow_scripts: config.allow_scripts,
         }
     }
 
@@ -191,7 +194,7 @@ impl EngineRuntime {
             binding: EngineBinding {
                 program: resolved.path,
                 binary_sha256: snapshot.key.binary_sha256,
-                supervisor_binary: bundled_supervisor(),
+                supervisor_binary: super::process_supervisor_binary(),
                 project_root: self.project_root.clone(),
                 work_dir: self.state_dir.join("engine-launches"),
                 environment,

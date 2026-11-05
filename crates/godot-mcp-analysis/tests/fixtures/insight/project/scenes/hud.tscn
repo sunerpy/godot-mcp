@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3 uid="uid://bhudscene0001"]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1_hud"]
+[ext_resource type="Theme" path="res://resources/theme.tres" id="2_theme"]
+
+[node name="Hud" type="Control"]
+theme = ExtResource("2_theme")
+script = ExtResource("1_hud")
+
+[node name="Button" type="Button" parent="."]
+text = "Start"
+
+[node name="Label" type="Label" parent="."]
+
+[connection signal="pressed" from="Button" to="." method="_on_button_pressed"]

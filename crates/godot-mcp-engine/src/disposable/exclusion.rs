@@ -31,16 +31,20 @@ pub enum ExclusionReason {
     BuildOutput,
     /// The operator named this path explicitly.
     OperatorRequested,
+    /// The copying caller's own state inside the source: never opened,
+    /// hashed or listed entry by entry.
+    CallerState,
 }
 
 impl ExclusionReason {
-    /// Every reason. There are five.
-    pub const ALL: [Self; 5] = [
+    /// Every reason. There are six.
+    pub const ALL: [Self; 6] = [
         Self::SecretMaterial,
         Self::EngineGeneratedCache,
         Self::VersionControlMetadata,
         Self::BuildOutput,
         Self::OperatorRequested,
+        Self::CallerState,
     ];
 
     /// Stable wire spelling recorded in a copy manifest.
@@ -52,6 +56,7 @@ impl ExclusionReason {
             Self::VersionControlMetadata => "version_control_metadata",
             Self::BuildOutput => "build_output",
             Self::OperatorRequested => "operator_requested",
+            Self::CallerState => "caller_state",
         }
     }
 
@@ -120,6 +125,7 @@ pub const EXCLUDED_FILE_SUFFIXES: [(&str, ExclusionReason); 7] = [
 pub struct ExclusionPolicy {
     extra_directories: BTreeSet<String>,
     extra_files: BTreeSet<String>,
+    owned_directories: BTreeSet<String>,
 }
 
 impl Default for ExclusionPolicy {
@@ -135,6 +141,7 @@ impl ExclusionPolicy {
         Self {
             extra_directories: BTreeSet::new(),
             extra_files: BTreeSet::new(),
+            owned_directories: BTreeSet::new(),
         }
     }
 
@@ -150,6 +157,23 @@ impl ExclusionPolicy {
     pub fn excluding_file(mut self, relative: &str) -> Self {
         self.extra_files.insert(normalize(relative));
         self
+    }
+
+    /// Also leave out a project-relative directory the copying caller owns,
+    /// such as its own state. Unlike an excluded directory it is never opened:
+    /// nothing inside it is listed in the manifest or hashed into a tree
+    /// digest, so what the caller writes there, a copy in progress included,
+    /// never reaches the walk.
+    #[must_use]
+    pub fn owning_directory(mut self, relative: &str) -> Self {
+        self.owned_directories.insert(normalize(relative));
+        self
+    }
+
+    /// Whether a project-relative directory is one the caller owns.
+    #[must_use]
+    pub fn owns_directory(&self, relative: &str) -> bool {
+        self.owned_directories.contains(&normalize(relative))
     }
 
     /// The operator-named directories, sorted.
@@ -233,6 +257,9 @@ impl ExclusionPolicy {
         }
         for name in &self.extra_files {
             rules.push((format!("name:{name}"), ExclusionReason::OperatorRequested));
+        }
+        for name in &self.owned_directories {
+            rules.push((format!("owned:{name}"), ExclusionReason::CallerState));
         }
         rules.sort();
         rules

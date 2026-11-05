@@ -299,7 +299,7 @@ mod tests {
         for path in [
             ".godot/x.cfg",
             ".godot-mcp/journal",
-            "godot_mcp_helpers/3/x.gd",
+            "godot_mcp_helpers/4/x.gd",
         ] {
             assert_eq!(
                 writable(path).expect_err(path).kind(),

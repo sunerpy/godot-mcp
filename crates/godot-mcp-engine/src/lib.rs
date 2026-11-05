@@ -20,12 +20,14 @@
 #![deny(unsafe_code)]
 
 pub mod adapters;
+pub mod android;
 pub mod canonical;
 pub mod discovery;
 pub mod disposable;
 pub mod export;
 pub mod probe;
 pub mod releases;
+pub mod script_run;
 pub mod supervision;
 pub mod validation;
 

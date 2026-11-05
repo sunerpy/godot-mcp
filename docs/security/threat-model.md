@@ -17,7 +17,8 @@ and does not claim to.
 
 That phrasing is not modesty. Loading a Godot project **is** arbitrary code execution: a
 `@tool` script runs inside the editor, a `@tool` autoload runs as soon as the project
-loads, and an import implies editor mode. Godot's own documentation notes the editor
+loads, an import implies editor mode, and a headless helper run starts every autoload,
+`@tool` or not. Godot's own documentation notes the editor
 carries no protection against misuse of `@tool` scripts. So the code runs, and the only
 useful questions are what it may change and what still bounds it.
 
@@ -102,12 +103,29 @@ file, so the bridge is no stronger than your user account. The `editor`, `full` 
 profiles serve it; `runtime` lists only the two tools that run the project in the editor. Its
 mutations are typed: scene commands, editing calls drawn from one fixed table of class methods
 that change only their receiver's stored state, project settings, the editor's own settings and
-shortcuts, saves, closing scenes, captures, navigation, rescans, and starting and stopping the
-project. It exposes no arbitrary method call and evaluates no expression; the only code it
-compiles at runtime is its own logger, from a source constant it carries. A capture contains
+shortcuts, saves, closing scenes and script tabs, captures and resource previews, navigation and
+the editor's 3D cameras, rescans, answering dialogs, restarting the editor, and starting and
+stopping the project. It exposes no arbitrary method call and evaluates no expression. The code it compiles
+at runtime is its own logger, from a source constant it carries, and, only on a session whose
+server offered `editor.script.run`, the caller's script; see
+[Script execution](#script-execution). A capture contains
 whatever the editor shows, and its log whatever the editor and the project print. A game the
 editor runs for `editor.play.start` is the editor's own child process, outside every boundary
 this server holds, so it is refused for an untrusted project.
+
+`editor.dialog.respond` presses one button of a dialog the editor shows, and the button does
+whatever the editor does for it: it can save, discard or delete project files, or quit or restart
+the editor. Nothing answers a dialog on its own; each press is one call that names the dialog and
+the button, and it is journaled as covering the whole project, so a lost answer blocks writes
+until it is resolved. `editor.restart` ends the editor's process, and Godot starts the restarted
+editor as it exits, with the options it passes on and the old editor's environment; neither
+editor is inside a boundary this server holds, as no editor you run is. It is refused for an
+editor this server runs as a managed session, whose restarted process would leave that session's
+boundary. It saves only with `save`, and it never discards: it is refused while the editor
+reports an unsaved scene or script, and a question the editor still asks before restarting is
+cancelled. From the request until the restarted editor connects, the server sends the editor no
+other change and writes none of the project's files. See
+[ADR 0013](../contributor/adr/0013-editor-restart.md).
 
 `editor.preferences.set` and `editor.shortcuts.set` are the changes that reach past the
 project: the editor writes them to your own editor settings file, which every project it opens
@@ -119,6 +137,16 @@ the editor save on its own, whose saves no transaction records. `editor.shortcut
 the editor's shortcuts in the same file. It starts nothing itself, but a key it binds then
 triggers the editor action it names whenever you press it, Run Project among them; every
 binding a change made is in its answer, before and after.
+
+The add-on's **Pause agent edits** switch makes the editor refuse, before they start, the
+mutations the server sends it. It is a convenience for the person at the editor, not a security
+boundary: it holds back only what passes through the editor, while the server's own file,
+script, resource and asset writes go on; it lasts only as long as the editor and the add-on
+run; and any process running as your user can still change the project's files, the add-on's
+own among them. The panel that shows the bridge's activity lists each request's method, target
+path and outcome, never its arguments, and copies no secret; the error messages **Copy
+diagnostics** includes are the editor's own, and can name a node, a setting or a value the
+request gave.
 See [Editor bridge](../operator/editor-bridge.md).
 
 ### 4. The HTTP boundary
@@ -153,8 +181,10 @@ the server has.
 on the command line; the project is not modified for it. The probe dials a loopback bridge
 private to that one session and must present the session's secret from its private
 rendezvous file before one request is served. It answers typed reads, typed synthetic input
-(actions, keys, mouse) and captures, and nothing else: there is no arbitrary method call
-and no expression evaluation. Every hold expires by itself, and the probe releases
+(actions, keys, mouse), captures and comparisons with a reference image, and nothing else:
+there is no arbitrary method call and no expression evaluation, except the caller's script on a
+session whose server offered `runtime.script.run` ([Script execution](#script-execution)). Every
+hold expires by itself, and the probe releases
 everything it holds when it is stopped, when a sequence is cancelled and when it loses its
 server, so a killed server cannot leave input held. A managed editor session hosts the
 language server and debug adapter on loopback ports the server allocates; an endpoint is
@@ -164,16 +194,19 @@ system's socket table shows the listener is held by that very process. A connect
 never taken as ownership. The debug commands expose no expression evaluation, and answers
 name project files by `res://` path, never by their absolute location.
 
-**Does not enforce.** What the project's own code does once a game or an editor runs it:
-it runs with your user's privileges, as it would if you ran it yourself, and a game the
-debugger runs inherits the server's display.
+**Does not enforce.** What the project's own code does once a game or an editor runs it,
+the scenes a test scenario's stress step instances included: it runs with your user's
+privileges, as it would if you ran it yourself, and a game the debugger runs inherits the
+server's display.
 
 **Residual risk.** Any process running as your user can read the private rendezvous files
 and the socket table and can connect to loopback ports, so these sessions are no stronger
 than your user account. Between the listener check and the connect, a process of the same
 user could in principle replace the listener; every connect repeats both checks, which
-narrows but does not close that window. A capture contains whatever the game shows. See
-[Managed sessions](../operator/managed-sessions.md).
+narrows but does not close that window. A capture contains whatever the game shows, and a
+scenario's report whatever its steps read. A reference image is read through the held project,
+never from `.godot`, `.godot-mcp` or `godot_mcp_helpers`, and goes only to the session's probe.
+See [Managed sessions](../operator/managed-sessions.md).
 
 An export is a managed session too. It runs the project through the resolved build's own
 installed templates only, writes into private storage rather than the project, and its
@@ -182,6 +215,57 @@ with a password, passphrase, token, secret or key written into `export_presets.c
 refused before anything runs, and only the option names are ever reported. What an
 exported build contains is whatever the project contains, and its smoke run executes it
 with your user's privileges. See [Exports](../operator/exports.md).
+
+An Android export runs the operator's configured SDK and JDK where they are and installs
+nothing. Godot reads its Android settings from a private home the server writes, never
+from yours, and the SDK it sees has a stand-in `adb` that exits with an error, so an export
+cannot reach a device. A release export signs only with the keystore Godot's credentials
+store names; the server reads whether those options are set and never their values. The
+server's own debug keystore, in its private state, carries Android's well-known debug
+password: anyone who can read that file can sign an update the device accepts over a
+debug install, so it signs debug builds only. Godot writes an export's temporaries under
+fixed names in the host's temporary directory, outside every private directory: the
+server runs one export at a time, but another program of your user can read or replace
+those files while an export runs.
+
+`android.deploy` has an effect outside the project: it installs an app on a device and
+starts it, with adb running as your user. It is a journaled mutation, refused before
+anything is sent unless it names a finished Android export of the caller's own, and it
+reports success only when the install, the launch and a running process were each proven;
+an install whose outcome adb did not report is `uncertain` and is never retried. What the
+app does on the device is whatever the project does. The adb server a call starts keeps
+running after it, as adb's own process, and listens on `127.0.0.1:5037` (measured with
+platform-tools 37.0.1), where any local process can reach it and through it every device
+it has authorized. A real device has not been exercised; the deploy phases are checked
+against a stand-in for adb.
+
+## Script execution
+
+Three tools run caller-written GDScript: `script.run` in a supervised headless Godot,
+`editor.script.run` in the connected editor and `runtime.script.run` in a managed game
+([ADR 0012](../contributor/adr/0012-declared-script-execution.md)). They are the only
+execution surface, and the absence audit proves it: no other advertised name denotes
+execution, and `allow_scripts` is the only key that turns anything on.
+
+**Enforces.** Nothing runs unless the operator turned the switch on for the launch
+(`--allow-scripts`, or `allow_scripts = true` with `--config`); a call while it is off is
+refused with `permission_denied` before anything is written or sent, and the editor add-on and
+the runtime probe are not offered the methods, which they check too. The switch is refused
+together with `http.mode = "proxied_oidc"`, so a script never runs for a caller the server only
+knows through a proxy. Every run is a journaled transaction whose audit record carries digests,
+never the source; its answer lists every project file that differs from before it; and an
+outcome the server cannot prove stays `uncertain`. An unanswered editor run quarantines the
+project, because the editor may still save files.
+
+**Does not.** Confine the code. It runs with your privileges, inside the engine process the
+tool names, and can read and write any file you can, start processes and open connections.
+Only the headless run is ended by its deadline: code in the editor or a game goes on after the
+server stops waiting, until it returns, the editor closes or the session stops. Nothing a
+script does is undone, and what it does outside the project is not recorded.
+
+**Residual risk.** While the switch is on, the capability profile no longer bounds what can
+happen: treat `--allow-scripts` like handing the agent a shell in the project directory, and
+leave it off for a project or a client you do not trust.
 
 ## A loopback address is never an identity
 
@@ -195,10 +279,11 @@ rendezvous-authenticated through a private file with a constant-time comparison.
 
 ## What is deliberately absent
 
-* **Arbitrary script execution.** `unsafe_script` is a reserved identifier with no
-  capability, no handler, no profile membership, no configuration option and no presence in
-  the shipping binary. This is the single largest deliberate difference from tools that
-  expose an "execute this GDScript" entry point.
+* **Script execution by default, or for a remote caller.** The script tools run nothing until
+  the operator allows them for a launch, never with `proxied_oidc`, and nothing else executes
+  caller code; see [Script execution](#script-execution). `unsafe_script` stays a reserved
+  identifier with no capability, no handler, no profile membership, no configuration option
+  and no presence in the shipping binary.
 * **A force or bypass path.** A quarantined transaction is resolved only by a
   proof-backed transition; the repair command re-derives every proof field itself and
   independently re-validates a composite transaction's linked sub-proof.

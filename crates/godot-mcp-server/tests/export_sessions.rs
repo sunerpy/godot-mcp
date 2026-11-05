@@ -62,10 +62,10 @@ binary_format/architecture="x86_64"
 
 [preset.2]
 
-name="Phone"
-platform="Android"
+name="Web"
+platform="Web"
 runnable=false
-export_path="build/game.apk"
+export_path="build/game.html"
 
 [preset.2.options]
 "#;
@@ -570,7 +570,7 @@ fn an_export_that_cannot_be_exact_or_safe_is_refused_before_anything_runs() {
         secret.to_string().contains("script_encryption_key"),
         "{secret}"
     );
-    let unsupported = start(&mut session, 3, "Phone", json!({}));
+    let unsupported = start(&mut session, 3, "Web", json!({}));
     assert_eq!(
         error_code(&unsupported),
         json!("unsupported"),

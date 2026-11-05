@@ -11,7 +11,9 @@ use serde_json::{Map, Value, json};
 pub(crate) use godot_mcp_domain::catalog::EngineOperation;
 
 use super::authored::{self, AuthorKind, AuthorRequest};
+use super::batches::{self, BatchesArguments};
 use super::outcome_error;
+use super::read::{self, ReadKind, ReadRequest, ShaderCheckRequest};
 use crate::arguments::deserialize_non_negative_whole_u64;
 
 /// What each engine operation takes and runs, beside the catalog descriptor
@@ -35,6 +37,11 @@ impl EngineCall for EngineOperation {
             Self::RunProject => RunArguments::input_schema(),
             Self::RunTests => TestArguments::input_schema(),
             Self::CheckScript => ScriptArguments::input_schema(),
+            Self::RunScript => ScriptRunArguments::input_schema(),
+            Self::SceneRead => read::input_schema(ReadKind::Scene),
+            Self::ResourceRead => read::input_schema(ReadKind::Resource),
+            Self::ShaderCheck => read::shader_check_schema(),
+            Self::ProjectBatch => batches::input_schema(),
         }
     }
 
@@ -78,6 +85,33 @@ pub(super) enum EngineRequest {
         script: String,
         deadline_ms: u64,
     },
+    RunScript {
+        source: String,
+        context: ScriptContext,
+        deadline_ms: u64,
+    },
+    Read(ReadRequest),
+    CheckShader(ShaderCheckRequest),
+    Batches(BatchesArguments),
+}
+
+/// Where `script.run` runs its source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ScriptContext {
+    /// Against the held project, whose changes stay.
+    Project,
+    /// Against a disposable copy, imported first and discarded after.
+    Copy,
+}
+
+impl ScriptContext {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Copy => "copy",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -273,6 +307,53 @@ impl ScriptArguments {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScriptRunArguments {
+    source: String,
+    #[serde(default = "default_script_context")]
+    context: ScriptContext,
+    #[serde(
+        default = "default_script_run_deadline_ms",
+        deserialize_with = "deserialize_non_negative_whole_u64"
+    )]
+    deadline_ms: u64,
+}
+
+/// The longest source `script.run` takes, in characters, as a schema counts
+/// them.
+pub(super) const MAX_SCRIPT_SOURCE_CHARS: usize = crate::scripts::MAX_SOURCE_CHARS;
+
+impl ScriptRunArguments {
+    fn input_schema() -> Map<String, Value> {
+        object_schema(json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_SCRIPT_SOURCE_CHARS,
+                    "description": "GDScript that defines `func run()`, called once the scene \
+                                    tree and the project's autoloads are up and awaited when it \
+                                    is a coroutine; what it returns is the answer's `result`. A \
+                                    script extending Node is added to the tree first."
+                },
+                "context": {
+                    "type": "string",
+                    "enum": ["project", "copy"],
+                    "default": "project",
+                    "description": "`project` runs against the held project, and what the run \
+                                    changes stays; `copy` runs against a disposable copy, \
+                                    imported first, whose changes are reported and discarded."
+                },
+                "deadline_ms": deadline_schema(default_script_run_deadline_ms())
+            },
+            "required": ["source", "idempotencyId"],
+        }))
+    }
+}
+
 impl EngineRequest {
     pub(super) fn parse(
         operation: EngineOperation,
@@ -348,6 +429,33 @@ impl EngineRequest {
                     deadline_ms: parsed.deadline_ms,
                 })
             }
+            EngineOperation::RunScript => {
+                let parsed: ScriptRunArguments = parse_arguments(arguments)?;
+                validate_deadline(parsed.deadline_ms)?;
+                let characters = parsed.source.chars().count();
+                if characters == 0 || characters > MAX_SCRIPT_SOURCE_CHARS {
+                    return Err(outcome_error(
+                        ErrorKind::InvalidInput,
+                        format!(
+                            "`source` must be 1 to {MAX_SCRIPT_SOURCE_CHARS} characters; it is \
+                             {characters}"
+                        ),
+                    ));
+                }
+                Ok(Self::RunScript {
+                    source: parsed.source,
+                    context: parsed.context,
+                    deadline_ms: parsed.deadline_ms,
+                })
+            }
+            EngineOperation::SceneRead => read::parse(ReadKind::Scene, arguments).map(Self::Read),
+            EngineOperation::ResourceRead => {
+                read::parse(ReadKind::Resource, arguments).map(Self::Read)
+            }
+            EngineOperation::ShaderCheck => {
+                read::parse_shader_check(arguments).map(Self::CheckShader)
+            }
+            EngineOperation::ProjectBatch => batches::parse(arguments).map(Self::Batches),
         }
     }
 }
@@ -488,6 +596,14 @@ const fn default_test_deadline_ms() -> u64 {
 
 const fn default_script_deadline_ms() -> u64 {
     30_000
+}
+
+const fn default_script_context() -> ScriptContext {
+    ScriptContext::Project
+}
+
+const fn default_script_run_deadline_ms() -> u64 {
+    60_000
 }
 
 #[cfg(test)]

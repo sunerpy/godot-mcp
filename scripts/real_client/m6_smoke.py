@@ -127,10 +127,10 @@ binary_format/architecture="x86_64"
 
 [preset.3]
 
-name="Phone"
-platform="Android"
+name="Web"
+platform="Web"
 runnable=false
-export_path="build/m6.apk"
+export_path="build/m6.html"
 
 [preset.3.options]
 
@@ -276,8 +276,8 @@ async def refused(client, name: str, arguments: dict) -> str:
 async def refusals(client, report: dict) -> None:
     secret = await refused(client, "project.export", {"preset": "Secret", "idempotencyId": "m6-secret"})
     assert "script_encryption_key" in secret, secret
-    phone = await refused(client, "project.export", {"preset": "Phone", "idempotencyId": "m6-phone"})
-    assert "unsupported" in phone or "not supported" in phone, phone
+    web = await refused(client, "project.export", {"preset": "Web", "idempotencyId": "m6-web"})
+    assert "unsupported" in web or "not supported" in web, web
     assert all(SECRET not in entry for entry in client.transcript), "a secret value left the server"
     report["refused"] = {"secret_preset": True, "unsupported_platform": True}
 
@@ -329,7 +329,7 @@ async def flow(arguments: argparse.Namespace, scratch: Path, report: dict) -> No
         label = linux["label"]
         assert label and label.endswith(".stable"), linux
         assert presets["Secret"]["secret_options"] == ["script_encryption_key"], presets["Secret"]
-        assert "unsupported" in presets["Phone"]["template"], presets["Phone"]
+        assert "unsupported" in presets["Web"]["template"], presets["Web"]
         installed = (templates_root() / label / "version.txt").is_file()
         assert linux["installed"] is installed, (linux, installed)
         report["template"] = {"label": label, "installed": installed}

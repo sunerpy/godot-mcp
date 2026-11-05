@@ -96,6 +96,45 @@ impl ProcessExecutionResult {
 }
 
 impl EngineRuntime {
+    /// The recorded answer of a process call this idempotency identifier
+    /// already made with these arguments, if there is one: a replay answers
+    /// from the journal and never starts the process again.
+    pub(super) fn recorded_process_replay(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        access: &AccessContext,
+        idempotency_id: Option<&str>,
+        audit: &RequestAudit,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<Value>, OutcomeError> {
+        let Some(idempotency_id) = idempotency_id else {
+            return Ok(None);
+        };
+        let replay_request = RouteRequest {
+            tool: tool.to_owned(),
+            idempotency_id: idempotency_id.to_owned(),
+            transaction_id: None,
+            path: String::new(),
+            bytes: Vec::new(),
+            arguments: arguments.clone(),
+            observation: self.route_observation(),
+            cancellation: cancellation.clone(),
+            queued_at_unix_ms: access.observed_at_unix_ms(),
+            identity: Some(Self::route_identity(access)),
+            effect: None,
+            audit: Some(audit.clone()),
+        };
+        match self
+            .router
+            .recorded_replay(&replay_request)
+            .map_err(|refusal| refusal.to_outcome())?
+        {
+            Some(report) => recorded_replay_result(&report),
+            None => Ok(None),
+        }
+    }
+
     pub(super) async fn execute_process(
         &self,
         execution: ProcessExecution,
@@ -104,29 +143,15 @@ impl EngineRuntime {
         audit: RequestAudit,
         cancellation: CancellationToken,
     ) -> Result<ProcessExecutionResult, OutcomeError> {
-        if let Some(idempotency_id) = idempotency_id {
-            let replay_request = RouteRequest {
-                tool: execution.tool.to_owned(),
-                idempotency_id: idempotency_id.to_owned(),
-                transaction_id: None,
-                path: String::new(),
-                bytes: Vec::new(),
-                arguments: execution.arguments.clone(),
-                observation: self.route_observation(),
-                cancellation: cancellation.clone(),
-                queued_at_unix_ms: access.observed_at_unix_ms(),
-                identity: Some(Self::route_identity(access)),
-                effect: None,
-                audit: Some(audit.clone()),
-            };
-            if let Some(report) = self
-                .router
-                .recorded_replay(&replay_request)
-                .map_err(|refusal| refusal.to_outcome())?
-                && let Some(result) = recorded_replay_result(&report)?
-            {
-                return Ok(ProcessExecutionResult::Replayed(result));
-            }
+        if let Some(result) = self.recorded_process_replay(
+            execution.tool,
+            &execution.arguments,
+            access,
+            idempotency_id,
+            &audit,
+            &cancellation,
+        )? {
+            return Ok(ProcessExecutionResult::Replayed(result));
         }
         // Held until this returns: no editor connects while the process runs.
         let _exclusive = self.exclusive_editor_guard(execution.tool)?;

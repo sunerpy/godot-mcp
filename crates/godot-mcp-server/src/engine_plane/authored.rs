@@ -25,7 +25,10 @@ use godot_mcp_analysis::project::ResourceTarget;
 use godot_mcp_analysis::scene::{DocumentKind, ResourceRef, parse_document};
 use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::contracts::{GodotValue, OutcomeError};
-use godot_mcp_domain::editing_methods::{MAX_CALL_ARGUMENTS, NEW_RESOURCE_CLASSES, method_names};
+use godot_mcp_domain::editing_methods::{
+    EDITING_METHODS, MAX_CALL_ARGUMENTS, MAX_CLASS_NAME_BYTES, MAX_REPEATED_CALLS,
+    NEW_RESOURCE_FORBIDDEN, is_class_name, method_names,
+};
 use godot_mcp_engine::supervision::journal::hex_sha256;
 use godot_mcp_engine::validation::is_valid_project_relative_path;
 use serde_json::{Map, Value, json};
@@ -36,8 +39,9 @@ use crate::node_handle;
 
 /// Most operations one batch may carry.
 pub(super) const MAX_OPERATIONS: usize = 128;
-/// Largest serialized batch passed to the engine.
-const MAX_BATCH_BYTES: usize = 256 * 1024;
+/// Largest serialized batch passed to the engine: a `repeat` of 4096 calls
+/// with three tagged arguments each fits.
+const MAX_BATCH_BYTES: usize = 1024 * 1024;
 /// Longest accepted name, node path or class string.
 const MAX_NAME_BYTES: usize = 512;
 /// The operation fields that name a node of the edited scene.
@@ -148,7 +152,7 @@ const SCENE_OPERATIONS: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "call_method",
-        &["node", "resource", "method", "arguments"],
+        &["node", "resource", "method", "arguments", "repeat"],
         &["method"],
     ),
 ];
@@ -166,11 +170,29 @@ const RESOURCE_OPERATIONS: &[(&str, &[&str], &[&str])] = &[
         &["property", "class", "properties"],
         &["property", "class"],
     ),
-    ("call_method", &["method", "arguments"], &["method"]),
+    (
+        "call_method",
+        &["resource", "method", "arguments", "repeat"],
+        &["method"],
+    ),
 ];
 
 /// The resource a scene's `call_method` calls, instead of the node itself.
 const RESOURCE_SELECTORS: [&str; 3] = ["property", "animation", "library"];
+/// The scene files a scene batch instances: text and binary scenes, and the
+/// 3D model formats Godot imports as scenes.
+const SCENE_EXTENSIONS: [&str; 8] = ["tscn", "scn", "glb", "gltf", "fbx", "blend", "dae", "obj"];
+/// A property path: property names separated by `:`, none of them empty.
+const PROPERTY_PATH_PATTERN: &str = "^[^:]+(?::[^:]+)*$";
+
+/// The classes of the editing-method table, for descriptions.
+fn editing_classes() -> String {
+    let classes: Vec<&str> = EDITING_METHODS.iter().map(|class| class.class).collect();
+    match classes.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => classes.join(""),
+    }
+}
 
 const fn operations(
     scene: bool,
@@ -186,9 +208,9 @@ const fn operations(
     }
 }
 
-/// The schema of one operation field; a `live` operation names nodes by path
-/// only.
-fn operation_field_schema(field: &str, live: bool) -> Value {
+/// The schema of one operation field of a scene (`scene`) or resource batch;
+/// a `live` operation names nodes by path only.
+fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
     match field {
         "parent" | "node" | "from" | "to" if live => json!({
             "type": "string",
@@ -206,7 +228,20 @@ fn operation_field_schema(field: &str, live: bool) -> Value {
         "scene" => json!({
             "type": "string",
             "pattern": "^res://",
-            "description": "A res:// path to a project .tscn or .scn scene."
+            "description": "A res:// path to a project scene: a .tscn or .scn file, or a 3D \
+                            model Godot imports as a scene (.glb, .gltf, .fbx, .blend, .dae, \
+                            .obj), instanced whole."
+        }),
+        "property" => json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_NAME_BYTES,
+            "pattern": PROPERTY_PATH_PATTERN,
+            "description": "A property, or a property path: names separated by `:` pass \
+                            through properties holding resources the file embeds \
+                            (`material:albedo_color`, `tree_root:states/Run/node`), and \
+                            what follows the last one may name a component of its value \
+                            (`position:x`)."
         }),
         "script" => json!({
             "type": "string",
@@ -220,6 +255,25 @@ fn operation_field_schema(field: &str, live: bool) -> Value {
             "additionalProperties": crate::schema::writable_value(),
             "description": "Property names mapped to tagged values."
         }),
+        "resource" if !scene => json!({
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+                "property": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_NAME_BYTES,
+                    "pattern": PROPERTY_PATH_PATTERN,
+                    "description": "The embedded resource a property, or a property path \
+                                    through embedded resources, of the edited resource holds."
+                }
+            },
+            "required": ["property"],
+            "description": "Call an embedded resource of the edited resource instead of the \
+                            resource itself."
+        }),
         "resource" => json!({
             "type": "object",
             "minProperties": 1,
@@ -230,7 +284,10 @@ fn operation_field_schema(field: &str, live: bool) -> Value {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": MAX_NAME_BYTES,
-                    "description": "The resource the node's property holds."
+                    "pattern": PROPERTY_PATH_PATTERN,
+                    "description": "The resource the node's property holds, or a property \
+                                    path through embedded resources such as \
+                                    `tree_root:states/Locomotion/node`."
                 },
                 "animation": {
                     "type": "string",
@@ -252,24 +309,38 @@ fn operation_field_schema(field: &str, live: bool) -> Value {
         "method" => json!({
             "type": "string",
             "enum": method_names().into_iter().collect::<Vec<_>>(),
-            "description": "An editing method of the receiver's class, from the table in \
-                            editor-bridge.md: TileMapLayer, GridMap, Line2D, AnimationMixer, \
-                            AnimationLibrary, Animation, SpriteFrames, Curve, Curve2D, Curve3D, \
-                            Gradient and Theme."
+            "description": format!(
+                "An editing method of the receiver's class, from the table in \
+                 editor-bridge.md: {}.",
+                editing_classes()
+            )
         }),
         "arguments" => json!({
             "type": "array",
             "maxItems": MAX_CALL_ARGUMENTS,
             "items": { "$ref": format!("#/$defs/{}", crate::schema::CALL_ARGUMENT) },
             "description": "The call's arguments, in order, as tagged values; \
-                            {type: \"new_resource\", value: {class}} passes a new embedded \
-                            resource."
+                            {type: \"new_resource\", value: {class, properties?}} passes a new \
+                            embedded resource."
+        }),
+        "repeat" => json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_REPEATED_CALLS,
+            "items": {
+                "type": "array",
+                "maxItems": MAX_CALL_ARGUMENTS,
+                "items": { "$ref": format!("#/$defs/{}", crate::schema::CALL_ARGUMENT) }
+            },
+            "description": "Call the method once per argument list, in order, instead of once \
+                            with `arguments`: one change, one undo step in the editor, and one \
+                            entry in `results` whose `values` are the calls' return values."
         }),
         _ => json!({ "type": "string", "minLength": 1, "maxLength": MAX_NAME_BYTES }),
     }
 }
 
-fn operations_schema(scene: bool) -> Value {
+pub(super) fn operations_schema(scene: bool) -> Value {
     operations_schema_for(scene, false)
 }
 
@@ -310,9 +381,10 @@ fn operations_schema_for(scene: bool, live: bool) -> Value {
          clear_property {node?, property}, attach_script {node?, script}, detach_script {node?}, \
          replace_instance {node, scene}, connect_signal / disconnect_signal {from, signal, to, \
          method}, add_group / remove_group {node?, group}, set_subresource {node?, property, \
-         class, properties?}, call_method {node?, resource?, method, arguments?}. `node`, \
-         `parent`, `from` and `to` take a node path relative to the scene root (`.` is the \
-         root). Values are tagged {type, value} objects."
+         class, properties?}, call_method {node?, resource?, method, arguments? | repeat?}. \
+         `node`, `parent`, `from` and `to` take a node path relative to the scene root (`.` is \
+         the root). `property` may be a property path through embedded resources. Values are \
+         tagged {type, value} objects."
     } else if scene {
         "Typed operations applied in order: add_node {parent?, name, type?}, instance_scene \
          {parent?, name, scene}, remove_node {node}, rename_node {node, name}, move_node {node, \
@@ -320,14 +392,17 @@ fn operations_schema_for(scene: bool, live: bool) -> Value {
          clear_property {node?, property}, attach_script {node?, script}, detach_script {node?}, \
          replace_instance {node, scene}, connect_signal / disconnect_signal {from, signal, to, \
          method}, add_group / remove_group {node?, group}, set_subresource {node?, property, \
-         class, properties?}, call_method {node?, resource?, method, arguments?}. `node`, \
-         `parent`, `from` and `to` take a node path relative to the scene root (`.` is the root) \
-         or the `handle` a scene tree answer gave that node; a handle of older bytes refuses as \
-         a conflict. Values are tagged {type, value} objects."
+         class, properties?}, call_method {node?, resource?, method, arguments? | repeat?}. \
+         `node`, `parent`, `from` and `to` take a node path relative to the scene root (`.` is \
+         the root) or the `handle` a scene tree answer gave that node; a handle of older bytes \
+         refuses as a conflict. `property` may be a property path through embedded resources. \
+         Values are tagged {type, value} objects."
     } else {
         "Typed operations applied in order: set_property {property, value}, clear_property \
-         {property}, set_subresource {property, class, properties?}, call_method {method, \
-         arguments?} on the resource itself. Values are tagged {type, value} objects."
+         {property}, set_subresource {property, class, properties?}, call_method {resource?, \
+         method, arguments? | repeat?} on the resource itself, or on an embedded resource a \
+         `resource` property path names. `property` may be a property path through embedded \
+         resources. Values are tagged {type, value} objects."
     };
     json!({
         "type": "array",
@@ -340,9 +415,13 @@ fn operations_schema_for(scene: bool, live: bool) -> Value {
                 .map(|(op, fields, required)| {
                     let fields: Vec<(&str, Value)> = fields
                         .iter()
-                        .map(|field| (*field, operation_field_schema(field, live)))
+                        .map(|field| (*field, operation_field_schema(field, scene, live)))
                         .collect();
-                    crate::schema::variant("op", op, &fields, required)
+                    let mut variant = crate::schema::variant("op", op, &fields, required);
+                    if *op == "call_method" {
+                        variant["not"] = json!({ "required": ["arguments", "repeat"] });
+                    }
+                    variant
                 })
                 .collect()
         )
@@ -501,6 +580,22 @@ fn node_path(
     Ok(())
 }
 
+/// A property path: one or more non-empty names separated by `:`.
+fn property_path<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+    context: &str,
+) -> Result<&'a str, OutcomeError> {
+    let path = required_string(object, key, context)?;
+    if path.split(':').any(str::is_empty) {
+        return Err(invalid(format!(
+            "{context}: `{key}` must be a property or a property path of non-empty names \
+             separated by `:`"
+        )));
+    }
+    Ok(path)
+}
+
 /// A `res://` path to a project file with one of `extensions`.
 fn resource_path(
     object: &Map<String, Value>,
@@ -568,7 +663,10 @@ pub(crate) fn tagged_value(value: &Value, context: &str) -> Result<(), OutcomeEr
 }
 
 /// One argument of a `call_method`: a writable tagged value, or a new
-/// embedded resource of a listed class.
+/// embedded resource of an engine or global script class that is not a
+/// script or a GDExtension, with optional initial properties as tagged values.
+/// The engine that applies the edit checks that the class exists, is a
+/// resource and can be created.
 fn call_argument(value: &Value, context: &str) -> Result<(), OutcomeError> {
     let Some(object) = value.as_object() else {
         return tagged_value(value, context);
@@ -576,27 +674,43 @@ fn call_argument(value: &Value, context: &str) -> Result<(), OutcomeError> {
     if object.get("type") != Some(&json!("new_resource")) {
         return tagged_value(value, context);
     }
-    let class = object
+    let shape = || {
+        invalid(format!(
+            "{context}: a new resource is {{type: \"new_resource\", value: {{class, \
+             properties?}}}}"
+        ))
+    };
+    let described = object
         .get("value")
         .and_then(Value::as_object)
-        .filter(|value| object.len() == 2 && value.len() == 1)
-        .and_then(|value| value.get("class"))
+        .filter(|described| {
+            object.len() == 2
+                && described.contains_key("class")
+                && described
+                    .keys()
+                    .all(|key| key == "class" || key == "properties")
+        })
+        .ok_or_else(shape)?;
+    let class = described
+        .get("class")
         .and_then(Value::as_str)
-        .ok_or_else(|| {
-            invalid(format!(
-                "{context}: a new resource is {{type: \"new_resource\", value: {{class}}}}"
-            ))
-        })?;
-    if !NEW_RESOURCE_CLASSES.contains(&class) {
+        .ok_or_else(shape)?;
+    if !is_class_name(class) {
         return Err(invalid(format!(
-            "{context}: a new resource is one of {}",
-            NEW_RESOURCE_CLASSES.join(", ")
+            "{context}: a new resource's class is a class name of at most \
+             {MAX_CLASS_NAME_BYTES} letters, digits and underscores"
         )));
     }
-    Ok(())
+    if NEW_RESOURCE_FORBIDDEN.contains(&class) {
+        return Err(invalid(format!(
+            "{context}: a new resource cannot be a {class}"
+        )));
+    }
+    property_map(described, "properties", context)
 }
 
-/// A `call_method` operation: a listed method, its receiver and its arguments.
+/// A `call_method` operation: a listed method, its receiver, and its
+/// arguments or the argument lists of its `repeat`.
 fn call_operation(
     scene: bool,
     object: &Map<String, Value>,
@@ -610,41 +724,64 @@ fn call_operation(
     }
     if scene {
         node_path(object, "node", context, false)?;
-        if let Some(selector) = object.get("resource") {
-            let selector = selector
-                .as_object()
-                .filter(|selector| selector.len() == 1)
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "{context}: `resource` names one of {}",
-                        RESOURCE_SELECTORS.join(", ")
-                    ))
-                })?;
-            let (kind, name) = selector.iter().next().expect("one selector");
-            let name = name
-                .as_str()
-                .filter(|name| name.len() <= MAX_NAME_BYTES && !name.chars().any(char::is_control))
-                .ok_or_else(|| invalid(format!("{context}: `resource.{kind}` must be a name")))?;
-            if !RESOURCE_SELECTORS.contains(&kind.as_str())
-                || (kind != "library" && name.is_empty())
-            {
-                return Err(invalid(format!(
+    }
+    if let Some(selector) = object.get("resource") {
+        let selectors: &[&str] = if scene {
+            &RESOURCE_SELECTORS
+        } else {
+            &["property"]
+        };
+        let selector = selector
+            .as_object()
+            .filter(|selector| selector.len() == 1)
+            .ok_or_else(|| {
+                invalid(format!(
                     "{context}: `resource` names one of {}",
-                    RESOURCE_SELECTORS.join(", ")
-                )));
-            }
+                    selectors.join(", ")
+                ))
+            })?;
+        let (kind, name) = selector.iter().next().expect("one selector");
+        let name = name
+            .as_str()
+            .filter(|name| name.len() <= MAX_NAME_BYTES && !name.chars().any(char::is_control))
+            .ok_or_else(|| invalid(format!("{context}: `resource.{kind}` must be a name")))?;
+        if !selectors.contains(&kind.as_str())
+            || (kind != "library" && name.is_empty())
+            || (kind == "property" && name.split(':').any(str::is_empty))
+        {
+            return Err(invalid(format!(
+                "{context}: `resource` names one of {}",
+                selectors.join(", ")
+            )));
         }
     }
-    match object.get("arguments") {
-        None => Ok(()),
-        Some(Value::Array(arguments)) if arguments.len() <= MAX_CALL_ARGUMENTS => {
+    let arguments = |list: &Value, context: &str| match list {
+        Value::Array(arguments) if arguments.len() <= MAX_CALL_ARGUMENTS => {
             for (position, argument) in arguments.iter().enumerate() {
                 call_argument(argument, &format!("{context} argument {position}"))?;
             }
             Ok(())
         }
-        Some(_) => Err(invalid(format!(
-            "{context}: `arguments` lists at most {MAX_CALL_ARGUMENTS} tagged values"
+        _ => Err(invalid(format!(
+            "{context}: a call takes a list of at most {MAX_CALL_ARGUMENTS} tagged values"
+        ))),
+    };
+    match (object.get("arguments"), object.get("repeat")) {
+        (None, None) => Ok(()),
+        (Some(list), None) => arguments(list, context),
+        (None, Some(Value::Array(lists)))
+            if !lists.is_empty() && lists.len() <= MAX_REPEATED_CALLS =>
+        {
+            for (call, list) in lists.iter().enumerate() {
+                arguments(list, &format!("{context} call {call}"))?;
+            }
+            Ok(())
+        }
+        (None, Some(_)) => Err(invalid(format!(
+            "{context}: `repeat` lists 1 to {MAX_REPEATED_CALLS} argument lists"
+        ))),
+        (Some(_), Some(_)) => Err(invalid(format!(
+            "{context}: a call takes `arguments` or `repeat`, not both"
         ))),
     }
 }
@@ -695,7 +832,7 @@ fn validate_operation(scene: bool, operation: &Value, index: usize) -> Result<()
         "instance_scene" => {
             node_path(object, "parent", &context, false)?;
             required_string(object, "name", &context)?;
-            resource_path(object, "scene", &context, &["tscn", "scn"])?;
+            resource_path(object, "scene", &context, &SCENE_EXTENSIONS)?;
         }
         "remove_node" | "detach_script" => {
             node_path(object, "node", &context, op == "remove_node")?
@@ -719,7 +856,7 @@ fn validate_operation(scene: bool, operation: &Value, index: usize) -> Result<()
             if scene {
                 node_path(object, "node", &context, false)?;
             }
-            required_string(object, "property", &context)?;
+            property_path(object, "property", &context)?;
             let value = object
                 .get("value")
                 .ok_or_else(|| invalid(format!("{context}: `value` is required")))?;
@@ -729,7 +866,7 @@ fn validate_operation(scene: bool, operation: &Value, index: usize) -> Result<()
             if scene {
                 node_path(object, "node", &context, false)?;
             }
-            required_string(object, "property", &context)?;
+            property_path(object, "property", &context)?;
         }
         "attach_script" => {
             node_path(object, "node", &context, false)?;
@@ -737,7 +874,7 @@ fn validate_operation(scene: bool, operation: &Value, index: usize) -> Result<()
         }
         "replace_instance" => {
             node_path(object, "node", &context, true)?;
-            resource_path(object, "scene", &context, &["tscn", "scn"])?;
+            resource_path(object, "scene", &context, &SCENE_EXTENSIONS)?;
         }
         "connect_signal" | "disconnect_signal" => {
             node_path(object, "from", &context, true)?;
@@ -753,7 +890,7 @@ fn validate_operation(scene: bool, operation: &Value, index: usize) -> Result<()
             if scene {
                 node_path(object, "node", &context, false)?;
             }
-            required_string(object, "property", &context)?;
+            property_path(object, "property", &context)?;
             required_string(object, "class", &context)?;
             property_map(object, "properties", &context)?;
         }
@@ -773,7 +910,19 @@ pub(super) fn parse(
     kind: AuthorKind,
     arguments: Map<String, Value>,
 ) -> Result<AuthorRequest, OutcomeError> {
-    let tool = kind.tool_name();
+    parse_as(kind, arguments, kind.tool_name())
+}
+
+/// [`parse`], naming the request `tool` in every refusal: the tool, or the
+/// file of a multi-file batch.
+///
+/// # Errors
+/// The refusals of [`parse`].
+pub(super) fn parse_as(
+    kind: AuthorKind,
+    arguments: Map<String, Value>,
+    tool: &str,
+) -> Result<AuthorRequest, OutcomeError> {
     if let Some(key) = arguments
         .iter()
         .find_map(|(key, value)| value.is_null().then_some(key))
@@ -1257,8 +1406,9 @@ mod tests {
 
     /// The `call_method` schema each batch advertises and the call check give
     /// the same verdict: a listed method, one owned receiver, at most 16
-    /// arguments, and a new resource only as an argument and only of a listed
-    /// class.
+    /// arguments or a `repeat` of 1 to 4096 argument lists, and a new resource
+    /// only as an argument, of a class name that is not a script or a
+    /// GDExtension, with tagged initial properties.
     #[test]
     fn the_call_schema_and_the_call_check_agree() {
         let integer = |value: i64| json!({ "type": "integer", "value": value });
@@ -1274,12 +1424,14 @@ mod tests {
             }
             operation
         };
-        let shared = [
-            (call(json!({ "method": "clear" })), true),
+        // (operation, verdict in a scene batch, verdict in a resource batch)
+        let cases = [
+            (call(json!({ "method": "clear" })), true, true),
             (
                 call(
                     json!({ "method": "set_point_value", "arguments": [integer(0), { "type": "float", "value": 0.5 }] }),
                 ),
+                true,
                 true,
             ),
             (
@@ -1287,19 +1439,64 @@ mod tests {
                     json!({ "method": "add_animation", "arguments": [{ "type": "string_name", "value": "run" }, new_resource("Animation")] }),
                 ),
                 true,
+                true,
             ),
-            (call(json!({ "method": "queue_free" })), false),
-            (call(json!({ "method": "set_script" })), false),
+            // Whether a class exists and is a resource is the engine's to say.
+            (
+                call(
+                    json!({ "method": "add_node", "arguments": [new_resource("AnimationNodeAnimation")] }),
+                ),
+                true,
+                true,
+            ),
+            (
+                call(json!({ "method": "add_node", "arguments": [new_resource("Node")] })),
+                true,
+                true,
+            ),
+            (
+                call(
+                    json!({ "method": "add_node", "arguments": [{ "type": "string_name", "value": "Run" }, { "type": "new_resource", "value": { "class": "AnimationNodeAnimation", "properties": { "animation": { "type": "string_name", "value": "run" } } } }] }),
+                ),
+                true,
+                true,
+            ),
+            (call(json!({ "method": "queue_free" })), false, false),
+            (call(json!({ "method": "set_script" })), false, false),
             (
                 call(json!({ "method": "clear", "arguments": vec![integer(1); 17] })),
                 false,
-            ),
-            (
-                call(json!({ "method": "add_animation", "arguments": [new_resource("Node")] })),
                 false,
             ),
             (
                 call(json!({ "method": "add_animation", "arguments": [new_resource("Script")] })),
+                false,
+                false,
+            ),
+            (
+                call(
+                    json!({ "method": "add_animation", "arguments": [new_resource("GDExtension")] }),
+                ),
+                false,
+                false,
+            ),
+            (
+                call(
+                    json!({ "method": "add_animation", "arguments": [new_resource("Style Box")] }),
+                ),
+                false,
+                false,
+            ),
+            (
+                call(json!({ "method": "add_animation", "arguments": [new_resource("3D")] })),
+                false,
+                false,
+            ),
+            (
+                call(
+                    json!({ "method": "add_animation", "arguments": [new_resource(&"A".repeat(129))] }),
+                ),
+                false,
                 false,
             ),
             (
@@ -1307,61 +1504,147 @@ mod tests {
                     json!({ "method": "add_animation", "arguments": [{ "type": "new_resource", "value": { "class": "Animation", "path": "res://a.tres" } }] }),
                 ),
                 false,
+                false,
             ),
             (
                 call(
                     json!({ "method": "add_animation", "arguments": [{ "type": "new_resource", "value": { "class": "Animation" }, "extra": 1 }] }),
                 ),
                 false,
+                false,
+            ),
+            (
+                call(
+                    json!({ "method": "add_animation", "arguments": [{ "type": "new_resource", "value": { "class": "Animation", "properties": { "length": 2 } } }] }),
+                ),
+                false,
+                false,
+            ),
+            (
+                call(
+                    json!({ "method": "add_animation", "arguments": [{ "type": "new_resource", "value": { "class": "Animation", "properties": { "inner": new_resource("Animation") } } }] }),
+                ),
+                false,
+                false,
             ),
             (
                 call(json!({ "method": "add_point", "arguments": [object.clone()] })),
+                false,
                 false,
             ),
             (
                 call(json!({ "method": "add_point", "arguments": "point" })),
                 false,
+                false,
             ),
-            (call(json!({ "method": "clear", "colour": "red" })), false),
-        ];
-        let scene_only = [
+            (
+                call(json!({ "method": "clear", "colour": "red" })),
+                false,
+                false,
+            ),
+            (
+                call(
+                    json!({ "method": "set_cell", "repeat": [[cell(0, 0), integer(0)], [cell(1, 0), integer(0)]] }),
+                ),
+                true,
+                true,
+            ),
+            (
+                call(json!({ "method": "set_cell", "repeat": vec![json!([]); 4096] })),
+                true,
+                true,
+            ),
+            (
+                call(json!({ "method": "set_cell", "repeat": vec![json!([]); 4097] })),
+                false,
+                false,
+            ),
+            (
+                call(json!({ "method": "set_cell", "repeat": [] })),
+                false,
+                false,
+            ),
+            (
+                call(json!({ "method": "set_cell", "repeat": [[cell(0, 0)]], "arguments": [] })),
+                false,
+                false,
+            ),
+            (
+                call(json!({ "method": "set_cell", "repeat": [vec![integer(1); 17]] })),
+                false,
+                false,
+            ),
+            (
+                call(json!({ "method": "set_cell", "repeat": [cell(0, 0)] })),
+                false,
+                false,
+            ),
             (
                 call(
                     json!({ "node": "Ground", "method": "set_cell", "arguments": [cell(0, 0), integer(0), cell(1, 0)] }),
                 ),
                 true,
+                false,
             ),
             (
                 call(json!({ "resource": { "property": "curve" }, "method": "add_point" })),
                 true,
+                true,
+            ),
+            (
+                call(
+                    json!({ "resource": { "property": "tree_root:states/Locomotion/node" }, "method": "add_blend_point" }),
+                ),
+                true,
+                true,
+            ),
+            (
+                call(json!({ "resource": { "property": "tree_root::node" }, "method": "clear" })),
+                false,
+                false,
+            ),
+            (
+                call(json!({ "resource": { "property": "tree_root:" }, "method": "clear" })),
+                false,
+                false,
             ),
             (
                 call(
                     json!({ "node": "Player", "resource": { "animation": "run" }, "method": "add_track", "arguments": [integer(0)] }),
                 ),
                 true,
+                false,
             ),
             (
                 call(json!({ "resource": { "library": "" }, "method": "add_animation" })),
                 true,
+                false,
             ),
-            (call(json!({ "resource": {}, "method": "clear" })), false),
+            (
+                call(json!({ "resource": {} , "method": "clear" })),
+                false,
+                false,
+            ),
             (
                 call(
                     json!({ "resource": { "property": "a", "animation": "b" }, "method": "clear" }),
                 ),
                 false,
+                false,
             ),
             (
                 call(json!({ "resource": { "texture": "a" }, "method": "clear" })),
+                false,
                 false,
             ),
             (
                 call(json!({ "resource": { "property": "" }, "method": "clear" })),
                 false,
+                false,
             ),
             (
                 call(json!({ "resource": "curve", "method": "clear" })),
+                false,
                 false,
             ),
         ];
@@ -1371,19 +1654,16 @@ mod tests {
                 json!({ "allOf": [root["properties"]["operations"]["items"].clone()] });
             schema["$defs"] = root["$defs"].clone();
             let scene = kind == AuthorKind::SceneBatch;
-            let mut cases: Vec<(Value, bool)> = shared.to_vec();
-            for (case, expected) in &scene_only {
-                cases.push((case.clone(), *expected && scene));
-            }
-            for (case, expected) in &cases {
+            for (case, in_scene, in_resource) in &cases {
+                let expected = if scene { *in_scene } else { *in_resource };
                 assert_eq!(
                     crate::schema::conformance::conforms(&schema, case),
-                    *expected,
+                    expected,
                     "the {kind:?} schema's verdict on {case}"
                 );
                 assert_eq!(
                     validate_operation(scene, case, 0).is_ok(),
-                    *expected,
+                    expected,
                     "the {kind:?} handler's verdict on {case}"
                 );
             }
@@ -1396,6 +1676,101 @@ mod tests {
         let mut schema = json!({ "allOf": [root["properties"]["operations"]["items"].clone()] });
         schema["$defs"] = root["$defs"].clone();
         assert!(!crate::schema::conformance::conforms(&schema, &set));
+    }
+
+    /// A property is a property path of non-empty names, in every operation
+    /// that writes one, and an instanced scene may be an imported 3D model.
+    #[test]
+    fn the_path_schemas_and_the_path_checks_agree() {
+        let float = json!({ "type": "float", "value": 1.0 });
+        // (operation, verdict in a scene batch, verdict in a resource batch)
+        let cases = [
+            (
+                json!({ "op": "set_property", "property": "position:x", "value": float }),
+                true,
+                true,
+            ),
+            (
+                json!({ "op": "set_property", "property": "material:albedo_color:r", "value": float }),
+                true,
+                true,
+            ),
+            (
+                json!({ "op": "set_property", "property": "tree_root:states/Run/position", "value": float }),
+                true,
+                true,
+            ),
+            (
+                json!({ "op": "set_property", "property": "a::b", "value": float }),
+                false,
+                false,
+            ),
+            (
+                json!({ "op": "set_property", "property": ":a", "value": float }),
+                false,
+                false,
+            ),
+            (
+                json!({ "op": "set_property", "property": "a:", "value": float }),
+                false,
+                false,
+            ),
+            (
+                json!({ "op": "clear_property", "property": "material:roughness" }),
+                true,
+                true,
+            ),
+            (
+                json!({ "op": "clear_property", "property": "material:" }),
+                false,
+                false,
+            ),
+            (
+                json!({ "op": "set_subresource", "property": "process_material:color_ramp", "class": "GradientTexture1D" }),
+                true,
+                true,
+            ),
+            (
+                json!({ "op": "set_subresource", "property": ":color_ramp", "class": "GradientTexture1D" }),
+                false,
+                false,
+            ),
+            (
+                json!({ "op": "instance_scene", "name": "Ship", "scene": "res://models/ship.glb" }),
+                true,
+                false,
+            ),
+            (
+                json!({ "op": "instance_scene", "name": "Ship", "scene": "res://models/ship.gltf" }),
+                true,
+                false,
+            ),
+        ];
+        for kind in [AuthorKind::SceneBatch, AuthorKind::ResourceBatch] {
+            let root = Value::Object(input_schema(kind));
+            let mut schema =
+                json!({ "allOf": [root["properties"]["operations"]["items"].clone()] });
+            schema["$defs"] = root["$defs"].clone();
+            let scene = kind == AuthorKind::SceneBatch;
+            for (case, in_scene, in_resource) in &cases {
+                let expected = if scene { *in_scene } else { *in_resource };
+                assert_eq!(
+                    crate::schema::conformance::conforms(&schema, case),
+                    expected,
+                    "the {kind:?} schema's verdict on {case}"
+                );
+                assert_eq!(
+                    validate_operation(scene, case, 0).is_ok(),
+                    expected,
+                    "the {kind:?} handler's verdict on {case}"
+                );
+            }
+        }
+        // The schema does not encode a scene's extension; the check does.
+        for scene in ["res://a.txt", "res://a.tres", "res://a.png"] {
+            let operation = json!({ "op": "instance_scene", "name": "A", "scene": scene });
+            assert!(validate_operation(true, &operation, 0).is_err(), "{scene}");
+        }
     }
 
     fn arguments(value: Value) -> Map<String, Value> {

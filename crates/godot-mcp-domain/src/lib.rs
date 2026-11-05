@@ -32,9 +32,11 @@ pub mod lease;
 pub mod manifests;
 pub mod objid;
 pub mod project;
+pub mod reading_methods;
 pub mod safe_root;
 #[doc(hidden)]
 pub mod sysfs;
+pub mod variant_text;
 pub mod workspace_root;
 
 /// Semantic version of the domain contract surface.
@@ -44,7 +46,7 @@ pub mod workspace_root;
 /// only methods the running build implements. Version 0.3.0 adds the live
 /// editor's node, save, capture, scan, log and play methods, and routes a
 /// `project.godot` change through a connected editor that owns the file.
-pub const CONTRACT_VERSION: &str = "0.3.0";
+pub const CONTRACT_VERSION: &str = "0.4.0";
 
 /// Capability profiles exposed by the public contract. Selection is explicit
 /// and independent of how an outcome is requested.

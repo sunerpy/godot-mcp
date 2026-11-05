@@ -1274,10 +1274,10 @@ mod tests {
     #[test]
     fn the_server_owned_helper_scratch_is_never_project_source() {
         let fixture = fixture();
-        let staging = fixture.root.join("godot_mcp_helpers/3/staging");
+        let staging = fixture.root.join("godot_mcp_helpers/4/staging");
         std::fs::create_dir_all(&staging).expect("helper scratch");
         std::fs::write(
-            fixture.root.join("godot_mcp_helpers/3/canonical_write.gd"),
+            fixture.root.join("godot_mcp_helpers/4/canonical_write.gd"),
             "extends SceneTree\n",
         )
         .expect("installed helper");
@@ -1291,12 +1291,12 @@ mod tests {
             "the helper's install and scratch area is never inventoried"
         );
         let committed = fixture.coordinator.observe_commit(&CommitScope::Paths(vec![
-            "godot_mcp_helpers/3/staging/x.tres".to_owned(),
+            "godot_mcp_helpers/4/staging/x.tres".to_owned(),
         ]));
         assert!(
             !committed
                 .inventory()
-                .contains("godot_mcp_helpers/3/staging/x.tres")
+                .contains("godot_mcp_helpers/4/staging/x.tres")
         );
         let event = notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
             .add_path(staging.join("x.tres"));

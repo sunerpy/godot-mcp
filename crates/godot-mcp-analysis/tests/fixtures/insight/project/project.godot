@@ -1,0 +1,23 @@
+; A committed fixture for the project-wide insight views.
+; It is never opened by Godot: the views are static.
+
+config_version=5
+
+[application]
+
+config/name="Insight Fixture"
+run/main_scene="uid://bmainscene001"
+config/features=PackedStringArray("4.4")
+config/icon="res://icon.svg"
+
+[autoload]
+
+GameState="*res://scripts/game_state.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/tools/plugin.cfg")
+
+[gui]
+
+theme/custom="res://resources/theme.tres"

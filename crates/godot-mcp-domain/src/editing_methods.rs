@@ -6,7 +6,9 @@
 //! scene, a resource embedded in it, or the resource being edited. Every
 //! listed method changes only its receiver's own stored state, so the file the
 //! batch saves holds the whole change, and the editor can undo it by putting
-//! the receiver's stored properties back.
+//! the receiver's stored properties back, or, for the graph-like resources
+//! whose calls rebuild their own stored layout, by putting back a copy of the
+//! whole embedded resource the call reached.
 //!
 //! The table is part of the contract and has one source, this module: the
 //! server's schema lists its methods, and the editor plugin and the headless
@@ -27,6 +29,23 @@ pub enum Restore {
     /// `AnimationMixer`'s libraries are, or whose stored order a plain write
     /// does not restore, as a `TileMapLayer`'s cells.
     ClearThenWriteBack(Clearing),
+    /// Put back a copy of the outermost embedded resource the call reached
+    /// through the node property its `resource` selector starts from: for
+    /// graph resources (state machines, blend trees and spaces, visual
+    /// shaders, tile sets, mesh libraries) whose calls add, rename and remove
+    /// stored entries that a plain write cannot take away again. Undo and
+    /// redo then hold a new copy of that resource, so another reference to
+    /// the very same embedded instance keeps the changed one.
+    Replace,
+    /// Bake: the call rebuilds, in place, the resource the named property of
+    /// the node holds, as a navigation region's bake rebuilds its navigation
+    /// mesh or polygon from the nodes below it. It is always made with
+    /// `on_thread` false, so it returns only once the engine has finished,
+    /// and the batch answers what the bake produced. The receiver is the node
+    /// itself, never a resource a selector picks, and the resource must be
+    /// one the edited file embeds. The editor bakes into a copy, which the
+    /// node then holds, and undo gives it the untouched original back.
+    Bake(&'static str),
 }
 
 /// How a [`Restore::ClearThenWriteBack`] class is emptied.
@@ -214,25 +233,204 @@ pub const EDITING_METHODS: &[EditingClass] = &[
             "clear_stylebox",
         ],
     },
+    EditingClass {
+        class: "Control",
+        restore: Restore::WriteBack,
+        settle: None,
+        methods: &[
+            "set_anchors_preset",
+            "set_anchors_and_offsets_preset",
+            "set_offsets_preset",
+            "set_anchor",
+            "set_anchor_and_offset",
+        ],
+    },
+    EditingClass {
+        class: "AnimationNodeStateMachine",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "add_node",
+            "remove_node",
+            "rename_node",
+            "replace_node",
+            "set_node_position",
+            "add_transition",
+            "remove_transition",
+            "remove_transition_by_index",
+            "set_graph_offset",
+        ],
+    },
+    EditingClass {
+        class: "AnimationNodeBlendTree",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "add_node",
+            "remove_node",
+            "rename_node",
+            "connect_node",
+            "disconnect_node",
+            "set_node_position",
+            "set_graph_offset",
+        ],
+    },
+    EditingClass {
+        class: "AnimationNodeBlendSpace1D",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "add_blend_point",
+            "remove_blend_point",
+            "set_blend_point_position",
+            "set_blend_point_node",
+        ],
+    },
+    EditingClass {
+        class: "AnimationNodeBlendSpace2D",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "add_blend_point",
+            "remove_blend_point",
+            "set_blend_point_position",
+            "set_blend_point_node",
+            "add_triangle",
+            "remove_triangle",
+        ],
+    },
+    EditingClass {
+        class: "VisualShader",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "add_node",
+            "remove_node",
+            "connect_nodes",
+            "disconnect_nodes",
+            "set_node_position",
+        ],
+    },
+    EditingClass {
+        class: "TileSet",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "add_source",
+            "remove_source",
+            "add_physics_layer",
+            "remove_physics_layer",
+            "set_physics_layer_collision_layer",
+            "set_physics_layer_collision_mask",
+            "add_terrain_set",
+            "remove_terrain_set",
+            "set_terrain_set_mode",
+            "add_terrain",
+            "remove_terrain",
+            "set_terrain_name",
+            "set_terrain_color",
+            "add_navigation_layer",
+            "remove_navigation_layer",
+            "add_custom_data_layer",
+            "remove_custom_data_layer",
+            "set_custom_data_layer_name",
+            "set_custom_data_layer_type",
+        ],
+    },
+    EditingClass {
+        class: "TileSetAtlasSource",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "create_tile",
+            "remove_tile",
+            "create_alternative_tile",
+            "remove_alternative_tile",
+            "clear_tiles_outside_texture",
+        ],
+    },
+    EditingClass {
+        class: "NavigationPolygon",
+        restore: Restore::WriteBack,
+        settle: None,
+        methods: &[
+            "add_outline",
+            "add_outline_at_index",
+            "set_outline",
+            "remove_outline",
+            "clear_outlines",
+            "add_polygon",
+            "clear_polygons",
+            "clear",
+        ],
+    },
+    EditingClass {
+        class: "NavigationMesh",
+        restore: Restore::WriteBack,
+        settle: None,
+        methods: &["add_polygon", "clear_polygons", "create_from_mesh", "clear"],
+    },
+    EditingClass {
+        class: "MeshLibrary",
+        restore: Restore::Replace,
+        settle: None,
+        methods: &[
+            "create_item",
+            "set_item_mesh",
+            "set_item_name",
+            "set_item_mesh_transform",
+            "set_item_shapes",
+            "set_item_navigation_mesh",
+            "remove_item",
+            "clear",
+        ],
+    },
+    EditingClass {
+        class: "NavigationRegion2D",
+        restore: Restore::Bake("navigation_polygon"),
+        settle: None,
+        methods: &["bake_navigation_polygon"],
+    },
+    EditingClass {
+        class: "NavigationRegion3D",
+        restore: Restore::Bake("navigation_mesh"),
+        settle: None,
+        methods: &["bake_navigation_mesh"],
+    },
 ];
 
-/// The classes a `new_resource` argument may create: a new resource embedded
-/// in the edit, handed to a call such as `add_animation`, whose own state
-/// later operations then set.
-pub const NEW_RESOURCE_CLASSES: &[&str] = &[
-    "Animation",
-    "AnimationLibrary",
-    "Curve",
-    "Curve2D",
-    "Curve3D",
-    "Gradient",
-    "SpriteFrames",
-    "StyleBoxFlat",
-    "Theme",
-];
+/// A `new_resource` argument may create a resource of any engine class the
+/// running Godot can instantiate that inherits `Resource`, except these and the
+/// classes inheriting them: a script is code and a GDExtension loads native
+/// code, and neither is a value an edit holds. The class is checked against
+/// the engine that applies the edit, so a class a Godot build lacks is refused
+/// there with that build's own answer.
+pub const NEW_RESOURCE_FORBIDDEN: &[&str] = &["Script", "GDExtension"];
+
+/// The longest engine class name a `new_resource` argument may give.
+pub const MAX_CLASS_NAME_BYTES: usize = 128;
 
 /// The most arguments one call may take.
 pub const MAX_CALL_ARGUMENTS: usize = 16;
+
+/// The most calls one `call_method` operation may make with `repeat`: the
+/// same method once per argument list, recorded as one change.
+pub const MAX_REPEATED_CALLS: usize = 4096;
+
+/// Whether `class` is spelled as an engine class name: letters, digits and
+/// underscores, not starting with a digit.
+#[must_use]
+pub fn is_class_name(class: &str) -> bool {
+    !class.is_empty()
+        && class.len() <= MAX_CLASS_NAME_BYTES
+        && class
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && class
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
 
 /// Every method name the table lists, for any class.
 #[must_use]
@@ -271,7 +469,7 @@ pub fn gdscript_table() -> String {
         EDITING_METHODS
             .iter()
             .filter_map(|class| match class.restore {
-                Restore::WriteBack => None,
+                Restore::WriteBack | Restore::Replace | Restore::Bake(_) => None,
                 Restore::ClearThenWriteBack(Clearing::Call(method)) => {
                     Some(format!("\"{}\": [{}]", class.class, quoted(&[method])))
                 }
@@ -290,12 +488,29 @@ pub fn gdscript_table() -> String {
         })
         .collect();
     text.push_str(&format!("const SETTLE := {{{}}}\n", settle.join(", ")));
+    let replacing: Vec<&str> = EDITING_METHODS
+        .iter()
+        .filter(|class| class.restore == Restore::Replace)
+        .map(|class| class.class)
+        .collect();
+    text.push_str(&format!("const REPLACING := [{}]\n", quoted(&replacing)));
+    let baking: Vec<String> = EDITING_METHODS
+        .iter()
+        .filter_map(|class| match class.restore {
+            Restore::Bake(property) => Some(format!("\"{}\": \"{property}\"", class.class)),
+            _ => None,
+        })
+        .collect();
+    text.push_str(&format!("const BAKING := {{{}}}\n", baking.join(", ")));
     text.push_str(&format!(
-        "const NEW_RESOURCE_CLASSES := [{}]\n",
-        quoted(NEW_RESOURCE_CLASSES)
+        "const NEW_RESOURCE_FORBIDDEN := [{}]\n",
+        quoted(NEW_RESOURCE_FORBIDDEN)
     ));
     text.push_str(&format!(
         "const MAX_CALL_ARGUMENTS := {MAX_CALL_ARGUMENTS}\n"
+    ));
+    text.push_str(&format!(
+        "const MAX_REPEATED_CALLS := {MAX_REPEATED_CALLS}\n"
     ));
     text
 }
@@ -339,6 +554,32 @@ mod tests {
              [\"clear\"], \"Theme\": [\"clear\"]}"
         ));
         assert!(table.contains("const SETTLE := {\"TileMapLayer\": \"update_internals\"}"));
-        assert!(table.ends_with("const MAX_CALL_ARGUMENTS := 16\n"));
+        assert!(table.contains(
+            "const REPLACING := [\"AnimationNodeStateMachine\", \"AnimationNodeBlendTree\", \
+             \"AnimationNodeBlendSpace1D\", \"AnimationNodeBlendSpace2D\", \"VisualShader\", \
+             \"TileSet\", \"TileSetAtlasSource\", \"MeshLibrary\"]"
+        ));
+        assert!(table.contains(
+            "const BAKING := {\"NavigationRegion2D\": \"navigation_polygon\", \
+             \"NavigationRegion3D\": \"navigation_mesh\"}\n"
+        ));
+        assert!(table.contains("const NEW_RESOURCE_FORBIDDEN := [\"Script\", \"GDExtension\"]"));
+        assert!(table.contains("const MAX_CALL_ARGUMENTS := 16\n"));
+        assert!(table.ends_with("const MAX_REPEATED_CALLS := 4096\n"));
+    }
+
+    #[test]
+    fn a_class_name_is_an_identifier() {
+        for good in [
+            "StyleBoxFlat",
+            "AnimationNodeStateMachine",
+            "_Private",
+            "Node3D",
+        ] {
+            assert!(is_class_name(good), "{good}");
+        }
+        for bad in ["", "3D", "Style Box", "res://x.gd", "a-b", &"A".repeat(129)] {
+            assert!(!is_class_name(bad), "{bad}");
+        }
     }
 }

@@ -206,7 +206,7 @@ home:
   scope:
     title: 它不做的事
     items:
-      - 不执行任意 GDScript，也不调用任意引擎方法。任何 profile 里都没有这样的工具。
+      - 除非你用 --allow-scripts 启动它，否则不执行 Agent 自己写的 GDScript；类型化工具只调用它们自己那一组固定的引擎方法。
       - 不下载 Godot 或导出模板，只使用你安装好的版本和模板。
       - 不修改二进制 .scn 和 .res，而是请你先把它们另存为文本格式。
       - 不能让一个不可信的项目变得可以放心打开。加载项目就会运行它的代码。
@@ -221,7 +221,7 @@ home:
 
 ## 决定它能做什么
 
-profile 是服务器能对项目做的一切的上限。`core` 只读，什么都不改。`editor` 增加写入，每次写入都写进日志，并核对它替换的内容。`runtime` 增加运行和观察项目。无论哪个 profile，都没有执行任意代码的工具。
+profile 是服务器能对项目做的一切的上限。`core` 只读，什么都不改。`editor` 增加写入，每次写入都写进日志，并核对它替换的内容。`runtime` 增加运行和观察项目。执行 Agent 自己写的 GDScript 在每个 profile 里都默认关闭，只有用 `--allow-scripts` 启动服务器才会打开。
 
 [Profile 与答复](guide/profiles.md) · [工具与资源](../../protocol/tool-inventory.md)
 

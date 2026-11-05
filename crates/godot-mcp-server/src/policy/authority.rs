@@ -703,6 +703,21 @@ impl PolicyAuthority {
             .map_err(PolicyDispatchError::Effect)
     }
 
+    /// Re-check `permit` at the process boundary and deploy one finished
+    /// Android export to a device.
+    pub(crate) fn dispatch_device_effect(
+        &self,
+        gateway: &EffectGateway,
+        permit: &PolicyPermit,
+        command: &crate::effect::boundary::EditorMutation,
+    ) -> Result<crate::effect::boundary::EditorEffectOutcome, PolicyDispatchError> {
+        self.enforce_at_boundary(permit, EffectBoundaryKind::Process)
+            .map_err(PolicyDispatchError::Refused)?;
+        gateway
+            .execute_device_effect(&permit.permit, command)
+            .map_err(PolicyDispatchError::Effect)
+    }
+
     /// Re-check `permit` at the LSP/DAP boundary and carry out one journaled
     /// command to a managed editor session's language server or debug
     /// adapter.

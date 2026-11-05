@@ -17,18 +17,76 @@ manifests, so it can never drift from its parts. The complete generated list of
 tools and resources per profile is in
 [Profiles, tools and resources](../protocol/tool-inventory.md).
 
-## There is no arbitrary-script-execution tool
+## Script execution
 
-`unsafe_script` is a reserved identifier and nothing else. It is not a capability, it
-has no handler, it is in no profile, it is not a configuration option, and it is not
-in the shipping binary. A request naming it is refused the same way any unknown tool
-is.
+Three tools run caller-written GDScript
+([ADR 0012](../contributor/adr/0012-declared-script-execution.md)):
 
-This is the single largest deliberate difference from tools that expose an
-"execute this GDScript" entry point. Loading a Godot project is already arbitrary
-code execution — see [Process boundaries](process-boundaries.md) — and adding a
-direct execution tool on top of that removes the only thing that makes the surface
-reviewable.
+| Tool | Where the source runs | Profiles |
+| --- | --- | --- |
+| `script.run` | a supervised headless Godot on the project, or on a disposable copy of it | `editor`, `full` |
+| `editor.script.run` | the connected editor, on its main thread | `editor`, `full` |
+| `runtime.script.run` | a managed game session, on its main thread | `runtime`, `full` |
+
+Every profile that holds them lists them, and each refuses with `permission_denied` until the
+operator starts the server with `--allow-scripts`, or `allow_scripts = true` in the `--config`
+file ([Configuration](configuration.md#script-execution)). The switch is refused with
+`http.mode = "proxied_oidc"`, and once it is on a call needs no further confirmation.
+
+A script runs with the user's privileges, and nothing confines it: it can read and write any
+file the user can, start processes and open connections. Treat `--allow-scripts` like handing
+the agent a shell in the project directory. The source defines `func run()`; every answer
+carries:
+
+* `classification`: `passed`, `failed`, `compile_error` or `inconclusive`;
+* `result`, what `run()` returned as a tagged value, and `result_literal`, Godot's own spelling
+  of it, which is all an object or resource has;
+* the engine's diagnostics, with the line of the caller's source where the engine names one,
+  and what the run printed;
+* `changes`: every project file that differs from before the run, compared by content, at most
+  1,000 listed;
+* `applied: true` and `rolled_back: false`. Nothing a script does is undone.
+
+How a run ends depends on where it runs:
+
+| | `script.run` | `editor.script.run` | `runtime.script.run` |
+| --- | --- | --- | --- |
+| Its deadline passes | the engine is ended; `timeout`, with the files changed until then | the server stops waiting; `uncertain`, with the files changed so far | the server stops waiting; `uncertain`, with the files changed so far |
+| What ends the code | the deadline or a cancellation | only closing the editor | stopping the session |
+| Afterwards | nothing is blocked | every change is refused until an operator resolves the transaction ([Recovery](recovery.md)) | nothing is blocked |
+| Errors inside `run()` | always seen | seen on Godot 4.5.1 and later | seen on Godot 4.5.1 and later |
+
+`script.run` in the project context is refused while an editor is connected; use
+`editor.script.run`, or `context: copy`, which runs against a disposable copy and discards it.
+The server waits for an editor or game run its `deadline_ms` and a further two seconds; while
+it runs, the editor's or game's other requests wait behind it.
+
+The typed tools stay the first choice. They validate a change before anything is written,
+journal it, and undo it in the editor's history, which a script does not; a script answers what
+no typed tool asks, or makes a change no typed operation spells, in one call.
+`unsafe_script` stays a reserved identifier with no meaning: it is not a capability, a tool or a
+switch.
+
+### Typed tools and scripts compared
+
+The same tasks, done both ways through `script.run`, with Godot 4.7.1 and a debug build of the
+server on Linux x86_64, by `typed_tools_and_scripts_do_the_same_tasks` in
+`crates/godot-mcp-server/tests/script_run.rs`. Each `script.run` call starts one headless Godot,
+about 0.8 s of the time below.
+
+| Task | Typed tools | `script.run` |
+| --- | --- | --- |
+| A scene of 10 placed nodes | 1 call (`scene.create`), 907 ms; journaled, the node tree in the answer | 1 call, 776 ms; the new file listed by content |
+| The value `Game.level_count()` returns | not possible: `gdscript.symbols.get` finds the function but nothing runs it | 1 call, 752 ms; the value as a tagged integer |
+| Input action `jump` bound to Space | 2 calls (`project.settings.get`, `project.settings.patch`), 136 ms; other keys and comments kept | 1 call, 772 ms; Godot rewrites `project.godot` whole |
+| Rename `Player` in 5 scenes | 6 calls (`project.files.list`, 5 × `scene.batch.apply`), 4558 ms, each scene its own transaction; or 2 calls (`project.files.list`, `project.batch.apply`), 954 ms, one transaction refused whole if any scene changed meanwhile | 1 call, 768 ms; no precondition on the files it reads |
+| A mistake: an unknown class | refused before any write, naming the class | `compile_error` before `run()`; nothing changed |
+| A mistake: the rename breaks at scene 4 | `project.batch.apply`, 2 calls, 788 ms: refused whole, naming `rooms/room_3.tscn`; no scene changed | `failed`, naming the source line; 3 scenes stay changed, listed, nothing undone |
+
+A script is the shorter route for a question no tool asks. For a bulk change,
+`project.batch.apply` takes about as long as a script, 954 ms against 768 ms for five scenes,
+and keeps what the typed tools give: every precondition is checked, and a change that breaks
+part way leaves nothing half done.
 
 ## Membership is not availability
 
@@ -92,8 +150,8 @@ nothing to serve, such as `scene.save` with no editor connected, answers `unavai
 and names the plane.
 
 The `project` plane is genuinely delivered — `project.import.run`, `project.run`,
-`project.test`, `script.check`, `project.uid.update`, `resource.update` and `scene.save`
-all launch a real, contained engine — but it is not unconditional. It needs a discoverable Godot
+`project.test`, `script.check`, `scene.read`, `resource.read`, `shader.check`,
+`project.uid.update`, `resource.update` and `scene.save` all launch a real, contained engine — but it is not unconditional. It needs a discoverable Godot
 executable, a build whose advertised capabilities the probe recognises, and the bundled
 supervisor beside the server executable. [Process boundaries](process-boundaries.md)
 lists every precondition, and `health.get`'s `godot` component reports which of them
@@ -104,8 +162,8 @@ the `project.import.run`, `project.test` and `script.check` result contracts.
 
 `read`, `project_write`, `editor_mutate`, `runtime_execute` and
 `export_destructive`. Each operation consumes exactly one, and a profile grants a
-fixed set. There is no capability for arbitrary execution, so no profile can be
-combined into one.
+fixed set. The script tools consume `project_write`, `editor_mutate` and `runtime_execute`;
+no capability or profile turns them on, only the operator's switch does.
 
 ## Authoring
 
@@ -206,6 +264,25 @@ structured `unsupported` report and launches nothing. Discovery, probe, supervis
 other launch failures remain typed tool errors rather than being mislabeled as script
 verdicts. The default per-call deadline is 30 seconds, capped by the operator's
 `limits.deadline_ms` setting.
+
+### `shader.check` compiles a shader through the engine
+
+`shader.check` loads one `.gdshader` in a contained headless engine and compiles it with
+Godot's own shader language front end, which a headless build runs when a shader's uniforms
+are asked for. The answer says whether it `compiled`, gives each error's `message`, `file`
+and `line`, an error inside an included `.gdshaderinc` naming that file, and the shader's
+`mode` and `uniforms`, each with its name, Godot type name, `hint`, `hint_string` and
+`usage`. A shader that does not compile has no uniforms. All five shader types compile
+headless on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, measured. What a rendering backend's own
+compiler finds, such as a limit of one GPU's driver, is not checked: no backend compiles the
+shader. An include is checked through a shader that includes it; `shader.check` refuses a
+`.gdshaderinc` path. A run whose output was cut off before the shader finished compiling is
+`uncertain`.
+
+`scene.read` and `resource.read` make the reading calls of
+[the editor bridge page](editor-bridge.md#reading-calls) the same way. All three change
+nothing in the project, and their process starts the project's autoloads, so they are
+`runtime` and `full` members, as `script.check` is.
 
 ### Static answers are honest about what they cannot prove
 

@@ -356,6 +356,21 @@ pub struct ProcessConfig {
     pub adapter: Option<ProcessAdapter>,
 }
 
+/// The operator's Android SDK and JDK, which an Android export and a device
+/// deploy use. Nothing is downloaded or installed: each is used where it is,
+/// and an Android export or deploy is `unavailable` without it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AndroidConfig {
+    /// The Android SDK directory, holding `platform-tools/adb` and
+    /// `build-tools/<version>/apksigner`.
+    #[serde(default)]
+    pub sdk: Option<String>,
+    /// The JDK directory, holding `bin/java` and `bin/keytool`.
+    #[serde(default)]
+    pub java_home: Option<String>,
+}
+
 /// Diagnostics destination.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -440,9 +455,17 @@ pub struct ServerConfig {
     /// Process containment.
     #[serde(default)]
     pub process: ProcessConfig,
+    /// The Android SDK and JDK.
+    #[serde(default)]
+    pub android: AndroidConfig,
     /// Resource limits.
     #[serde(default)]
     pub limits: Limits,
+    /// Whether `script.run`, `editor.script.run` and `runtime.script.run` run
+    /// caller-written GDScript (ADR 0012). Off by default; refused under
+    /// `proxied_oidc`, so a script never runs for a remote principal.
+    #[serde(default)]
+    pub allow_scripts: bool,
 }
 
 impl Default for ServerConfig {
@@ -457,7 +480,9 @@ impl Default for ServerConfig {
             log_sink: LogSink::default(),
             disposable: false,
             process: ProcessConfig::default(),
+            android: AndroidConfig::default(),
             limits: Limits::default(),
+            allow_scripts: false,
         }
     }
 }
@@ -490,6 +515,9 @@ pub struct CliOverrides {
     pub max_output_bytes: Option<u64>,
     pub max_body_bytes: Option<u64>,
     pub max_queue: Option<u32>,
+    pub allow_scripts: Option<bool>,
+    pub android_sdk: Option<String>,
+    pub android_java_home: Option<String>,
 }
 
 /// A sanitized configuration failure.
@@ -549,8 +577,15 @@ pub enum ConfigError {
     ProcessAdapterForbidden,
     #[error("configuration field {field} must be an absolute path")]
     InvalidProcessAdapter { field: &'static str },
+    #[error("configuration field {field} must be an absolute path")]
+    NotAbsolute { field: &'static str },
     #[error("cannot resolve {location}: {reason}")]
     SecretResolution { location: String, reason: String },
+    #[error(
+        "allow_scripts is refused under http mode proxied_oidc: a script never runs for a remote \
+         principal"
+    )]
+    ScriptsForProxiedPrincipal,
 }
 
 impl ConfigError {
@@ -730,6 +765,9 @@ fn reject_unknown_env(
         "GODOT_MCP_MAX_OUTPUT_BYTES",
         "GODOT_MCP_MAX_BODY_BYTES",
         "GODOT_MCP_MAX_QUEUE",
+        "GODOT_MCP_ALLOW_SCRIPTS",
+        "GODOT_MCP_ANDROID_SDK",
+        "GODOT_MCP_ANDROID_JAVA_HOME",
     ];
     for name in env.keys() {
         if name.starts_with(ENV_PREFIX)
@@ -775,6 +813,15 @@ fn apply_env(
     }
     if let Some(value) = env.get("GODOT_MCP_DISPOSABLE") {
         config.disposable = parse_bool_env("GODOT_MCP_DISPOSABLE", value)?;
+    }
+    if let Some(value) = env.get("GODOT_MCP_ALLOW_SCRIPTS") {
+        config.allow_scripts = parse_bool_env("GODOT_MCP_ALLOW_SCRIPTS", value)?;
+    }
+    if let Some(value) = env.get("GODOT_MCP_ANDROID_SDK") {
+        config.android.sdk = Some(value.clone());
+    }
+    if let Some(value) = env.get("GODOT_MCP_ANDROID_JAVA_HOME") {
+        config.android.java_home = Some(value.clone());
     }
     if let Some(value) = env.get("GODOT_MCP_PROCESS_BOUNDARY") {
         config.process.boundary = Some(match value.as_str() {
@@ -921,6 +968,15 @@ fn apply_cli(config: &mut ServerConfig, http: &mut HttpPartial, cli: &CliOverrid
     }
     if let Some(value) = cli.disposable {
         config.disposable = value;
+    }
+    if let Some(value) = cli.allow_scripts {
+        config.allow_scripts = value;
+    }
+    if let Some(value) = &cli.android_sdk {
+        config.android.sdk = Some(value.clone());
+    }
+    if let Some(value) = &cli.android_java_home {
+        config.android.java_home = Some(value.clone());
     }
     if let Some(value) = cli.process_boundary {
         config.process.boundary = Some(value);
@@ -1104,6 +1160,7 @@ impl ServerConfig {
         }
         validate_limits(&self.limits)?;
         validate_process(&self.process)?;
+        validate_android(&self.android)?;
         if let LogSink::File { path } = &self.log_sink {
             require_nonempty("log_sink.file.path", path)?;
         }
@@ -1116,6 +1173,9 @@ impl ServerConfig {
             }
             Transport::Http => {
                 let http = self.http.as_ref().ok_or(ConfigError::MissingHttpSection)?;
+                if self.allow_scripts && http.mode == HttpMode::ProxiedOidc {
+                    return Err(ConfigError::ScriptsForProxiedPrincipal);
+                }
                 validate_http(http)
             }
         }
@@ -1139,6 +1199,21 @@ fn validate_process(process: &ProcessConfig) -> Result<(), ConfigError> {
         (_, Some(_)) => Err(ConfigError::ProcessAdapterForbidden),
         (_, None) => Ok(()),
     }
+}
+
+fn validate_android(android: &AndroidConfig) -> Result<(), ConfigError> {
+    for (field, value) in [
+        ("android.sdk", &android.sdk),
+        ("android.java_home", &android.java_home),
+    ] {
+        if let Some(value) = value {
+            require_nonempty(field, value)?;
+            if !std::path::Path::new(value).is_absolute() {
+                return Err(ConfigError::NotAbsolute { field });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_limits(limits: &Limits) -> Result<(), ConfigError> {

@@ -237,15 +237,22 @@ pub(crate) enum RouteEffect {
         intent: EditorEffectIntent,
         command: Box<EditorMutation>,
     },
+    /// A deploy of a finished Android export to a device: a process effect
+    /// the operator's `adb` carries out, outside this host.
+    Device {
+        intent: EditorEffectIntent,
+        command: Box<EditorMutation>,
+    },
 }
 
 impl RouteEffect {
     const fn plane(&self) -> EffectPlane {
         match self {
             Self::File(_) => EffectPlane::File,
-            Self::Process { .. } | Self::SessionStart { .. } | Self::SessionStop { .. } => {
-                EffectPlane::Process
-            }
+            Self::Process { .. }
+            | Self::SessionStart { .. }
+            | Self::SessionStop { .. }
+            | Self::Device { .. } => EffectPlane::Process,
             Self::Editor { .. } => EffectPlane::Editor,
             Self::Runtime { .. } => EffectPlane::Runtime,
             Self::Debug { .. } => EffectPlane::LspDap,
@@ -275,7 +282,8 @@ impl RouteEffect {
             Self::Editor { intent, .. }
             | Self::Runtime { intent, .. }
             | Self::Debug { intent, .. }
-            | Self::SessionStop { intent, .. } => (
+            | Self::SessionStop { intent, .. }
+            | Self::Device { intent, .. } => (
                 &intent.transaction_id,
                 &intent.tool_name,
                 &intent.idempotency_id,
@@ -1217,6 +1225,11 @@ impl OutcomeRouter {
                     .open_session_stop_transaction(intent)
                     .map_err(|error| RouteRefusal::Denied(error.to_outcome()))?;
             }
+            RouteEffect::Device { intent, .. } => {
+                self.gateway
+                    .open_device_transaction(intent)
+                    .map_err(|error| RouteRefusal::Denied(error.to_outcome()))?;
+            }
             RouteEffect::Editor { intent, .. } => {
                 self.gateway
                     .open_editor_transaction(intent)
@@ -1264,7 +1277,8 @@ impl OutcomeRouter {
             | RouteEffect::SessionStart { .. }
             | RouteEffect::Runtime { .. }
             | RouteEffect::Debug { .. }
-            | RouteEffect::SessionStop { .. } => None,
+            | RouteEffect::SessionStop { .. }
+            | RouteEffect::Device { .. } => None,
             RouteEffect::Editor { intent, .. } if intent.observe_all => Some(CommitScope::Unknown),
             RouteEffect::Editor { intent, .. } if !intent.files.is_empty() => Some(
                 CommitScope::Paths(intent.files.iter().map(|(path, _)| path.clone()).collect()),
@@ -1356,6 +1370,14 @@ impl OutcomeRouter {
                 let dispatched = blocking(|| {
                     self.policy
                         .dispatch_session_stop(self.gateway.as_ref(), &permit, &command)
+                });
+                let outcome = dispatched.map_err(process_dispatch_refusal)?;
+                (None, None, Some(outcome))
+            }
+            RouteEffect::Device { command, .. } => {
+                let dispatched = blocking(|| {
+                    self.policy
+                        .dispatch_device_effect(self.gateway.as_ref(), &permit, &command)
                 });
                 let outcome = dispatched.map_err(process_dispatch_refusal)?;
                 (None, None, Some(outcome))

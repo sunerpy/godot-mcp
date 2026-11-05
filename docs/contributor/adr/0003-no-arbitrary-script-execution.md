@@ -1,6 +1,8 @@
 # 0003 — There is no arbitrary-script-execution tool
 
-**Status:** accepted.
+**Status:** superseded by [ADR 0012](0012-declared-script-execution.md) for contract 0.4.0.
+The reserved name `unsafe_script` it introduced stays reserved. The reasoning below is kept as
+written; ADR 0012 answers it point by point.
 
 ## Decision
 

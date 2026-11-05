@@ -8,7 +8,7 @@
 | --- | --- |
 | `project.info.get` | 项目的标识、设置摘要以及工作区版本号 |
 | `project.discover` | 每个脚本、场景、资源和其他文件，以及它们的种类 |
-| `project.files.list` | 全部文件或某个前缀下的文件，带种类、大小和 SHA-256——之后的写入要用到这个哈希 |
+| `project.files.list` | 全部文件，或某个前缀下、匹配某个 glob 的文件，带种类、大小和 SHA-256——之后的写入要用到这个哈希 |
 | `project.settings.get` | 类型化的设置：应用名称、主场景、自动加载、输入动作及其事件、已启用的插件，以及 `project.godot` 的 SHA-256 |
 | `project.validate` | 整个项目的解析错误、悬空引用和无效设置，并说明没有运行引擎 |
 
@@ -48,6 +48,24 @@ gdscript.references.get  script: player/player.gd  symbol: take_damage
 | `resource.dependencies.get` | 一个资源的外部依赖和子资源依赖，以及每一项如何解析 |
 
 目标不存在的关系会被报告为悬空，而不是被丢弃；`project.validate` 会列出项目里每一个悬空引用。
+
+## 一次看整个项目
+
+| 工具 | 回答 |
+| --- | --- |
+| `project.dependencies.audit` | 项目里没有任何入口能到达的文件，并逐个说明原因；`view: "cycles"` 时给出互相引用成环的文件，以及 Godot 遇到这种环会怎样 |
+| `project.signals.get` | 脚本声明的每个信号，连接它的场景和脚本，以及发出它的代码行；`view: "problems"` 时给出连到不存在方法的连接、发出却没人连接的信号，以及连到未声明信号的连接 |
+| `project.metrics.get` | 按种类和扩展名统计的文件数与字节数，以及 GDScript 的代码行、注释行和空行；`view: "complexity"` 时按复杂度、长度或嵌套深度给函数排序，按节点数、深度或实例数给场景排序 |
+| `project.search` | 匹配一个字面字符串或正则表达式的每一行，可附带上下文行 |
+| `project.uid.get` | 某个 `uid://` 指向的文件，或某个文件的 UID，依据项目里的场景文件头、`.uid` 文件和 `.import` 文件 |
+| `scene.nodes.find` | 所有场景里按类型、分组、名称、脚本或已存属性找到的节点，包括实例化进来的场景 |
+| `scene.exports.get` | 一个场景里挂了脚本的节点的导出变量，带脚本里的默认值和场景存下的值 |
+
+未使用文件的列表是排查的起点，不是结论：运行时才拼出路径的脚本，比如 `load("res://levels/" + name + ".tscn")`，能加载没有任何地方写出名字的文件。答复会列出所有这类调用；位于某个调用字面前缀之下的未使用文件，会标出可能加载它的调用。
+
+Godot 编辑器会跳过隐藏的文件和文件夹，以及含有 `.gdignore` 的文件夹；这些工具跳过同样的文件，每个答复都会写明跳过了多少。场景里连到接收方没有的方法的连接会被列为问题，因为 Godot 自己不会提示：场景照常加载，信号触发时也不报错。只记录在 Godot 的 `.godot/` 缓存里的 UID 会答复 `unknown`，而不是“不存在”。
+
+`include` 和 `exclude` 接受 glob：`*` 和 `?` 不跨文件夹，`**` 可以跨文件夹，不含 `/` 的模式在任意文件夹里匹配文件名，比如 `*.tscn`。每个视图、字段和上限见[项目级分析参考](../../../operator/project-analysis.md)。
 
 ## 读懂答复
 

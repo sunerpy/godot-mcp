@@ -197,6 +197,35 @@ silent: an editor runs one request at a time on its main thread and answers no h
 until it is done, so a long scan is not mistaken for a lost editor. Once the deadline
 passes without an answer the request is unresolved, and the silence rule applies again.
 
+## The server's status
+
+The server-status request, method bridge.server_status, is a `control` request that
+tells an editor add-on what the server serves, for the add-on's panel to show. The
+server's capabilities list the method on the editor bridge only, so an add-on can tell a
+server that will send it from an older one that will not. Once the session is described,
+the server sends it to an add-on that listed the method, and to no other peer: an add-on
+that does not list it is served exactly as before, and the runtime probe of a managed
+game is never sent it.
+
+The payload holds:
+
+| Field | Value |
+| --- | --- |
+| `server_version` | The server's version. |
+| `profile` | The capability profile it serves. |
+| `transport` | `stdio` or `http`. |
+| `observed_at_unix_ms` | When the status was sampled. |
+| `mutations_blocked` | Why the server blocks every mutation, or `null`. |
+| `needs` | One entry per need the profile's tools have, with its `status` and `reason`: from the `health.get` component that answers for it (`component` is `project`, `godot`, `editor` or `runtime`), or for a managed editor session from the router's `lsp_dap` plane (`plane`). A reason is at most 1,024 characters. |
+| `tools` | Each tool of the profile, at most 512, with its `name`, `title`, `needs` and `read_only`. |
+| `tools_total`, `tools_truncated` | How many tools the profile has, and whether the list stops short of them. |
+
+The server samples the status every 10 seconds while the session lasts and sends it again only
+when it differs from the one the add-on last took, apart from `observed_at_unix_ms`. The add-on
+answers with a result, or with `invalid_input` when the payload is not well formed, in which
+case it keeps the last status it took; a refused status, or one not answered within 30 seconds,
+is sent again with the next sample.
+
 ## Identity, project and deadlines
 
 * `envelope:identity` is always present. A server fills its own version and the session

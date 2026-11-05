@@ -446,6 +446,8 @@ subject = "{SUBJECT}"
         observed_at_unix_ms: 4_000,
         limits: Limits::default(),
         process: Default::default(),
+        allow_scripts: false,
+        android: Default::default(),
     })?;
     let transport = bind_http_transport(
         HttpTransportOptions::proxied_oidc("127.0.0.1:0".parse::<SocketAddr>()?, RESOURCE)

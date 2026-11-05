@@ -25,6 +25,9 @@ use godot_mcp_domain::contracts::{
     ArtifactResourceUri, OutcomeError, PrincipalId, ProjectIdentity, RangeSemantics, SessionId,
 };
 use godot_mcp_engine::export::bundle::unpack_app;
+use godot_mcp_engine::export::pack::{
+    PackEntry, PackError, PatchChange, compare_patch, read_pack, read_zip_pack,
+};
 use godot_mcp_engine::export::templates::exports_app_bundle;
 use godot_mcp_engine::supervision::protocol::{
     FaultInjection, LaunchDiagnostics, LaunchProtocol, LaunchRequest, SilentObserver,
@@ -33,14 +36,58 @@ use godot_mcp_engine::supervision::protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::android::{AndroidExport, ApkRecord, verify_apk};
 use super::record::SessionRecord;
 use crate::artifacts::{ArtifactStore, sha256_hex};
 use crate::engine_plane::journal::EngineJournal;
 
 /// The most bytes one export may produce: the artifact store's whole budget.
 pub(crate) const MAX_EXPORT_BYTES: u64 = 256 * 1024 * 1024;
+/// The most pack entries an export's status lists.
+pub(crate) const MAX_LISTED_ENTRIES: usize = 500;
+/// The most identical paths a patch's status names.
+const MAX_IDENTICAL_PATHS: usize = 100;
+/// What Godot 4.4.1 to 4.7.1 print when a patch has no file to export
+/// (measured), before exiting 1.
+pub(crate) const NOTHING_TO_EXPORT: &str = "No files or changes to export";
 /// How long the smoke run of an exported build may take.
 const SMOKE_DEADLINE: Duration = Duration::from_secs(60);
+
+/// What an export produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExportKind {
+    /// The preset's build, through its template (`--export-release` or
+    /// `--export-debug`).
+    #[default]
+    Project,
+    /// The project's data as one pack (`--export-pack`).
+    Pack,
+    /// The files that changed against base packs (`--export-patch`).
+    Patch,
+}
+
+impl ExportKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Pack => "pack",
+            Self::Patch => "patch",
+        }
+    }
+}
+
+/// One base pack of a patch export: named by the caller, copied into the
+/// export's private directory before it starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BasePack {
+    /// The artifact URI or project-relative path the caller named.
+    pub(crate) source: String,
+    pub(crate) sha256: String,
+    pub(crate) bytes: u64,
+    /// The private copy Godot reads. Never shown.
+    pub(crate) copy: PathBuf,
+}
 
 /// What one export is asked to do, fixed when it starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +105,9 @@ pub(crate) struct ExportPlan {
     pub(crate) runnable_here: bool,
     pub(crate) owner_principal: Option<String>,
     pub(crate) owner_session: Option<String>,
+    pub(crate) kind: ExportKind,
+    pub(crate) bases: Vec<BasePack>,
+    pub(crate) android: Option<AndroidExport>,
 }
 
 /// One file a successful export produced.
@@ -117,6 +167,22 @@ pub(crate) struct ExportRecord {
     pub(crate) smoke: Option<SmokeFacts>,
     /// Bytes of partial output kept privately after a dead server's export.
     pub(crate) recovery_evidence_bytes: Option<u64>,
+    #[serde(default)]
+    pub(crate) kind: ExportKind,
+    #[serde(default)]
+    pub(crate) bases: Vec<BasePack>,
+    /// What an Android export ran with; private.
+    #[serde(default)]
+    pub(crate) android: Option<AndroidExport>,
+    /// What the pack a pack or patch export wrote holds.
+    #[serde(default)]
+    pub(crate) pack: Option<Value>,
+    /// What the APK an Android export wrote declares.
+    #[serde(default)]
+    pub(crate) apk: Option<ApkRecord>,
+    /// Whether a patch export failed because nothing changed.
+    #[serde(default)]
+    pub(crate) nothing_changed: bool,
 }
 
 impl ExportRecord {
@@ -145,7 +211,20 @@ impl ExportRecord {
             outputs: Vec::new(),
             smoke: None,
             recovery_evidence_bytes: None,
+            kind: plan.kind,
+            bases: plan.bases.clone(),
+            android: plan.android.clone(),
+            pack: None,
+            apk: None,
+            nothing_changed: false,
         }
+    }
+
+    /// The output an Android export's deploy installs, with its artifact
+    /// when it is still served.
+    pub(crate) fn apk_output(&self) -> Option<&ExportOutput> {
+        let apk = self.apk.as_ref()?;
+        self.outputs.iter().find(|output| output.name == apk.output)
     }
 
     /// The path-free projection a client may see. An output whose artifact
@@ -167,15 +246,32 @@ impl ExportRecord {
                 })
             })
             .collect();
+        let bases: Vec<Value> = self
+            .bases
+            .iter()
+            .map(|base| {
+                json!({
+                    "source": base.source,
+                    "sha256": base.sha256,
+                    "bytes": base.bytes,
+                })
+            })
+            .collect();
         json!({
+            "kind": self.kind.as_str(),
             "preset": self.preset,
             "platform": self.platform,
             "mode": self.mode,
             "template_label": self.template_label,
-            "template": self.template,
+            // A pack or patch export goes through no template.
+            "template": (!self.template.is_empty()).then_some(&self.template),
             "outcome": self.outcome,
             "failure": self.failure,
+            "nothing_changed": self.nothing_changed,
+            "bases": bases,
             "outputs": outputs,
+            "pack": self.pack,
+            "apk": self.apk.as_ref().map(ApkRecord::public),
             "smoke": self.smoke,
             "recovery_evidence": self.recovery_evidence_bytes.map(|bytes| json!({
                 "retained": true,
@@ -511,6 +607,156 @@ fn register_all(
     Ok(outputs)
 }
 
+fn flag_names(entry: &PackEntry) -> Vec<&'static str> {
+    let mut flags = Vec::new();
+    if entry.removal() {
+        flags.push("removal");
+    }
+    if entry.delta() {
+        flags.push("delta");
+    }
+    if entry.encrypted() {
+        flags.push("encrypted");
+    }
+    flags
+}
+
+/// Read the pack a pack or patch export wrote, and compare a patch with its
+/// base packs: the facts its status shows, or why the pack is not a result.
+fn pack_facts(
+    output: &str,
+    bytes: &[u8],
+    kind: ExportKind,
+    bases: &[BasePack],
+) -> Result<Value, String> {
+    if output.ends_with(".zip") {
+        let entries = read_zip_pack(bytes)
+            .map_err(|error| format!("the ZIP pack Godot wrote cannot be read: {error}"))?;
+        if let Some(entry) = entries.iter().find(|entry| !entry.verified) {
+            return Err(format!(
+                "the ZIP pack Godot wrote is damaged: `{}` does not match its CRC-32",
+                entry.path
+            ));
+        }
+        let listed: Vec<Value> = entries
+            .iter()
+            .take(MAX_LISTED_ENTRIES)
+            .map(|entry| {
+                json!({
+                    "path": entry.path,
+                    "size": entry.size,
+                    "crc32": format!("{:08x}", entry.crc32),
+                })
+            })
+            .collect();
+        return Ok(json!({
+            "format": "zip",
+            "readable": true,
+            "files": entries.len(),
+            "entries": listed,
+            "truncated": entries.len() > MAX_LISTED_ENTRIES,
+        }));
+    }
+    let pack = match read_pack(bytes) {
+        Ok(pack) => pack,
+        Err(error @ (PackError::EncryptedDirectory | PackError::UnsupportedFormat(_))) => {
+            return Ok(json!({
+                "format": "pck",
+                "readable": false,
+                "reason": error.to_string(),
+            }));
+        }
+        Err(error) => return Err(format!("the pack Godot wrote cannot be read: {error}")),
+    };
+    if let Some(entry) = pack.mismatches().first() {
+        return Err(format!(
+            "the pack Godot wrote is damaged: the bytes of `{}` do not have the MD5 its \
+             directory records",
+            entry.path
+        ));
+    }
+    let comparison = if kind == ExportKind::Patch {
+        let mut tables = Vec::with_capacity(bases.len());
+        for base in bases {
+            let bytes = std::fs::read(&base.copy).map_err(|error| {
+                format!(
+                    "the base pack {} cannot be read again: {error}",
+                    base.source
+                )
+            })?;
+            tables.push(read_pack(&bytes).map_err(|error| {
+                format!("the base pack {} cannot be read: {error}", base.source)
+            })?);
+        }
+        Some(compare_patch(&pack, &tables))
+    } else {
+        None
+    };
+    let listed: Vec<Value> = pack
+        .entries
+        .iter()
+        .enumerate()
+        .take(MAX_LISTED_ENTRIES)
+        .map(|(index, entry)| {
+            let mut value = json!({
+                "path": entry.path,
+                "size": entry.size,
+                "md5": entry.md5_hex(),
+                "flags": flag_names(entry),
+                "digest": entry.digest.as_str(),
+            });
+            if let Some(comparison) = &comparison {
+                value["change"] = json!(comparison.changes[index].1.as_str());
+            }
+            value
+        })
+        .collect();
+    let (major, minor, patch) = pack.engine_version;
+    let mut facts = json!({
+        "format": "pck",
+        "readable": true,
+        "format_version": pack.format_version,
+        "engine_version": format!("{major}.{minor}.{patch}"),
+        "files": pack.entries.len(),
+        "entries": listed,
+        "truncated": pack.entries.len() > MAX_LISTED_ENTRIES,
+    });
+    if let Some(comparison) = comparison {
+        let identical = comparison.identical();
+        facts["patch"] = json!({
+            "bases": bases.len(),
+            "new": comparison.count(PatchChange::New),
+            "changed": comparison.count(PatchChange::Changed),
+            "delta": comparison.count(PatchChange::Delta),
+            "removed": comparison.count(PatchChange::Removed),
+            "removed_absent": comparison.count(PatchChange::RemovedAbsent),
+            "identical": identical.len(),
+            "identical_paths": identical.iter().take(MAX_IDENTICAL_PATHS).collect::<Vec<_>>(),
+            "changed_files_only": identical.is_empty(),
+        });
+    }
+    Ok(facts)
+}
+
+/// Whether a patch export's captured output says Godot found nothing to
+/// export.
+fn nothing_to_export(diagnostics: &LaunchDiagnostics) -> bool {
+    [&diagnostics.stdout.bytes, &diagnostics.stderr.bytes]
+        .iter()
+        .any(|bytes| String::from_utf8_lossy(bytes).contains(NOTHING_TO_EXPORT))
+}
+
+/// Remove what an export staged for itself: its private Godot home, its SDK
+/// view, its copies of base packs and its tool scratch.
+pub(crate) fn remove_staging(session_directory: &Path) {
+    for name in ["android-home", "android-sdk", "bases", "scratch"] {
+        let path = session_directory.join(name);
+        if std::fs::symlink_metadata(&path).is_ok() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
 /// What a finished export produced, settled into its record: registered
 /// outputs, or the reason none were, and the smoke run.
 pub(super) struct Completion<'a> {
@@ -547,7 +793,20 @@ impl Completion<'_> {
             .is_some_and(|diagnostics| diagnostics.termination == TerminationKind::ExitedClean);
         let files = output_files(self.output_dir);
         let total: u64 = files.iter().map(|(_, _, bytes)| bytes).sum();
-        let failure = if !clean {
+        let nothing_changed = !clean
+            && export.kind == ExportKind::Patch
+            && diagnostics.is_some_and(nothing_to_export);
+        let mut failure = if nothing_changed {
+            export.nothing_changed = true;
+            Some(format!(
+                "Godot found no file that differs from the base packs: it reported \"{NOTHING_TO_EXPORT}.\" \
+                 and {}; any file it left was discarded",
+                diagnostics.map_or_else(
+                    || "did not exit cleanly".to_owned(),
+                    |diagnostics| termination(&diagnostics.termination)
+                )
+            ))
+        } else if !clean {
             Some(diagnostics.map_or_else(
                 || "the export process did not run to completion".to_owned(),
                 |diagnostics| {
@@ -570,10 +829,15 @@ impl Completion<'_> {
         } else {
             None
         };
+        if failure.is_none() {
+            failure = self.verify(export).err();
+        }
         if let Some(failure) = failure {
             discard_outputs(self.output_dir);
             export.outcome = Some("failed".to_owned());
             export.failure = Some(failure);
+            export.pack = None;
+            export.apk = None;
             return;
         }
         let Some(artifacts) = self.artifacts else {
@@ -600,7 +864,9 @@ impl Completion<'_> {
                 .find(|output| output.name == export.output_name)
                 .map(|output| output.sha256.clone())
                 .unwrap_or_default();
-            export.smoke = Some(if !export.runnable_here {
+            export.smoke = Some(if export.kind != ExportKind::Project {
+                SmokeFacts::not_run("a pack is data a game loads, not a program to run".to_owned())
+            } else if !export.runnable_here {
                 SmokeFacts::not_run(format!("this host cannot run a {} build", export.platform))
             } else if exports_app_bundle(&export.platform) {
                 self.smoke_bundle(&main)
@@ -611,6 +877,40 @@ impl Completion<'_> {
         export.outputs = outputs;
         // The registered artifacts hold the bytes now.
         discard_outputs(self.output_dir);
+    }
+
+    /// Read what the export wrote before it becomes the result: the pack of
+    /// a pack or patch export, the APK of an Android export.
+    fn verify(&self, export: &mut ExportRecord) -> Result<(), String> {
+        let android = export.android.clone();
+        if export.kind == ExportKind::Project && android.is_none() {
+            return Ok(());
+        }
+        let main = self.output_dir.join(&export.output_name);
+        let bytes = std::fs::read(&main)
+            .map_err(|error| format!("{} could not be read back: {error}", export.output_name))?;
+        if export.kind == ExportKind::Project {
+            let Some(plan) = android else {
+                return Ok(());
+            };
+            let scratch = self.bundle_dir.parent().map_or_else(
+                || self.output_dir.join("scratch"),
+                |parent| parent.join("scratch"),
+            );
+            std::fs::create_dir_all(&scratch)
+                .map_err(|error| format!("the private scratch directory: {error}"))?;
+            let record = verify_apk(&export.output_name, &main, &bytes, &plan, &scratch)
+                .map_err(|reason| format!("the exported APK was not accepted: {reason}"))?;
+            export.apk = Some(record);
+            return Ok(());
+        }
+        export.pack = Some(pack_facts(
+            &export.output_name,
+            &bytes,
+            export.kind,
+            &export.bases,
+        )?);
+        Ok(())
     }
 
     /// Unpack the app bundle an export packed into `archive` and run its
@@ -909,6 +1209,9 @@ mod tests {
             runnable_here: true,
             owner_principal: None,
             owner_session: None,
+            kind: ExportKind::Project,
+            bases: Vec::new(),
+            android: None,
         });
         let refused = register_all(
             &artifacts,
@@ -938,6 +1241,9 @@ mod tests {
             runnable_here: true,
             owner_principal: owner.map(ToOwned::to_owned),
             owner_session: None,
+            kind: ExportKind::Project,
+            bases: Vec::new(),
+            android: None,
         };
         let owned = ExportRecord::planned(&plan(Some("principal-alice")));
         assert!(owned.belongs_to("principal-alice"));
@@ -947,5 +1253,132 @@ mod tests {
             unowned.belongs_to("principal-bob"),
             "an unowned record is anyone's"
         );
+    }
+
+    fn pck(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
+        use godot_mcp_engine::export::pack::fixture::{Entry, pck};
+        let entries: Vec<Entry<'_>> = entries
+            .iter()
+            .map(|(path, data, flags)| Entry {
+                path,
+                data,
+                flags: *flags,
+            })
+            .collect();
+        pck(4, (4, 7, 1), &entries)
+    }
+
+    #[test]
+    fn a_pack_is_answered_with_its_files_and_their_checked_digests() {
+        let bytes = pck(&[
+            ("data/levels.json", b"{}", 0),
+            ("project.binary", b"ECFG", 0),
+        ]);
+        let facts = pack_facts("game.pck", &bytes, ExportKind::Pack, &[]).expect("a pack");
+        assert_eq!(facts["readable"], json!(true));
+        assert_eq!(facts["format_version"], json!(4));
+        assert_eq!(facts["engine_version"], json!("4.7.1"));
+        assert_eq!(facts["files"], json!(2));
+        assert_eq!(facts["entries"][0]["path"], json!("data/levels.json"));
+        assert_eq!(facts["entries"][0]["digest"], json!("verified"));
+        assert_eq!(facts["truncated"], json!(false));
+        assert!(facts.get("patch").is_none());
+        let mut damaged = bytes.clone();
+        damaged[0x70] ^= 1;
+        let refused = pack_facts("game.pck", &damaged, ExportKind::Pack, &[])
+            .expect_err("a damaged pack is not a result");
+        assert!(refused.contains("data/levels.json"), "{refused}");
+        let mut encrypted = bytes;
+        encrypted[20] |= 1;
+        let unreadable = pack_facts("game.pck", &encrypted, ExportKind::Pack, &[])
+            .expect("an encrypted directory is answered, not guessed at");
+        assert_eq!(unreadable["readable"], json!(false));
+        assert!(
+            unreadable["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("encrypted"))
+        );
+    }
+
+    #[test]
+    fn a_patch_counts_its_changes_and_flags_an_unchanged_file() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let base_path = directory.path().join("base.pck");
+        std::fs::write(
+            &base_path,
+            pck(&[
+                ("data/levels.json", b"{}", 0),
+                ("project.binary", b"ECFG", 0),
+            ]),
+        )
+        .expect("base");
+        let base = BasePack {
+            source: "base.pck".to_owned(),
+            sha256: String::new(),
+            bytes: 0,
+            copy: base_path,
+        };
+        let patch = pck(&[
+            ("data/extra.json", b"[]", 0),
+            ("data/levels.json", b"{\"a\": 1}", 0),
+            ("project.binary", b"ECFG", 0),
+        ]);
+        let facts = pack_facts(
+            "patch.pck",
+            &patch,
+            ExportKind::Patch,
+            std::slice::from_ref(&base),
+        )
+        .expect("a patch");
+        let summary = &facts["patch"];
+        assert_eq!(summary["new"], json!(1), "{facts}");
+        assert_eq!(summary["changed"], json!(1), "{facts}");
+        assert_eq!(summary["identical"], json!(1), "{facts}");
+        assert_eq!(summary["identical_paths"], json!(["project.binary"]));
+        assert_eq!(summary["changed_files_only"], json!(false));
+        assert_eq!(facts["entries"][2]["change"], json!("identical"));
+    }
+
+    #[test]
+    fn a_zip_pack_lists_its_files() {
+        use godot_mcp_engine::export::bundle::fixture::{Entry, stored_zip};
+        let archive = stored_zip(&[Entry {
+            name: "data/levels.json",
+            data: b"{}",
+            mode: 0o100_644,
+        }]);
+        let facts = pack_facts("game.zip", &archive, ExportKind::Pack, &[]).expect("a ZIP pack");
+        assert_eq!(facts["format"], json!("zip"));
+        assert_eq!(facts["files"], json!(1));
+        assert_eq!(facts["entries"][0]["path"], json!("data/levels.json"));
+    }
+
+    #[test]
+    fn godots_nothing_to_export_line_is_recognised_on_either_stream() {
+        use godot_mcp_engine::supervision::gate::CapturedStream;
+        let stream = |text: &str| CapturedStream {
+            bytes: text.as_bytes().to_vec(),
+            total_bytes: text.len() as u64,
+            truncated: false,
+        };
+        let diagnostics = |stdout: &str, stderr: &str| LaunchDiagnostics {
+            termination: TerminationKind::NonzeroExit { code: 1 },
+            exit_code: Some(1),
+            signal: None,
+            stdout: stream(stdout),
+            stderr: stream(stderr),
+        };
+        assert!(nothing_to_export(&diagnostics(
+            "",
+            "ERROR: Save PCK: No files or changes to export.\n"
+        )));
+        assert!(nothing_to_export(&diagnostics(
+            "ERROR: Save PCK: No files or changes to export.",
+            ""
+        )));
+        assert!(!nothing_to_export(&diagnostics(
+            "",
+            "ERROR: Project export failed."
+        )));
     }
 }

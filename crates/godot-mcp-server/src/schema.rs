@@ -68,6 +68,22 @@ pub(crate) fn gdscript_path_pattern() -> String {
     format!(r"^(?=.*\.gd$)(?:res://)?{PATH_SEGMENT}(?:/{PATH_SEGMENT})*$")
 }
 
+/// A project PNG image, project-relative or `res://`: [`PATH_SEGMENT`]s whose
+/// last one ends in `.png` in any letter case, outside the engine cache
+/// (`.godot`), the server's state root (`.godot-mcp`) and the headless
+/// helper's scratch (`godot_mcp_helpers`).
+pub(crate) fn project_png_pattern() -> String {
+    format!(
+        r"^(?!(?:res://)?(?:\.godot|\.godot-mcp|godot_mcp_helpers)/)(?:res://)?(?:{PATH_SEGMENT}/)*[^/\\]*\.[pP][nN][gG]$"
+    )
+}
+
+/// A project scene, project-relative or `res://`: [`PATH_SEGMENT`]s whose last
+/// one ends in `.tscn` or `.scn`.
+pub(crate) fn project_scene_pattern() -> String {
+    format!(r"^(?:res://)?(?:{PATH_SEGMENT}/)*[^/\\]*\.t?scn$")
+}
+
 /// A tagged contract value a tool may write, `{"type": <variant>, "value":
 /// <payload>}`: any variant but a live object reference, at any depth. The
 /// tool schema that uses it carries [`value_definitions`] as its `$defs`.
@@ -159,8 +175,10 @@ fn generated_definitions() -> Map<String, Value> {
     definitions.insert(
         CALL_ARGUMENT.to_owned(),
         json!({
-            "description": "A tagged value, or {type: \"new_resource\", value: {class}}: a new \
-                            resource embedded in the edit, of one of the listed classes.",
+            "description": "A tagged value, or {type: \"new_resource\", value: {class, \
+                            properties?}}: a new resource the edit embeds, of any engine or \
+                            global script resource class but a script or a GDExtension, with \
+                            initial properties as tagged values.",
             "oneOf": [
                 { "$ref": format!("#/$defs/{WRITABLE_VALUE}") },
                 {
@@ -176,7 +194,16 @@ fn generated_definitions() -> Map<String, Value> {
                             "properties": {
                                 "class": {
                                     "type": "string",
-                                    "enum": godot_mcp_domain::editing_methods::NEW_RESOURCE_CLASSES
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                    "maxLength": godot_mcp_domain::editing_methods::MAX_CLASS_NAME_BYTES,
+                                    "not": {
+                                        "enum": godot_mcp_domain::editing_methods::NEW_RESOURCE_FORBIDDEN
+                                    }
+                                },
+                                "properties": {
+                                    "type": "object",
+                                    "additionalProperties": { "$ref": format!("#/$defs/{WRITABLE_VALUE}") },
+                                    "description": "Property names mapped to tagged values."
                                 }
                             }
                         }

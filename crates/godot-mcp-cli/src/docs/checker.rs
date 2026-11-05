@@ -74,6 +74,7 @@ pub const NON_NAME_SEGMENTS: &[&str] = &[
     "html",
     "ini",
     "tpz",
+    "apk",
     "com",
     "org",
     "net",

@@ -760,9 +760,11 @@ mod tests {
         }
     }
 
-    /// Exactly two outcomes span more than one plane, and both are composed.
+    /// Exactly three outcomes span more than one plane, and all are composed:
+    /// an import and a run of caller code each launch Godot and change project
+    /// files, and a scene save goes through a process to a file.
     #[test]
-    fn only_the_two_genuinely_multi_plane_outcomes_are_composed() {
+    fn only_the_genuinely_multi_plane_outcomes_are_composed() {
         use godot_mcp_domain::CapabilityProfile;
         use godot_mcp_domain::manifests::canonical_manifest;
 
@@ -775,6 +777,9 @@ mod tests {
             }
         }
         composed.sort();
-        assert_eq!(composed, vec!["project.import.run", "scene.save"]);
+        assert_eq!(
+            composed,
+            vec!["project.import.run", "scene.save", "script.run"]
+        );
     }
 }

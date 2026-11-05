@@ -68,6 +68,10 @@ pub struct BootstrapOptions {
     pub limits: Limits,
     /// Which boundary contains every Godot launch of the bound project.
     pub process: godot_mcp_domain::config::ProcessConfig,
+    /// Whether the bound project's script tools run caller-written GDScript.
+    pub allow_scripts: bool,
+    /// The Android SDK and JDK the bound project's Android exports use.
+    pub android: godot_mcp_domain::config::AndroidConfig,
 }
 
 enum SlotState {
@@ -538,6 +542,8 @@ impl BootstrapHandler {
             observed_at_unix_ms: call.access.observed_at_unix_ms(),
             limits: self.shared.options.limits.clone(),
             process: self.shared.options.process.clone(),
+            allow_scripts: self.shared.options.allow_scripts,
+            android: self.shared.options.android.clone(),
         };
         let runtime = tokio::task::spawn_blocking(move || ProjectRuntime::open(&options))
             .await

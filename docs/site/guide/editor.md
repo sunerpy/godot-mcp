@@ -3,8 +3,9 @@
 The `godot_mcp` editor add-on connects a Godot editor you are running to the server. With it, an
 MCP client inspects what the editor holds, edits scenes as ordinary undoable editor actions, saves
 them, closes them, sees the editor's window, reads its log, changes the editor's own settings,
-makes it pick up files changed on disk, opens scripts and runs the game, while the server keeps
-its journal, policy and recovery rules. It needs
+makes it pick up files changed on disk, opens and closes scripts, moves its 3D cameras, answers
+its dialogs, restarts it and runs the game, while the server keeps its journal, policy and
+recovery rules. It needs
 the `editor` or `full` profile; the `runtime` profile serves only the two tools that run the game.
 
 ## Install it
@@ -34,12 +35,31 @@ the selection, its undo history, the main screen shown and whether a game runs. 
 tool answers `unavailable`, naming the editor, while none is connected. A tool the connected
 plugin is too old for answers `unsupported` and says to update it.
 
+## The Godot MCP panel
+
+The add-on puts a small dock in the editor, with the connection status, a **Pause agent edits**
+switch, **Reconnect now** and **Details**, which opens the **Godot MCP** bottom panel. The panel
+shows the connection and the server's version, profile and session; every request the editor
+answered, with its method, the scene, node or script path it was about and its result, but never
+its arguments; the server's tools, grouped by what they need and whether that is available now;
+and the bridge methods the add-on serves. **Copy diagnostics** copies the versions, the
+connection, the counts and the last errors for a bug report, without the connection's secret.
+
+While **Pause agent edits** is on, the editor refuses every change the server asks it to make
+before the change starts: the call answers `unavailable`, nothing changed, and reads still work.
+Once you turn it off, the client retries with a new `idempotencyId`. Only what passes through the
+editor is paused: the server's own file, script, resource and asset writes go on, and the switch
+is not a security boundary, since any program running as you can change the project's files. It
+lasts until you turn it off, close the editor or reload the add-on. The
+[editor bridge reference](../../operator/editor-bridge.md#the-godot-mcp-panel) has the details.
+
 ## What it can do
 
 | Tool | Does |
 | --- | --- |
 | `editor.scene.tree.get` | The edited scene as the editor holds it, unsaved changes included, with a semantic digest |
 | `editor.node.get` | One node in full: every property with its type, value and default, its signals and connections |
+| `editor.scene.read` | What the engine answers about the edited scene, unsaved changes included: painted tile cells, animation keys, state machine states, navigation polygons and the other reading calls of `scene.read`, each with the errors the editor logged while it ran |
 | `editor.types.get`, `editor.types.search` | One engine or project class as this exact Godot build sees it, or the classes whose name matches |
 | `editor.scene.edit` | Changes the scene the editor holds as one undoable action, without saving |
 | `editor.scene.save` | Saves the edited scene, one open scene, or all of them |
@@ -50,7 +70,12 @@ plugin is too old for answers `unsupported` and says to update it.
 | `editor.screenshot.capture` | Captures the editor's window, or its 2D or a 3D viewport |
 | `editor.log.get` | What the editor logged: prints, errors and warnings with their source lines |
 | `editor.filesystem.scan` | Picks up files changed on disk, imports them and reloads the open scripts that changed |
-| `editor.script.open` | Opens a script at a line and column |
+| `editor.script.open`, `editor.script.close` | Opens a script at a line and column; closes a script tab that holds no unsaved edit |
+| `editor.camera.get`, `editor.camera.set` | Reads what the 2D view and the 3D viewports show; moves a 3D viewport's camera to look from one point at another |
+| `editor.dialogs.get`, `editor.dialog.respond` | Lists the dialogs the editor shows; presses one button of one of them |
+| `editor.resource.preview` | The editor's preview of a resource and its thumbnail, as images |
+| `editor.performance.get` | The editor's own performance monitors: frame times, object and node counts, memory |
+| `editor.restart` | Restarts the editor once nothing it holds can be lost, and waits for it to connect again |
 | `editor.preferences.get`, `editor.preferences.set` | Reads and changes the editor's own settings, the ones its Editor Settings dialog shows |
 | `editor.shortcuts.get`, `editor.shortcuts.set` | Reads and rebinds the editor's shortcuts, the ones its Shortcuts tab lists |
 | `editor.play.start`, `editor.play.stop` | Runs the game as the editor's Play button does, and stops it |
@@ -138,6 +163,58 @@ plugin, so there both tools answer `unsupported`.
 changes when it closes it, without asking, so a close is refused while the scene holds a change
 its file does not: save it first, or undo the change. Closing needs Godot 4.5.1 or later.
 
+## Closing a script tab
+
+`editor.script.close` closes the tab of one script. Godot discards a tab's unsaved edits when a
+plugin closes it, so a tab that holds edits its file does not is refused: save them in the editor,
+or undo them, first. Closing a script tab needs Godot 4.7.1.
+
+## Cameras
+
+`editor.camera.get` reads where the editor looks: the 2D view's zoom and center, and for each of
+the four 3D viewports its camera's position, direction, projection and lens, and whether the
+viewport is on screen. `editor.camera.set` moves the camera of a 3D viewport to `position`,
+looking at `target`, and answers the camera as the editor holds it a few frames later; the editor
+then keeps that view. The viewport must be on screen, so show the 3D screen with
+`editor.main_screen.set` first. Moving a camera needs Godot 4.5.1 or later: Godot 4.4.1 moves
+the camera on to a point of its own. The 2D view is read but not moved, since the 2D editor sets
+it from its own state.
+
+## Dialogs
+
+`editor.dialogs.get` lists the dialogs the editor shows, such as the alert it opens for a scene it
+cannot read, each with an `id`, its title, its text and its buttons: `ok`, `cancel`, and custom
+ones by the action they report. `editor.dialog.respond` presses one button of one dialog, as a
+click does, and answers whether the dialog closed. The button does whatever the editor does for
+it, which can save or discard files, so a lost answer blocks further writes until it is resolved.
+Nothing answers dialogs by itself: each answer is one call.
+
+## Previews
+
+`editor.resource.preview` asks the editor for the preview its FileSystem dock shows for a
+resource, and the small thumbnail, and returns both as PNG artifacts. The editor draws previews
+with its renderer, so this needs an editor with a window; a headless editor answers
+`unavailable`. Textures, SVG images, materials, meshes, gradients, scripts and sounds get a
+preview; a scene written to disk outside the editor gets none. When there is no preview, the
+answer says so, never an empty image.
+
+## Restarting the editor
+
+`editor.restart` restarts the editor as **Project → Reload Current Project** does, and answers
+once the restarted editor, a new process, has connected. It never loses anything:
+
+- while a scene or script holds unsaved changes, it is refused unless you pass `save: true`,
+  which saves the open scenes first, and on Godot 4.7.1 the open scripts too;
+- if the editor still asks a question before restarting, the question is cancelled, so it saves
+  and discards nothing, and the call says what the editor asked and what `save` already wrote;
+- it is refused while the game runs or a dialog is open.
+
+Godot does not pass `--headless` on to the editor it restarts, so an editor started with
+`--headless` is refused; start it with `--display-driver headless` instead, which a restart
+keeps. An editor the server runs as a managed session is refused too: stop the session and start
+a new one. Until the restarted editor connects, the server makes no other change and writes no
+project file. When it does not connect within `timeoutMs`, the answer is `uncertain`.
+
 ## Files changed on disk
 
 After a script or an asset changed on disk, `editor.filesystem.scan` makes the editor notice:
@@ -154,6 +231,20 @@ something first, such as which scene is the main one. The game runs as the edito
 outside the server's process boundaries, so a project configured as untrusted is refused; run
 its game in a managed session instead ([Sessions](sessions.md)).
 
+## Running your own script
+
+`editor.script.run` runs GDScript an agent writes in the editor, on its main thread, once you
+start the server with `--allow-scripts`. The script reaches everything the editor does — the
+open scenes, `EditorInterface`, the file system — and the answer gives what its `run()`
+returned, what it printed and the errors it raised with their line, and every project file that
+differs afterwards. On Godot 4.4.1 the editor's log cannot be read, so errors inside `run()` are
+not seen. Nothing it changes is in the editor's undo history.
+
+Godot cannot stop a script part way through. The server waits `deadline_ms` and two seconds more;
+a run that has not answered by then is `uncertain`, the editor may still be running it, and the
+project's changes stay blocked until the transaction is resolved
+([Recovery](../operate/recovery.md)). Only closing the editor ends the code.
+
 ## When an answer is lost
 
 Every editor change ends `committed`, `not_started` or `unresolved`. An unresolved change — the
@@ -164,10 +255,11 @@ One that may have saved a file blocks further writes until it is resolved
 
 ## What it does not do
 
-The editor settings listed above, shortcuts on Godot 4.4.1 and 4.5.1, restarting the editor, the
-Asset Library and version control are left to you or to the tools you already use; breakpoints and reading the running game
+The editor settings listed above, shortcuts on Godot 4.4.1 and 4.5.1, restarting an editor
+started with `--headless`, answering the question an editor asks before it restarts, moving the
+2D view, the Asset Library and version control are left to you or to the tools you already use; breakpoints and reading the running game
 are in managed sessions ([Sessions](sessions.md)); one property of an embedded resource is changed
-by writing the resource back; discarding unsaved changes and running arbitrary code are not
-offered. The
+by writing the resource back; discarding unsaved changes is not offered, and your own scripts
+wait for `--allow-scripts`. The
 [editor bridge reference](../../operator/editor-bridge.md#what-the-add-on-does-not-do) gives the
 way to each.

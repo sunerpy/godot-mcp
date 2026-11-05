@@ -14,7 +14,8 @@
 //!   canned payloads, including a one-pixel PNG capture; an input sequence is
 //!   answered as cancelled as soon as the server withdraws it, and
 //!   `<project>/fake-game.sequence` records that it arrived and whether it was
-//!   withdrawn;
+//!   withdrawn; a wait runs until the server withdraws it, or 10 s, and
+//!   `<project>/fake-game.wait` records the same;
 //! * run as an editor (`--editor ... --lsp-port <p> --dap-port <q>`), it records
 //!   its PID in `<project>/fake-editor.pid` and hosts a minimal GDScript
 //!   language server and debug adapter on those loopback ports, ordered the
@@ -26,20 +27,39 @@
 //!   export would: a small executable script that prints one line and exits 0,
 //!   so the exported build can be smoke-run — or, for an output ending in
 //!   `.zip`, the zip a macOS export packs its app bundle into, `Fake.app` with
-//!   that script as its executable;
+//!   that script as its executable — or, for an output ending in `.apk`, the
+//!   APK an Android export writes, once the editor settings in its private
+//!   home name an Android SDK view, a JDK and a debug keystore the way Godot
+//!   4.7.1 needs them;
+//! * run as a pack export (`--export-pack <preset> <out>`), it writes the
+//!   project's files as one format 4 PCK — or a ZIP for an output ending in
+//!   `.zip` — and as a patch export (`--export-patch ... --patches <a,b>`)
+//!   only the files whose MD5 differs from the base packs' tables, failing
+//!   with Godot's "No files or changes to export" and a header-only file when
+//!   none does;
 //! * the `barrier` and `supervise` roles run the bundled supervisor, so the same
 //!   binary can stand in for `godot-mcp-supervisor` too.
 //!
 //! `<project>/fake-game.conf` selects the behaviour: `probe` (default) serves
 //! until `runtime.session.stop`, then exits 0; `stubborn` answers the stop but
-//! keeps running; `exit:<code>` exits at once with `<code>`; `escape` tries to
+//! keeps running; `old-probe` describes only the methods of the 0.3.0 probe;
+//! `lossy` closes the bridge connection, unanswered, on a wait or a replay;
+//! `long-replay` runs a replay until the server withdraws it, or 10 s, and
+//! records the same in `<project>/fake-game.replay`;
+//! `scenario` describes the session as one that renders and answers a
+//! property write with `Engine.time_scale` read back as 2, for the test
+//! scenario tools;
+//! `exit:<code>` exits at once with `<code>`; `escape` tries to
 //! move itself into the cgroup `<project>/fake-game.escape` names and reports
 //! what it could do in `<project>/fake-game.escape-report`; for an editor,
 //! `squat` leaves the language-server port to a helper process instead of
 //! listening there itself; for an export, `export:fail` reports Godot's failure
-//! line and exits 1, `export:hang` writes part of the output and never ends,
-//! `export:huge` writes a 300 MiB (sparse) output, and `export:symlink` puts a
-//! symbolic link into a bundle zip.
+//! line and exits 1, `export:hang` writes part of the output and ends only when
+//! stopped or after ten minutes, `export:huge` writes a 300 MiB (sparse)
+//! output, and `export:symlink` puts a symbolic link into a bundle zip;
+//! `patch:identical` also puts one unchanged file into a patch, `pack:corrupt`
+//! damages a pack's first file, `apk:broken` writes an APK that is not a zip
+//! and `apk:no-launcher` one whose manifest declares no launcher.
 
 use std::io::Write as _;
 use std::net::{TcpListener, TcpStream};
@@ -71,6 +91,8 @@ const HELP_FLAGS: &[&str] = &[
     "--export-release",
     "--export-debug",
     "--export-pack",
+    "--export-patch",
+    "--patches",
     "--doctool",
     "--debug-server",
     "--main-pack",
@@ -151,14 +173,290 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
-fn script(stop: FakeAnswer, project: &std::path::Path) -> FakePluginScript {
+/// The methods the runtime probe of contract 0.3.0's first release
+/// implemented, before typed control and observation.
+const PROBE_0_3_0_METHODS: &[&str] = &[
+    "runtime.capture.chunk",
+    "runtime.capture.recording",
+    "runtime.capture.screenshot",
+    "runtime.input.release",
+    "runtime.input.send",
+    "runtime.input.sequence",
+    "runtime.input.state",
+    "runtime.performance",
+    "runtime.properties",
+    "runtime.session.stop",
+    "runtime.signals",
+    "runtime.tree",
+    "runtime.ui",
+];
+
+/// The canned answers of the typed control and observation methods.
+fn control(
+    script: FakePluginScript,
+    project: &std::path::Path,
+    behaviour: &str,
+) -> FakePluginScript {
+    let lossy = behaviour == "lossy";
+    let observed = |mut payload: serde_json::Value, frame: u64| {
+        payload["revision"] = json!(1);
+        payload["frame"] = json!(frame);
+        payload
+    };
+    let wait = if lossy {
+        FakeAnswer::Disconnect
+    } else {
+        FakeAnswer::PayloadOnCancel {
+            cancelled: observed(
+                json!({ "condition": "node_exists", "satisfied": false, "outcome": "cancelled", "elapsed_ms": 40, "frames_waited": 2, "timeout_ms": 30000, "observed": { "present": false, "node": null } }),
+                30,
+            ),
+            finished: observed(
+                json!({ "condition": "node_exists", "satisfied": true, "outcome": "satisfied", "elapsed_ms": 250, "frames_waited": 15, "timeout_ms": 30000, "observed": { "present": true, "node": "/root/Main/Spawned" } }),
+                31,
+            ),
+            within: std::time::Duration::from_secs(10),
+            marker: Some(project.join("fake-game.wait")),
+        }
+    };
+    let completed = observed(
+        json!({ "outcome": "completed", "events_sent": 2, "events_skipped": 0, "events_planned": 2, "elapsed_ms": 120, "scheduled_ms": 100, "max_lag_ms": 4, "released": [], "held": [] }),
+        40,
+    );
+    let replay = if lossy {
+        FakeAnswer::Disconnect
+    } else if behaviour == "long-replay" {
+        FakeAnswer::PayloadOnCancel {
+            cancelled: observed(
+                json!({ "outcome": "cancelled", "events_sent": 1, "events_skipped": 0, "events_planned": 2, "elapsed_ms": 60, "scheduled_ms": 20000, "max_lag_ms": 3, "released": ["key:68"], "held": [] }),
+                41,
+            ),
+            finished: completed,
+            within: std::time::Duration::from_secs(10),
+            marker: Some(project.join("fake-game.replay")),
+        }
+    } else {
+        FakeAnswer::Payload(completed)
+    };
+    script
+        .answering(
+            "runtime.properties.batch",
+            FakeAnswer::Payload(observed(
+                json!({
+                    "targets": [
+                        { "node": "/root/Main/Player", "class": "Node2D", "properties": { "position": { "type": "vector2", "value": { "x": 1.0, "y": 2.0 } } }, "unrepresentable": {}, "missing": [], "truncated": false },
+                        { "singleton": "Engine", "class": "Engine", "properties": { "time_scale": { "type": "float", "value": 1.0 } }, "unrepresentable": {}, "missing": [], "truncated": false }
+                    ],
+                    "truncated": false
+                }),
+                20,
+            )),
+        )
+        .answering(
+            "runtime.properties.set",
+            FakeAnswer::Payload(observed(
+                if behaviour == "scenario" {
+                    json!({
+                        "target": "Engine",
+                        "class": "Engine",
+                        "results": [{
+                            "property": "time_scale",
+                            "before": { "type": "float", "value": 1.0 },
+                            "requested": { "type": "float", "value": 2.0 },
+                            "after": { "type": "float", "value": 2.0 },
+                            "matched": true
+                        }],
+                        "all_matched": true
+                    })
+                } else {
+                    json!({
+                        "target": "/root/Main/Player",
+                        "node": "/root/Main/Player",
+                        "class": "Node2D",
+                        "results": [{
+                            "property": "position",
+                            "before": { "type": "vector2", "value": { "x": 1.0, "y": 2.0 } },
+                            "requested": { "type": "vector2", "value": { "x": 5.0, "y": 6.0 } },
+                            "after": { "type": "vector2", "value": { "x": 5.0, "y": 6.0 } },
+                            "matched": true
+                        }],
+                        "all_matched": true
+                    })
+                },
+                21,
+            )),
+        )
+        .answering(
+            "runtime.scenario.check",
+            FakeAnswer::Payload(observed(
+                json!({
+                    "node": "/root/Main/Player",
+                    "class": "Node2D",
+                    "property": "position",
+                    "op": "approx",
+                    "holds": true,
+                    "reason": null,
+                    "value": { "type": "vector2", "value": { "x": 1.0, "y": 2.0 } },
+                    "special": null,
+                    "type": "Vector2",
+                    "unrepresentable": null
+                }),
+                28,
+            )),
+        )
+        .answering(
+            "runtime.scenario.stress",
+            FakeAnswer::Payload(observed(
+                json!({
+                    "scene": "res://bullet.tscn",
+                    "parent": "/root/Main",
+                    "requested": 2,
+                    "created": 2,
+                    "present_during": 2,
+                    "remaining": 0,
+                    "freed": 2,
+                    "outcome": "completed",
+                    "duration_ms": 200,
+                    "interval_ms": 100,
+                    "samples": 2,
+                    "paused_samples": 0,
+                    "monitors": { "TIME_FPS": { "count": 2, "min": 60.0, "max": 60.0, "mean": 60.0, "last": 60.0 } },
+                    "counts": {
+                        "before": { "OBJECT_COUNT": 40.0, "OBJECT_NODE_COUNT": 3.0, "OBJECT_ORPHAN_NODE_COUNT": 0.0 },
+                        "during": { "OBJECT_COUNT": 44.0, "OBJECT_NODE_COUNT": 5.0, "OBJECT_ORPHAN_NODE_COUNT": 0.0 },
+                        "after": { "OBJECT_COUNT": 40.0, "OBJECT_NODE_COUNT": 3.0, "OBJECT_ORPHAN_NODE_COUNT": 0.0 }
+                    }
+                }),
+                29,
+            )),
+        )
+        .answering("runtime.wait", wait)
+        .answering(
+            "runtime.sample",
+            FakeAnswer::Payload(observed(
+                json!({
+                    "time_base": { "clock": "engine_ticks_ms", "started_ticks_ms": 1000, "ended_ticks_ms": 1200, "first_frame": 50, "last_frame": 62, "first_physics_frame": 30, "last_physics_frame": 42, "interval_ms": 100, "duration_ms": 200, "display": "headless", "focus_observable": false },
+                    "samples": [
+                        { "t_ms": 0, "frame": 50, "physics_frame": 30, "paused": false, "focused": true, "time_scale": 1.0 },
+                        { "t_ms": 100, "frame": 56, "physics_frame": 36, "paused": false, "focused": true, "time_scale": 1.0 }
+                    ],
+                    "series": [{ "kind": "monitor", "monitor": "TIME_FPS", "custom": false, "values": [60.0, 60.0], "stats": { "count": 2, "min": 60.0, "max": 60.0, "mean": 60.0, "last": 60.0 } }],
+                    "paused_samples": 0,
+                    "unfocused_samples": 0,
+                    "stopped_by": "duration",
+                    "truncated": false
+                }),
+                22,
+            )),
+        )
+        .answering(
+            "runtime.nodes.find",
+            FakeAnswer::Payload(observed(
+                json!({ "nodes": [{ "path": "/root/Main/Player", "name": "Player", "class": "Node2D", "script": "res://player.gd", "children": 0, "groups": ["players"], "visible": true, "position": { "x": 1.0, "y": 2.0 } }], "matched": 1, "truncated": false, "scanned": 3, "scan_truncated": false }),
+                23,
+            )),
+        )
+        .answering(
+            "runtime.navigation.path",
+            FakeAnswer::Error(ErrorKind::Unavailable, MutationStatus::NotStarted),
+        )
+        .answering(
+            "runtime.node.move",
+            FakeAnswer::Payload(observed(
+                json!({ "node": "/root/Main/Player", "mode": "teleport", "outcome": "teleported", "start": { "x": 1.0, "y": 2.0 }, "after": { "x": 5.0, "y": 6.0 }, "final": { "x": 5.0, "y": 6.0 }, "held": true }),
+                24,
+            )),
+        )
+        .answering(
+            "runtime.ui.press",
+            FakeAnswer::Payload(observed(
+                json!({ "node": "/root/Main/HUD/Start", "text": "Start", "position": { "x": 20.0, "y": 10.0 }, "outcome": "clicked", "pressed_signal": true, "emissions": { "pressed": 1, "button_down": 1, "button_up": 1, "toggled": 0 }, "button_pressed": false, "toggle_mode": false, "disabled": false, "present": true }),
+                25,
+            )),
+        )
+        .answering(
+            "runtime.input.record.start",
+            FakeAnswer::Payload(observed(
+                json!({ "recording_id": "input-recording-1", "started_ticks_ms": 2000, "max_events": 3000, "max_duration_ms": 30000 }),
+                26,
+            )),
+        )
+        .answering(
+            "runtime.input.record.stop",
+            FakeAnswer::Payload(observed(
+                json!({
+                    "recording_id": "input-recording-1",
+                    "started_ticks_ms": 2000,
+                    "duration_ms": 400,
+                    "ended_by": "stopped",
+                    "max_events": 3000,
+                    "max_duration_ms": 30000,
+                    "dropped": 0,
+                    "events": [
+                        { "t_ms": 10, "kind": "key", "key": "D", "physical": "D", "unicode": 0, "pressed": true, "echo": false, "modifiers": { "shift": false, "ctrl": false, "alt": false, "meta": false }, "source": "probe", "actions": ["move_right"] },
+                        { "t_ms": 260, "kind": "key", "key": "D", "physical": "D", "unicode": 0, "pressed": false, "echo": false, "modifiers": { "shift": false, "ctrl": false, "alt": false, "meta": false }, "source": "external", "actions": ["move_right"] }
+                    ],
+                    "counts": { "total": 2, "probe": 1, "external": 1 }
+                }),
+                27,
+            )),
+        )
+        .answering("runtime.input.replay", replay)
+}
+
+fn script(stop: FakeAnswer, project: &std::path::Path, behaviour: &str) -> FakePluginScript {
     let png = one_pixel_png();
     let digest: String = Sha256::digest(&png)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
     let frame = json!({ "byte_length": png.len(), "sha256": digest });
-    FakePluginScript::implementing(godot_mcp_bridge::runtime::METHODS)
+    // The probe implements the script method whether or not the server
+    // offers it; the server sends it only when its operator allowed scripts.
+    let methods = if behaviour == "old-probe" {
+        PROBE_0_3_0_METHODS
+    } else {
+        godot_mcp_bridge::runtime::METHODS_WITH_SCRIPTS
+    };
+    // A stand-in that renders nothing says so, as a headless game does; the
+    // `scenario` behaviour describes one that renders, for the image tools.
+    let described = FakePluginScript::implementing(methods)
+        .describing("renders", json!(behaviour == "scenario"))
+        .describing("godot_version", json!("4.7.1.stable.fake"));
+    control(described, project, behaviour)
+        .answering(
+            "runtime.image.reference",
+            FakeAnswer::Payload(json!({
+                "upload": "compare",
+                "received": png.len(),
+                "total": png.len(),
+                "complete": true
+            })),
+        )
+        .answering(
+            "runtime.image.compare",
+            FakeAnswer::Payload(json!({
+                "capture_id": "capture-3",
+                "width": 1,
+                "height": 1,
+                "frames": [frame],
+                "fps": null,
+                "capture_size": { "width": 1, "height": 1 },
+                "reference": { "width": 1, "height": 1, "byte_length": png.len(), "sha256": digest },
+                "tolerance": 0,
+                "same_size": true,
+                "matched": true,
+                "reason": null,
+                "total_pixels": 1,
+                "differing_pixels": 0,
+                "ratio": 0.0,
+                "max_channel_difference": 0,
+                "bounding_box": null,
+                "difference_frame": null,
+                "revision": 1,
+                "frame": 18
+            })),
+        )
         .answering(
             "runtime.tree",
             FakeAnswer::Payload(json!({
@@ -258,6 +556,24 @@ fn script(stop: FakeAnswer, project: &std::path::Path) -> FakePluginScript {
                 "total": png.len(),
                 "data_base64": base64(&png)
             })),
+        )
+        .answering(
+            "runtime.script.run",
+            FakeAnswer::SaveThenAnswer {
+                path: project.join("made_by_script.txt"),
+                contents: b"made".to_vec(),
+                payload: json!({
+                    "stage": "done",
+                    "ran": true,
+                    "literal": "5",
+                    "source_file": "gdscript://1.gd",
+                    "log_capture": true,
+                    "log": [{ "kind": "message", "text": "from the fake game", "stderr": false }],
+                    "log_skipped": 0,
+                    "log_truncated": false,
+                    "action": "godot-mcp: runtime.script.run"
+                }),
+            },
         )
         .answering("runtime.session.stop", stop)
 }
@@ -533,12 +849,249 @@ fn serve_debug_adapter(stream: TcpStream) {
     }
 }
 
+/// The export flags this stand-in answers.
+const EXPORT_MODES: [&str; 4] = [
+    "--export-release",
+    "--export-debug",
+    "--export-pack",
+    "--export-patch",
+];
+
+/// Every file of the project an export packs, by its path in the pack:
+/// nothing hidden, none of this stand-in's own files (its `fake-*` records,
+/// and the `*.profraw` profiles a coverage build of it or of the test server
+/// writes into the directory it runs in), not the presets, and
+/// `project.godot` as `project.binary`, as Godot packs it.
+fn project_files(project: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(directory: &std::path::Path, prefix: &str, out: &mut Vec<(String, Vec<u8>)>) {
+        let Ok(listing) = std::fs::read_dir(directory) else {
+            return;
+        };
+        for entry in listing.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name.starts_with("fake-") || name.ends_with(".profraw") {
+                continue;
+            }
+            let path = format!("{prefix}{name}");
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                walk(&entry.path(), &format!("{path}/"), out);
+            } else if kind.is_file() && path != "export_presets.cfg" {
+                let packed = if path == "project.godot" {
+                    "project.binary".to_owned()
+                } else {
+                    path
+                };
+                if let Ok(bytes) = std::fs::read(entry.path()) {
+                    out.push((packed, bytes));
+                }
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(project, "", &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+/// The value after `flag`.
+fn after<'a>(arguments: &'a [String], flag: &str) -> Option<&'a String> {
+    arguments
+        .iter()
+        .position(|argument| argument == flag)
+        .and_then(|at| arguments.get(at + 1))
+}
+
+/// Run as a pack or patch export of `preset` into `output`.
+fn pack_export(
+    arguments: &[String],
+    preset: &str,
+    output: &str,
+    behaviour: &str,
+    patch: bool,
+    project: &std::path::Path,
+) -> ExitCode {
+    use godot_mcp_engine::export::md5::md5;
+    use godot_mcp_engine::export::pack::{fixture, read_pack};
+
+    let files = project_files(project);
+    let selected: Vec<&(String, Vec<u8>)> = if patch {
+        let mut known: std::collections::BTreeMap<String, [u8; 16]> =
+            std::collections::BTreeMap::new();
+        for base in after(arguments, "--patches")
+            .map(|list| list.split(',').collect::<Vec<_>>())
+            .unwrap_or_default()
+        {
+            let Some(pack) = std::fs::read(base)
+                .ok()
+                .and_then(|bytes| read_pack(&bytes).ok())
+            else {
+                eprintln!("ERROR: Couldn't load patch pack: {base}");
+                return ExitCode::from(1);
+            };
+            for entry in pack.entries {
+                if entry.removal() {
+                    known.remove(&entry.path);
+                } else {
+                    known.insert(entry.path, entry.md5);
+                }
+            }
+        }
+        let mut changed: Vec<&(String, Vec<u8>)> = files
+            .iter()
+            .filter(|(path, bytes)| known.get(path) != Some(&md5(bytes)))
+            .collect();
+        if behaviour == "patch:identical"
+            && !changed.is_empty()
+            && let Some(unchanged) = files.iter().find(|file| !changed.contains(file))
+        {
+            changed.push(unchanged);
+            changed.sort_by(|left, right| left.0.cmp(&right.0));
+        }
+        changed
+    } else {
+        files.iter().collect()
+    };
+    if selected.is_empty() {
+        eprintln!("ERROR: Save PCK: No files or changes to export.");
+        let _ = std::fs::write(output, fixture::header_only(4, (4, 7, 1)));
+        eprintln!("ERROR: Project export for preset \"{preset}\" failed.");
+        return ExitCode::from(1);
+    }
+    let bytes = if output.ends_with(".zip") {
+        use godot_mcp_engine::export::bundle::fixture::{Entry, stored_zip};
+        let entries: Vec<Entry<'_>> = selected
+            .iter()
+            .map(|(path, bytes)| Entry {
+                name: path,
+                data: bytes,
+                mode: 0o100_644,
+            })
+            .collect();
+        stored_zip(&entries)
+    } else {
+        let entries: Vec<fixture::Entry<'_>> = selected
+            .iter()
+            .map(|(path, bytes)| fixture::Entry {
+                path,
+                data: bytes,
+                flags: 0,
+            })
+            .collect();
+        let mut bytes = fixture::pck(4, (4, 7, 1), &entries);
+        if behaviour == "pack:corrupt" && bytes.len() > 0x70 {
+            bytes[0x70] ^= 0xff;
+        }
+        bytes
+    };
+    if std::fs::write(output, bytes).is_err() {
+        return ExitCode::from(70);
+    }
+    println!("[ DONE ] savepack");
+    ExitCode::SUCCESS
+}
+
+/// Run as an Android export of `preset` into `output`: the private home's
+/// editor settings must name an SDK view with `adb` and `build-tools`, a JDK
+/// with `java`, and, for a debug export, a debug keystore, as Godot 4.7.1
+/// checks them; the APK names the preset's package.
+fn android_export(
+    project: &std::path::Path,
+    preset: &str,
+    output: &str,
+    behaviour: &str,
+    debug: bool,
+) -> ExitCode {
+    use godot_mcp_engine::export::apk::fixture::apk;
+    use godot_mcp_engine::export::axml::fixture::{Launcher, Spec};
+
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let settings = std::fs::read_to_string(home.join(".config/godot/editor_settings-4.7.tres"))
+        .unwrap_or_default();
+    let setting = |key: &str| {
+        settings.lines().find_map(|line| {
+            line.strip_prefix(key)
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+                .map(|value| value.trim().trim_matches('"').to_owned())
+        })
+    };
+    let mut errors = Vec::new();
+    let sdk = setting("export/android/android_sdk_path").map(PathBuf::from);
+    if !sdk
+        .as_ref()
+        .is_some_and(|sdk| sdk.join("platform-tools/adb").is_file())
+    {
+        errors.push("Unable to find Android SDK platform-tools' adb command.");
+    }
+    if !sdk.as_ref().is_some_and(|sdk| {
+        std::fs::read_dir(sdk.join("build-tools")).is_ok_and(|mut versions| {
+            versions.any(|version| {
+                version.is_ok_and(|version| version.path().join("apksigner").is_file())
+            })
+        })
+    }) {
+        errors.push("Unable to find Android SDK build-tools' apksigner command.");
+    }
+    if !setting("export/android/java_sdk_path")
+        .is_some_and(|jdk| std::path::Path::new(&jdk).join("bin/java").is_file())
+    {
+        errors.push("A valid Java SDK path is required in Editor Settings.");
+    }
+    if debug
+        && !setting("export/android/debug_keystore")
+            .is_some_and(|keystore| std::path::Path::new(&keystore).is_file())
+    {
+        errors.push("Debug keystore not configured in the Editor Settings nor in the preset.");
+    }
+    if !errors.is_empty() {
+        eprintln!(
+            "ERROR: Cannot export project with preset \"{preset}\" due to configuration errors:"
+        );
+        for error in errors {
+            eprintln!("{error}");
+        }
+        eprintln!("ERROR: Project export for preset \"{preset}\" failed.");
+        return ExitCode::from(1);
+    }
+    let package = std::fs::read_to_string(project.join("export_presets.cfg"))
+        .ok()
+        .and_then(|text| godot_mcp_engine::export::presets::parse_presets(&text).ok())
+        .and_then(|presets| {
+            presets
+                .into_iter()
+                .find(|candidate| candidate.name() == preset)
+                .and_then(|found| found.option_str("package/unique_name").map(str::to_owned))
+        })
+        .unwrap_or_else(|| "org.godotengine.$genname".to_owned())
+        .replace("$genname", "fakegame");
+    let mut spec = Spec::godot(&package);
+    spec.debuggable = debug;
+    if behaviour == "apk:no-launcher" {
+        spec.launcher = Launcher::None;
+    }
+    let bytes = if behaviour == "apk:broken" {
+        b"not a zip".to_vec()
+    } else {
+        apk(&spec)
+    };
+    if std::fs::write(output, bytes).is_err() {
+        return ExitCode::from(70);
+    }
+    println!("[ DONE ] export");
+    ExitCode::SUCCESS
+}
+
 /// Run as an export of `preset` into `output`, as scripted by `behaviour`.
 fn export(project: &std::path::Path, arguments: &[String], behaviour: &str) -> ExitCode {
     let at = arguments
         .iter()
-        .position(|argument| argument == "--export-release" || argument == "--export-debug");
-    let (Some(preset), Some(output)) = (
+        .position(|argument| EXPORT_MODES.contains(&argument.as_str()));
+    let (Some(at), Some(preset), Some(output)) = (
+        at,
         at.and_then(|at| arguments.get(at + 1)),
         at.and_then(|at| arguments.get(at + 2)),
     ) else {
@@ -547,6 +1100,20 @@ fn export(project: &std::path::Path, arguments: &[String], behaviour: &str) -> E
     };
     println!("[  10% ] savepack | Started Packing");
     let _ = std::fs::write(project.join("fake-export.started"), preset);
+    let mode = arguments[at].as_str();
+    if behaviour != "export:fail" && matches!(mode, "--export-pack" | "--export-patch") {
+        return pack_export(
+            arguments,
+            preset,
+            output,
+            behaviour,
+            mode == "--export-patch",
+            project,
+        );
+    }
+    if behaviour != "export:fail" && output.ends_with(".apk") {
+        return android_export(project, preset, output, behaviour, mode == "--export-debug");
+    }
     match behaviour {
         "export:fail" => {
             eprintln!("ERROR: Project export for preset \"{preset}\" failed.");
@@ -554,9 +1121,10 @@ fn export(project: &std::path::Path, arguments: &[String], behaviour: &str) -> E
         }
         "export:hang" => {
             let _ = std::fs::write(output, b"partial export output");
-            loop {
-                std::thread::park();
-            }
+            // Hang until cancelled, but at most ten minutes, so a test that
+            // fails before it cancels leaves no process running for long.
+            std::thread::sleep(std::time::Duration::from_secs(600));
+            ExitCode::from(1)
         }
         "export:huge" => {
             let written =
@@ -718,7 +1286,7 @@ fn main() -> ExitCode {
         .to_owned();
     if arguments
         .iter()
-        .any(|argument| argument == "--export-release" || argument == "--export-debug")
+        .any(|argument| EXPORT_MODES.contains(&argument.as_str()))
     {
         return export(&project, &arguments, &behaviour);
     }
@@ -759,7 +1327,10 @@ fn main() -> ExitCode {
             code: 0,
         }
     };
-    let probe = FakeEditorPlugin::spawn(&PathBuf::from(rendezvous), script(stop, &project));
+    let probe = FakeEditorPlugin::spawn(
+        &PathBuf::from(rendezvous),
+        script(stop, &project, &behaviour),
+    );
     match probe.join() {
         Ok(()) if behaviour == "stubborn" => {
             // The bridge ended but this game will not: only a terminated

@@ -35,14 +35,17 @@ use godot_mcp_engine::validation::diagnostic::parse_engine_diagnostics;
 use godot_mcp_engine::validation::outcome::Observed;
 
 pub(crate) mod authored;
+mod batches;
 mod canonical;
 mod handler;
 mod journal;
 mod process;
 pub(crate) mod providers;
 mod public;
+pub(crate) mod read;
 mod request;
 mod runtime;
+mod script_run;
 pub(crate) mod session;
 
 pub(crate) use handler::register_engine_tools;
@@ -230,6 +233,9 @@ pub(crate) fn reconcile_project_launches(
     Ok(reconciled)
 }
 
+/// The supervisor every launch is gated by: the bundled one beside this
+/// executable, or, in the non-shipping test server, the test server itself,
+/// which serves the supervisor's roles too.
 pub(crate) fn process_supervisor_binary() -> std::path::PathBuf {
     #[cfg(feature = "test-hooks")]
     if let Ok(executable) = std::env::current_exe()
@@ -358,6 +364,72 @@ impl ProcessEffectBoundary for ProductionProcessBoundary {
                 error: Some((error.kind(), error.message().to_owned())),
                 proof: unbound(),
             },
+        })
+    }
+
+    fn deploy_to_device(
+        &self,
+        ticket: &EffectTicket,
+        command: &crate::effect::boundary::EditorMutation,
+    ) -> Result<crate::effect::boundary::EditorEffectOutcome, BoundaryUnavailable> {
+        use godot_mcp_bridge::protocol::mutation::MutationStatus;
+
+        if ticket.boundary() != crate::journal::EffectBoundaryKind::Process
+            || ticket.transaction_id().is_empty()
+        {
+            return Err(BoundaryUnavailable {
+                boundary: "process",
+            });
+        }
+        let Some(sessions) = &self.sessions else {
+            return Err(BoundaryUnavailable {
+                boundary: "process",
+            });
+        };
+        let unbound = || TypedProof::EditorRuntime {
+            bridge_reachable: false,
+            receipt_transaction_id: None,
+            receipt_action_id: None,
+            live_state_probe: None,
+        };
+        let request = serde_json::from_str::<serde_json::Value>(&command.payload)
+            .ok()
+            .as_ref()
+            .and_then(session::android::DeployRequest::from_payload);
+        let Some(request) = request else {
+            return Ok(crate::effect::boundary::EditorEffectOutcome {
+                status: MutationStatus::NotStarted,
+                payload: serde_json::json!({}),
+                error: Some((
+                    ErrorKind::InvalidInput,
+                    "a deploy names its export and its device".to_owned(),
+                )),
+                proof: unbound(),
+            });
+        };
+        let report = sessions.deploy(&request, &|| command.cancellation.is_cancelled());
+        // An install the device reported is bound to this transaction by a
+        // receipt naming what was installed where; nothing else is.
+        let proof = if report.status == MutationStatus::Committed {
+            crate::editor::boundary::receipt(
+                ticket,
+                &command.action,
+                &serde_json::json!({
+                    "digest": format!(
+                        "{}@{}",
+                        report.payload.get("package").and_then(serde_json::Value::as_str).unwrap_or_default(),
+                        request.serial
+                    )
+                }),
+            )
+        } else {
+            unbound()
+        };
+        Ok(crate::effect::boundary::EditorEffectOutcome {
+            status: report.status,
+            payload: report.payload,
+            error: report.error,
+            proof,
         })
     }
 }

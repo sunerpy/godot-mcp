@@ -112,7 +112,7 @@ pub(crate) fn reconcile_open_transactions(
             conclusion.terminal_phase(),
             proof,
             Some(reason.clone()),
-            Some(conclusion.terminal_outcome()),
+            Some(terminal_outcome_of(&record, conclusion)),
         )?;
         settled.push(Reconciled {
             transaction_id: record.transaction_id,
@@ -417,7 +417,35 @@ fn classify_process(record: &TransactionRecord) -> (Conclusion, String) {
     }
 }
 
+/// The tools whose effect lands on a device outside this host.
+const DEVICE_TOOLS: &[&str] = &["android.deploy"];
+
+/// Whether `record` is a device effect that began: whatever the project
+/// holds, what the device did is not known here.
+fn device_effect_began(record: &TransactionRecord) -> bool {
+    record.phase == Phase::EffectStartedFsynced && DEVICE_TOOLS.contains(&record.tool_name.as_str())
+}
+
+/// The terminal outcome `record` settles with under `conclusion`: the
+/// conclusion's own, except that a device effect that began is `uncertain`
+/// even when the project's pre-state is proven.
+fn terminal_outcome_of(record: &TransactionRecord, conclusion: Conclusion) -> TerminalOutcome {
+    if conclusion == Conclusion::ProvenPreState && device_effect_began(record) {
+        TerminalOutcome::failed(ErrorKind::Uncertain)
+    } else {
+        conclusion.terminal_outcome()
+    }
+}
+
 fn classify_editor_runtime(record: &TransactionRecord) -> (Conclusion, String) {
+    if record.touched_paths.is_empty() && device_effect_began(record) {
+        return (
+            Conclusion::ProvenPreState,
+            "the deploy touched no project file, so the project holds its pre-state; whether \
+             the device installed or started the app is unknown"
+                .to_owned(),
+        );
+    }
     // A change to editor state alone (a selection, the current scene, an
     // unsaved undo) never had a project file in scope: whatever the editor
     // did, every project file still holds its pre-state.
@@ -539,6 +567,36 @@ mod tests {
         assert_eq!(editor_only, Conclusion::ProvenPreState);
         let (saving, _) = classify_editor_runtime(&open_editor_record(&["scenes/main.tscn"]));
         assert_eq!(saving, Conclusion::Quarantine);
+    }
+
+    /// A deploy changes a device, never a project file: interrupted after
+    /// its effect began, the project holds its pre-state, but what the device
+    /// did is unknown, so it settles failed with `uncertain`, not
+    /// `unavailable`. Interrupted before the effect began, nothing was sent.
+    #[test]
+    fn an_interrupted_deploy_is_uncertain_about_its_device() {
+        let mut deploy = open_editor_record(&[]);
+        deploy.tool_name = "android.deploy".to_owned();
+        deploy.effect_boundary = EffectBoundaryKind::Process;
+        deploy.operation_family = OperationFamily::RuntimeExecution;
+        let (conclusion, reason) = classify_editor_runtime(&deploy);
+        assert_eq!(conclusion, Conclusion::ProvenPreState);
+        assert!(reason.contains("device"), "{reason}");
+        assert_eq!(
+            terminal_outcome_of(&deploy, conclusion),
+            TerminalOutcome::failed(ErrorKind::Uncertain)
+        );
+        deploy.phase = Phase::StagedFsynced;
+        assert_eq!(
+            terminal_outcome_of(&deploy, Conclusion::ProvenPreState),
+            TerminalOutcome::failed(ErrorKind::Unavailable)
+        );
+        // Any other change to editor state alone keeps its outcome.
+        let editor_only = open_editor_record(&[]);
+        assert_eq!(
+            terminal_outcome_of(&editor_only, Conclusion::ProvenPreState),
+            TerminalOutcome::failed(ErrorKind::Unavailable)
+        );
     }
 
     #[test]

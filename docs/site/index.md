@@ -206,7 +206,7 @@ home:
   scope:
     title: What it does not do
     items:
-      - It does not run arbitrary GDScript or call arbitrary engine methods. No profile has such a tool.
+      - It runs no GDScript an agent writes until you start it with --allow-scripts, and its typed tools call no engine method outside their own fixed set.
       - It does not download Godot or export templates. It uses the build and templates you installed.
       - It does not edit binary .scn and .res files. It asks for them to be saved as text instead.
       - It does not make an untrusted project safe to open. Loading a project runs its code.
@@ -223,8 +223,8 @@ home:
 
 A profile is the ceiling for everything the server may do to your project. `core` reads and
 changes nothing. `editor` adds the writes, each one journaled and checked against what it
-replaces. `runtime` adds running the project and watching it. There is no tool that executes
-arbitrary code, in any profile.
+replaces. `runtime` adds running the project and watching it. Running an agent's own GDScript is off in
+every profile until you start the server with `--allow-scripts`.
 
 [Profiles and answers](guide/profiles.md) · [Tools and resources](../protocol/tool-inventory.md)
 

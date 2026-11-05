@@ -35,8 +35,8 @@ implementation.
 
 ## Capabilities
 
-The capability an operation consumes. There is no capability variant for
-arbitrary script execution.
+The capability an operation consumes. No capability turns script execution
+on: the script tools consume these, and only the operator's switch lets them run.
 
 * `editor_mutate`
 * `export_destructive`

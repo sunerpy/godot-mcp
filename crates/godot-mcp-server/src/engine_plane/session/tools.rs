@@ -27,7 +27,10 @@ use godot_mcp_engine::supervision::journal::{
 use godot_mcp_engine::supervision::protocol::{LaunchRequest, OutputCaps};
 use serde_json::{Map, Value, json};
 
+mod android;
+mod control;
 mod export;
+mod scenario;
 
 use super::debug::{DebugManager, SESSION_STOP, file_uri};
 use super::{SessionKind, SessionManager, SessionState, new_session_id};
@@ -62,6 +65,10 @@ const DEFAULT_EXPORT_SECONDS: u64 = 1800;
 const MAX_EXPORT_SECONDS: u64 = 3600;
 /// The engine flags an export needs.
 const EXPORT_FLAGS: [&str; 3] = ["--headless", "--export-release", "--export-debug"];
+/// The engine flags a pack export needs.
+const PACK_FLAGS: [&str; 2] = ["--headless", "--export-pack"];
+/// The engine flags a patch export needs.
+const PATCH_FLAGS: [&str; 3] = ["--headless", "--export-patch", "--patches"];
 /// The default and the longest lifetime of a session.
 const DEFAULT_LIFETIME_SECONDS: u64 = 3600;
 const MAX_LIFETIME_SECONDS: u64 = 14_400;
@@ -200,13 +207,27 @@ impl SessionCall for SessionOperation {
             Self::SignalsGet => "runtime.signals",
             Self::UiGet => "runtime.ui",
             Self::PerformanceGet => "runtime.performance",
+            Self::PropertiesBatchGet => "runtime.properties.batch",
+            Self::NodesFind => "runtime.nodes.find",
+            Self::NavigationPathGet => "runtime.navigation.path",
+            Self::Wait => "runtime.wait",
+            Self::Sample => "runtime.sample",
             Self::ActionSend | Self::KeySend | Self::MouseSend => "runtime.input.send",
             Self::SequenceSend => "runtime.input.sequence",
+            Self::InputRecordingStart => "runtime.input.record.start",
+            Self::InputRecordingStop => "runtime.input.record.stop",
+            Self::InputReplay => "runtime.input.replay",
+            Self::UiPress => "runtime.ui.press",
+            Self::PropertiesSet => "runtime.properties.set",
+            Self::NodeMove => "runtime.node.move",
+            Self::ScriptRun => godot_mcp_bridge::runtime::SCRIPT_RUN_METHOD,
             Self::ScreenshotCapture => "runtime.capture.screenshot",
             Self::RecordingCapture => "runtime.capture.recording",
             Self::RunStop => "runtime.session.stop",
             Self::EditorStop => SESSION_STOP,
             Self::ExportCancel => "project.export.cancel",
+            // Composed of several probe requests by the runtime boundary.
+            Self::TimeScaleSet | Self::ImageCompare | Self::ScenarioRun => scenario::action(self),
             Self::RunStart
             | Self::RunStatus
             | Self::RunLogs
@@ -215,7 +236,9 @@ impl SessionCall for SessionOperation {
             | Self::DebugCommand
             | Self::ExportPresetsList
             | Self::ExportStart
-            | Self::ExportStatus => "",
+            | Self::ExportStatus
+            | Self::AndroidDevicesList
+            | Self::AndroidDeploy => "",
         }
     }
 
@@ -290,6 +313,26 @@ impl SessionCall for SessionOperation {
             "description": "The mouse button (default left)."
         });
         let (properties, required): (Value, &[&str]) = match self {
+            Self::PropertiesBatchGet
+            | Self::NodesFind
+            | Self::NavigationPathGet
+            | Self::Wait
+            | Self::Sample
+            | Self::InputRecordingStart
+            | Self::InputRecordingStop
+            | Self::InputReplay
+            | Self::UiPress
+            | Self::PropertiesSet
+            | Self::NodeMove => control::properties(self, &session, &node),
+            Self::TimeScaleSet | Self::ImageCompare | Self::ScenarioRun => {
+                scenario::properties(self, &session)
+            }
+            Self::ScriptRun => {
+                let mut properties =
+                    crate::live_script::properties(crate::live_script::Place::Game);
+                properties.insert("session".to_owned(), session.clone());
+                (Value::Object(properties), &["session", "source"])
+            }
             Self::RunStart => (
                 json!({
                     "scene": {
@@ -347,9 +390,60 @@ impl SessionCall for SessionOperation {
                         "maximum": MAX_EXPORT_SECONDS,
                         "description": "How long the export may run before it is terminated \
                                         (default 1800)."
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["project", "pack", "patch"],
+                        "description": "project (default) exports the preset's build through its \
+                                        template; pack exports the project's data as one pack; \
+                                        patch exports only the files that differ from the base \
+                                        packs `patches` names."
+                    },
+                    "packFormat": {
+                        "type": "string",
+                        "enum": ["pck", "zip"],
+                        "description": "The format of a pack export (default pck); a patch is \
+                                        always a PCK."
+                    },
+                    "patches": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "items": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                        "description": "The base packs of a patch export, in the order they \
+                                        load: each the artifact URI of an output of an earlier \
+                                        export of yours, or a project-relative path (res:// \
+                                        accepted) of a PCK inside the project."
                     }
                 }),
                 &["preset"],
+            ),
+            Self::AndroidDevicesList => (json!({}), &[]),
+            Self::AndroidDeploy => (
+                json!({
+                    "export": export,
+                    "serial": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "description": "The device's serial, as android.devices.list reports it."
+                    },
+                    "runningTimeoutMs": {
+                        "type": "integer",
+                        "minimum": android::MIN_RUNNING_TIMEOUT_MS,
+                        "maximum": android::MAX_RUNNING_TIMEOUT_MS,
+                        "description": "How long to wait for the app's process after the launch, \
+                                        in ms (default 15000)."
+                    },
+                    "logcatLines": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": android::MAX_LOGCAT_LINES,
+                        "description": "The most logcat lines of the app's process to read \
+                                        (default 200)."
+                    }
+                }),
+                &["export", "serial"],
             ),
             Self::ExportStatus => (json!({ "export": export }), &[]),
             Self::ExportCancel => (json!({ "export": export }), &["export"]),
@@ -601,12 +695,62 @@ impl SessionCall for SessionOperation {
             // The handler refuses a mutation without one before anything runs.
             required.push("idempotencyId");
         }
-        json!({
+        let mut schema = json!({
             "type": "object",
             "additionalProperties": false,
             "properties": properties,
             "required": required,
-        })
+        });
+        if control::uses_values(self) || scenario::uses_values(self) {
+            schema["$defs"] = Value::Object(crate::schema::value_definitions());
+        }
+        schema
+    }
+}
+
+/// A withdrawal of one request from a game session's probe: it fires when the
+/// caller cancels or when the session is told to stop, so a request that spans
+/// frames on the probe ends at its next frame and a stop queued behind it runs
+/// at once rather than after it.
+struct Withdrawal {
+    token: tokio_util::sync::CancellationToken,
+    watcher: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Withdrawal {
+    fn new(
+        caller: &tokio_util::sync::CancellationToken,
+        stopping: Option<tokio_util::sync::CancellationToken>,
+    ) -> Self {
+        let Some(stopping) = stopping else {
+            return Self {
+                token: caller.clone(),
+                watcher: None,
+            };
+        };
+        let token = stopping.child_token();
+        let linked = token.clone();
+        let caller = caller.clone();
+        let watcher = tokio::spawn(async move {
+            caller.cancelled().await;
+            linked.cancel();
+        });
+        Self {
+            token,
+            watcher: Some(watcher),
+        }
+    }
+
+    fn signal(&self) -> CancelSignal {
+        CancelSignal::of(&self.token)
+    }
+}
+
+impl Drop for Withdrawal {
+    fn drop(&mut self) {
+        if let Some(watcher) = self.watcher.take() {
+            watcher.abort();
+        }
     }
 }
 
@@ -837,6 +981,11 @@ impl KernelToolHandler for SessionHandler {
                 "the request was cancelled before it started",
             ));
         }
+        // A script runs only on a server whose operator allowed it; a call
+        // while it is off is refused before anything else (ADR 0012).
+        if self.operation == SessionOperation::ScriptRun && !self.engine.allow_scripts {
+            return Err(crate::scripts::scripts_off());
+        }
         // A mutation needs an idempotency id before anything runs; its schema
         // requires one for the same reason.
         if self.operation.descriptor().is_mutation() {
@@ -857,7 +1006,12 @@ impl KernelToolHandler for SessionHandler {
             | SessionOperation::PropertiesGet
             | SessionOperation::SignalsGet
             | SessionOperation::UiGet
-            | SessionOperation::PerformanceGet => self.read(arguments).await,
+            | SessionOperation::PerformanceGet
+            | SessionOperation::PropertiesBatchGet
+            | SessionOperation::NodesFind
+            | SessionOperation::NavigationPathGet
+            | SessionOperation::Wait
+            | SessionOperation::Sample => self.read(&call).await,
             SessionOperation::RunStart | SessionOperation::EditorStart => self.start(&call).await,
             SessionOperation::DebugGet => {
                 let session = string(arguments, "session")?.map(str::to_owned);
@@ -870,6 +1024,9 @@ impl KernelToolHandler for SessionHandler {
             SessionOperation::ExportPresetsList => self.export_presets().await,
             SessionOperation::ExportStart => self.export_start(&call).await,
             SessionOperation::ExportStatus => self.export_status(&call.access, arguments),
+            SessionOperation::AndroidDevicesList => self.android_devices().await,
+            SessionOperation::AndroidDeploy => self.android_deploy(&call).await,
+            operation if scenario::handles(operation) => self.scenario_command(&call).await,
             _ => self.command(&call).await,
         }
     }
@@ -941,11 +1098,18 @@ impl SessionHandler {
         Ok(value)
     }
 
-    async fn read(&self, arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    async fn read(&self, call: &KernelToolCall) -> Result<Value, OutcomeError> {
+        let arguments = &call.arguments;
         let id = required_string(arguments, "session")?;
         let bridge = self.sessions().running_game(id)?;
         let mut payload = Map::new();
+        let mut timeout = PROBE_TIMEOUT;
         match self.operation {
+            operation if control::handles(operation) => {
+                let (built, extra) = control::payload(operation, arguments)?;
+                payload.extend(built);
+                timeout += extra;
+            }
             SessionOperation::TreeGet => {
                 if let Some(root) = string(arguments, "root")? {
                     payload.insert("root".to_owned(), Value::String(root.to_owned()));
@@ -1008,17 +1172,24 @@ impl SessionHandler {
             }
         }
         let method = self.operation.probe_method();
+        // A read that spans frames — a wait, a sample, a path query — is
+        // withdrawn from the probe when the caller cancels or the session is
+        // told to stop.
+        let withdrawal = Withdrawal::new(&call.cancellation, self.sessions().stop_signal(id));
+        let signal = withdrawal.signal();
         let answer = tokio::task::spawn_blocking(move || {
-            bridge.call(
+            bridge.call_cancellable(
                 method,
                 OperationClass::Read,
                 &Value::Object(payload),
                 "runtime-read",
-                PROBE_TIMEOUT,
+                timeout,
+                &signal,
             )
         })
         .await
         .map_err(|error| outcome_error(ErrorKind::Internal, error.to_string()))?;
+        drop(withdrawal);
         let mut value = match answer {
             Ok(BridgeAnswer::Result { payload, .. }) => payload,
             Ok(BridgeAnswer::Error { kind, message, .. }) => {
@@ -1351,8 +1522,26 @@ impl SessionHandler {
                 }
                 return Ok(value);
             }
+            if self.operation == SessionOperation::RunStop {
+                // Every command is serialized in the project's command lane,
+                // which a running replay, walk or sequence holds until it
+                // ends: what the probe runs for this session is withdrawn
+                // now, so the stop does not wait the length of it.
+                self.sessions().withdraw_in_flight(&session);
+            }
         } else {
-            self.sessions().running_game(&session)?;
+            let bridge = self.sessions().running_game(&session)?;
+            // A probe says which methods it implements when it connects: one
+            // that predates this command is told so before anything is
+            // journaled or sent.
+            let method = self.operation.probe_method();
+            let status = bridge.status();
+            if status.connected && !status.methods.iter().any(|known| known == method) {
+                return Err(outcome_error(
+                    ErrorKind::Unsupported,
+                    BridgeFailure::Unsupported(method.to_owned()).probe_message(),
+                ));
+            }
         }
         let mut payload = Map::new();
         payload.insert("session".to_owned(), Value::String(session.clone()));
@@ -1395,6 +1584,16 @@ impl SessionHandler {
                 payload.insert("steps".to_owned(), Value::Array(probe_steps));
                 timeout += Duration::from_millis(waited);
             }
+            SessionOperation::ScriptRun => {
+                let request = crate::live_script::request(&arguments_without_session(arguments))?;
+                payload.extend(as_object(request.payload));
+                timeout = request.deadline;
+            }
+            operation if control::handles(operation) => {
+                let (built, extra) = control::payload(operation, arguments)?;
+                payload.extend(built);
+                timeout += extra;
+            }
             SessionOperation::RecordingCapture => {
                 let duration = integer(arguments, "durationMs", 1, 10_000)?.unwrap_or(1000);
                 payload.insert("duration_ms".to_owned(), json!(duration));
@@ -1411,7 +1610,9 @@ impl SessionHandler {
         }
         if matches!(
             self.operation,
-            SessionOperation::ScreenshotCapture | SessionOperation::RecordingCapture
+            SessionOperation::ScreenshotCapture
+                | SessionOperation::RecordingCapture
+                | SessionOperation::InputRecordingStop
         ) {
             payload.insert(
                 "owner".to_owned(),
@@ -1426,6 +1627,16 @@ impl SessionHandler {
         let observed = access.observed_at_unix_ms();
         let transaction_id = engine.router.next_transaction_id(tool, observed);
         let canonical = Value::Object(arguments.clone());
+        // A script may write project files, as any code of the game may: the
+        // files are compared before and after the run. Like the game's own
+        // writes, they are not in the transaction's scope, so a run that may
+        // still be going blocks nothing, and stopping the session ends it.
+        let script = self.operation == SessionOperation::ScriptRun;
+        let before = if script {
+            crate::scripts::contents_of_inventory(engine.root()?, &engine.workspace.rescan())?
+        } else {
+            None
+        };
         let intent = EditorEffectIntent {
             transaction_id: transaction_id.clone(),
             tool_name: tool.to_owned(),
@@ -1446,22 +1657,42 @@ impl SessionHandler {
             opened_at_unix_ms: observed,
         };
         // Synthetic input in flight is withdrawn from the probe when the
-        // caller cancels, so a cancelled sequence releases what it pressed at
-        // once rather than when it would have ended.
+        // caller cancels or the session is told to stop, so a cancelled
+        // sequence releases what it pressed at once rather than when it would
+        // have ended, and a stop is not queued behind it.
+        let withdrawal = match self.operation {
+            SessionOperation::RunStop
+            | SessionOperation::EditorStop
+            | SessionOperation::ExportCancel => Withdrawal::new(&call.cancellation, None),
+            _ => Withdrawal::new(&call.cancellation, self.sessions().stop_signal(&session)),
+        };
         let command = Box::new(EditorMutation {
             action: self.operation.probe_method().to_owned(),
             payload: Value::Object(payload).to_string(),
             idempotency_id,
             timeout,
-            cancellation: CancelSignal::of(&call.cancellation),
+            cancellation: withdrawal.signal(),
         });
         let effect = match self.operation {
             SessionOperation::EditorStop => RouteEffect::Debug { intent, command },
             SessionOperation::ExportCancel => RouteEffect::SessionStop { intent, command },
             _ => RouteEffect::Runtime { intent, command },
         };
-        self.route_command(call, transaction_id, canonical, effect, session)
-            .await
+        let answer = self
+            .route_command(call, transaction_id, canonical, effect, session)
+            .await;
+        drop(withdrawal);
+        if script {
+            let after =
+                crate::scripts::contents_of_inventory(engine.root()?, &engine.workspace.rescan());
+            return crate::live_script::finish(
+                crate::live_script::Place::Game,
+                answer,
+                before.as_ref(),
+                after,
+            );
+        }
+        answer
     }
 
     /// Route one journaled command to `session` and answer it.
@@ -1473,6 +1704,22 @@ impl SessionHandler {
         effect: RouteEffect,
         session: String,
     ) -> Result<Value, OutcomeError> {
+        let report = self
+            .route_report(call, transaction_id, canonical, effect, &session)
+            .await?;
+        session_answer(&report, session)
+    }
+
+    /// Route one journaled command to `session` and return what the router
+    /// reported.
+    async fn route_report(
+        &self,
+        call: &KernelToolCall,
+        transaction_id: String,
+        canonical: Value,
+        effect: RouteEffect,
+        session: &str,
+    ) -> Result<crate::router::RouteReport, OutcomeError> {
         let engine = self.engine.as_ref();
         let route = RouteRequest {
             tool: self.operation.tool_name().to_owned(),
@@ -1481,25 +1728,18 @@ impl SessionHandler {
             path: String::new(),
             bytes: Vec::new(),
             arguments: canonical,
-            observation: self.observation(&session),
+            observation: self.observation(session),
             cancellation: call.cancellation.clone(),
             queued_at_unix_ms: call.access.observed_at_unix_ms(),
             identity: Some(EngineRuntime::route_identity(&call.access)),
             effect: Some(effect),
             audit: Some(call.audit.clone()),
         };
-        let report = engine
+        engine
             .router
             .route(&route)
             .await
-            .map_err(|refusal| refusal.to_outcome())?;
-        let mut answer = crate::editor::tools::editor_answer(&report)?;
-        if let Value::Object(object) = &mut answer {
-            object
-                .entry("session".to_owned())
-                .or_insert(Value::String(session));
-        }
-        Ok(answer)
+            .map_err(|refusal| refusal.to_outcome())
     }
 
     /// One project GDScript file's text, read through the held lease.
@@ -1618,6 +1858,21 @@ impl SessionHandler {
 }
 
 /// One `input.mouse.send` request as a probe step.
+/// What a routed command to `session` answers: the journaled outcome, naming
+/// its session.
+fn session_answer(
+    report: &crate::router::RouteReport,
+    session: String,
+) -> Result<Value, OutcomeError> {
+    let mut answer = crate::editor::tools::editor_answer(report)?;
+    if let Value::Object(object) = &mut answer {
+        object
+            .entry("session".to_owned())
+            .or_insert(Value::String(session));
+    }
+    Ok(answer)
+}
+
 fn mouse_step(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
     let keyed = arguments
         .get("event")

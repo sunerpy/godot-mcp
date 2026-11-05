@@ -22,6 +22,7 @@ tree-sitter-gdscript = { workspace = true }
 streaming-iterator = { workspace = true }
 rusqlite = { workspace = true }
 notify = { workspace = true }
+regex = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

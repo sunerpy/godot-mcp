@@ -591,6 +591,8 @@ async fn production_http_health_reports_the_bound_transport_and_live_auth_mode()
         observed_at_unix_ms: 4_000,
         limits: Limits::default(),
         process: Default::default(),
+        allow_scripts: false,
+        android: Default::default(),
     })?;
 
     let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);

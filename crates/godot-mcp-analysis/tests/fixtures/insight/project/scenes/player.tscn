@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3 uid="uid://bplayerscene01"]
+
+[ext_resource type="Script" uid="uid://cplayerscript1" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="Texture2D" uid="uid://cicontexture01" path="res://icon.svg" id="2_icon"]
+
+[node name="Player" type="CharacterBody2D" groups=["actors"]]
+script = ExtResource("1_player")
+speed = 250.0
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("2_icon")

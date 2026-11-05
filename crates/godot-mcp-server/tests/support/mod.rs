@@ -309,6 +309,25 @@ impl StdioSession {
 
 /// The domain error code of a refused `tools/call`, whether it was answered as
 /// a protocol error or as a structured tool error.
+/// The engine and script errors a game printed to `stderr`, except the ALSA
+/// driver's failure to open a sound device on a host without one: the game
+/// then falls back to the dummy audio driver, as a windowed game does on a
+/// hosted CI runner. A headless game uses the dummy driver from the start.
+pub fn game_errors(stderr: &str) -> Vec<&str> {
+    let lines: Vec<&str> = stderr.lines().collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(index, line)| {
+            line.contains("ERROR")
+                && !lines
+                    .get(index + 1)
+                    .is_some_and(|at| at.contains("drivers/alsa/"))
+        })
+        .map(|(_, line)| *line)
+        .collect()
+}
+
 pub fn error_code(response: &Value) -> Value {
     if response.get("error").is_some() {
         response["error"]["data"]["code"].clone()

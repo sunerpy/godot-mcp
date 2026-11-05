@@ -86,6 +86,19 @@ Manager puts them; `export.presets.list` shows, per preset, whether they were fo
 preset with a secret written into it is refused with `invalid_input` naming the options.
 See [Exports](exports.md).
 
+While one export runs, another `project.export` answers `unavailable` and retryable,
+naming the running one: the server runs one export at a time. Wait for it to end, or
+cancel it.
+
+An Android export, `android.devices.list` and `android.deploy` answer `unavailable`
+naming `[android]` when no SDK or JDK is configured, and naming the missing tool —
+`platform-tools/adb`, `build-tools/<version>/apksigner`, `bin/java` or `bin/keytool` —
+when the configured directory lacks it; configure both as
+[Configuration](configuration.md#android) describes. A device `android.devices.list` lists
+as `unauthorized` waits for its USB debugging prompt: an adb server the server started has
+a key of its own, which each device authorizes once. See
+[Exports](exports.md#android-devices).
+
 This is distinct from the controlled process boundary delivered by Todos 13-17.
 `project.run`, `project.import.run` and the other engine-plane tools can launch a real
 Godot process. For an engine-plane availability failure, check that a Godot binary is

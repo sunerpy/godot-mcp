@@ -92,6 +92,7 @@ godot_binary = "/opt/godot/godot"
 profile = "core"
 transport = "stdio"
 disposable = false
+allow_scripts = false
 
 [bridge]
 endpoint = "127.0.0.1:0"
@@ -102,6 +103,10 @@ path = "/var/log/godot-mcp/server.log"
 [process]
 boundary = "cgroup"
 trust = "trusted"
+
+[android]
+sdk = "/opt/android-sdk"
+java_home = "/usr/lib/jvm/java-21-openjdk"
 
 [limits]
 deadline_ms = 30000
@@ -126,12 +131,51 @@ has no runtime effect in this release.
 | `transport` | `stdio` (default) or `http`. `serve --config` starts the selected transport; HTTP remains loopback-only and authenticated. |
 | `disposable` | Reserved server-wide switch. `false` is the only runnable value in this release; `serve` refuses `true` rather than silently loading the original project or claiming that a filtered copy confines untrusted code. |
 | `log_sink` | `stderr` (default) or a rolling file. |
+| `allow_scripts` | `false` (default) or `true`. Whether the script tools run caller-written GDScript; see [Script execution](#script-execution). |
 
 The engine crate contains operation-scoped disposable-copy machinery, but `serve` does not
 yet route every engine operation through it. Consequently `disposable = true` fails startup
 closed. A filtered copy only redirects project-tree mutations; it does not restrict
 absolute-path reads or writes, network access, or arbitrary child-process behavior. See the
 [threat model](../security/threat-model.md) for the complete security posture.
+
+### Script execution
+
+`allow_scripts = true` lets the script tools run caller-written GDScript with your
+privileges, and nothing confines what it does
+([ADR 0012](../contributor/adr/0012-declared-script-execution.md)): `script.run` in a
+supervised headless Godot, `editor.script.run` in the connected editor, and
+`runtime.script.run` in a managed game. It is off by default: a call while it is off answers
+`permission_denied`, names the switch, and runs nothing; the editor add-on and the game's
+probe are not offered the method either.
+Turn it on for one launch with `godot-mcp serve --allow-scripts`, or with this key or
+`GODOT_MCP_ALLOW_SCRIPTS=true` alongside `--config`. A call needs no confirmation once it is
+on; treat the switch like handing the agent a shell in the project directory. What a run
+answers, and what it leaves, is in
+[Profiles and tool outcomes](profiles-and-outcomes.md#script-execution).
+
+A script never runs for a remote principal, so the switch is refused with
+`proxied_oidc`:
+
+<!-- docs-check:config expect="reject" -->
+```toml
+transport = "http"
+allow_scripts = true
+
+[http]
+bind = "127.0.0.1:8765"
+mode = "proxied_oidc"
+host = "godot-mcp.example.invalid"
+origin = "https://godot-mcp.example.invalid"
+external_resource_url = "https://godot-mcp.example.invalid/mcp"
+
+[http.proxy_hop.credential_file]
+path = "/etc/godot-mcp/proxy-hop.cred"
+
+[http.principal]
+issuer = "https://issuer.example.invalid"
+subject = "operator@example.invalid"
+```
 
 ### `[http]`
 
@@ -345,13 +389,48 @@ transport = "stdio"
 boundary = "adapter"
 ```
 
+### `[android]`
+
+The Android SDK and the JDK that an Android export and the Android device tools use (see
+[Exports](exports.md#android-presets)). Both keys are optional absolute paths. Without
+them an Android export, `android.devices.list` and `android.deploy` answer `unavailable`,
+naming the key; the server never downloads or installs either.
+
+| Key | Meaning |
+| --- | --- |
+| `android.sdk` | The Android SDK directory. `platform-tools/adb` lists devices and deploys to them; `build-tools/<version>/apksigner` signs and verifies an APK. |
+| `android.java_home` | The JDK directory. `bin/java` runs `apksigner`; `bin/keytool` creates the server's debug keystore. |
+
+<!-- docs-check:config expect="accept" -->
+```toml
+transport = "stdio"
+
+[android]
+sdk = "/opt/android-sdk"
+java_home = "/usr/lib/jvm/java-21-openjdk"
+```
+
+A relative path is rejected:
+
+<!-- docs-check:config expect="reject" -->
+```toml
+transport = "stdio"
+
+[android]
+sdk = "android-sdk"
+```
+
+`godot-mcp serve --android-sdk <DIR> --android-java-home <DIR>` sets them for one launch,
+over the file's values.
+
 ## Environment variables
 
 Each recognized variable maps to exactly one key, using the same names in upper
 snake case under the `GODOT_MCP_` prefix — for example `GODOT_MCP_TRANSPORT`,
 `GODOT_MCP_PROFILE`, `GODOT_MCP_HTTP_BIND`, `GODOT_MCP_HTTP_MODE`,
 `GODOT_MCP_LOG_SINK`, `GODOT_MCP_DEADLINE_MS`, `GODOT_MCP_PROCESS_BOUNDARY`,
-`GODOT_MCP_PROCESS_TRUST`. The adapter's two paths are read from the file only. OIDC
+`GODOT_MCP_PROCESS_TRUST`, `GODOT_MCP_ALLOW_SCRIPTS`, `GODOT_MCP_ANDROID_SDK`,
+`GODOT_MCP_ANDROID_JAVA_HOME`. The adapter's two paths are read from the file only. OIDC
 policy lists use
 comma-separated values in `GODOT_MCP_HTTP_ALLOWED_ALGORITHMS`,
 `GODOT_MCP_HTTP_REQUIRED_SCOPES`, and
@@ -385,6 +464,8 @@ These are not defaults you can relax; configuration has no key that would let yo
   write to process stderr. A configured file sink must additionally be a regular file
   whose object identity differs from stdout. Non-protocol commands such as
   `check-config` may share terminal descriptors and do not make this comparison.
+* **A script never runs for a remote principal.** `allow_scripts = true` together with
+  `http.mode = "proxied_oidc"` is rejected — see [Script execution](#script-execution).
 * **TLS is not configured here.** There is no certificate or key setting, because
   this process does not terminate TLS. See
   [HTTP: `proxied_oidc`](http-proxied-oidc.md).

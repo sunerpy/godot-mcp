@@ -19,11 +19,13 @@
 //! after another stopped terminates every session the other left behind
 //! before it serves anything ([`SessionManager::reconcile`]).
 
+pub(crate) mod android;
 mod apng;
 pub(crate) mod boundary;
 pub(crate) mod debug;
 pub(crate) mod export;
 mod record;
+pub(crate) mod scenario;
 pub(crate) mod tools;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -182,6 +184,12 @@ pub(crate) struct ManagedSession {
     bridge: Option<Arc<EditorBridge>>,
     live: Mutex<Live>,
     changed: Condvar,
+    /// Cancelled to withdraw every request in flight on the session's probe,
+    /// so a stop is queued behind neither the probe's one-at-a-time queue nor
+    /// the project's command lane: when a stop is asked for, before it waits
+    /// for the lane (a fresh token then serves the requests made later), and
+    /// for good once the session is stopping.
+    stopping: Mutex<tokio_util::sync::CancellationToken>,
 }
 
 impl std::fmt::Debug for ManagedSession {
@@ -259,6 +267,11 @@ impl ManagedSession {
             .map(|export| export.public(store, now_unix_ms))
     }
 
+    /// An export session's durable facts; `None` for any other session.
+    pub(crate) fn export_record(&self) -> Option<export::ExportRecord> {
+        lock(&self.live).record.export.clone()
+    }
+
     /// Whether `principal` may see and cancel this session: an export belongs
     /// to the principal that started it, every other session to its server.
     pub(crate) fn belongs_to(&self, principal: &str) -> bool {
@@ -306,6 +319,12 @@ pub(crate) struct SessionManager {
     sessions: Mutex<BTreeMap<String, Arc<ManagedSession>>>,
     /// Where a finished export registers its outputs.
     export_artifacts: Mutex<Option<export::ExportArtifacts>>,
+    /// Whether a game's probe is offered `runtime.script.run` (ADR 0012).
+    scripts: bool,
+    /// The operator's Android SDK and JDK.
+    android: android::AndroidTools,
+    /// The server's private Android storage.
+    android_dirs: android::AndroidDirs,
 }
 
 impl std::fmt::Debug for SessionManager {
@@ -335,7 +354,36 @@ impl SessionManager {
             providers,
             sessions: Mutex::new(BTreeMap::new()),
             export_artifacts: Mutex::new(None),
+            scripts: false,
+            android: android::AndroidTools::default(),
+            android_dirs: android::AndroidDirs::new(state_dir.join("android")),
         }
+    }
+
+    /// This manager, exporting for Android and deploying to devices with the
+    /// operator's `tools`.
+    #[must_use]
+    pub(crate) fn with_android(mut self, tools: android::AndroidTools) -> Self {
+        self.android = tools;
+        self
+    }
+
+    /// The operator's Android SDK and JDK.
+    pub(crate) const fn android(&self) -> &android::AndroidTools {
+        &self.android
+    }
+
+    /// The server's private Android storage.
+    pub(crate) const fn android_dirs(&self) -> &android::AndroidDirs {
+        &self.android_dirs
+    }
+
+    /// This manager, offering every game it starts `runtime.script.run` when
+    /// `scripts`.
+    #[must_use]
+    pub(crate) const fn allowing_scripts(mut self, scripts: bool) -> Self {
+        self.scripts = scripts;
+        self
     }
 
     /// Let finished exports register their outputs in `artifacts`.
@@ -412,12 +460,52 @@ impl SessionManager {
             .ok_or_else(|| outcome_error(ErrorKind::Internal, "a game session has no probe bridge"))
     }
 
+    /// The token cancelled when session `id` is told to stop, when this
+    /// server knows the session.
+    pub(crate) fn stop_signal(&self, id: &str) -> Option<tokio_util::sync::CancellationToken> {
+        lock(&self.sessions)
+            .get(id)
+            .map(|session| lock(&session.stopping).clone())
+    }
+
+    /// Withdraw every request in flight on session `id`'s probe, because a
+    /// stop was asked for: the stop still has to pass its own gates and wait
+    /// for the project's command lane, which a running replay, walk or
+    /// sequence holds until it ends. Requests made after this get a fresh
+    /// token, so a stop that is then refused leaves the session usable.
+    pub(crate) fn withdraw_in_flight(&self, id: &str) {
+        let session = lock(&self.sessions).get(id).cloned();
+        if let Some(session) = session {
+            let mut current = lock(&session.stopping);
+            current.cancel();
+            *current = tokio_util::sync::CancellationToken::new();
+        }
+    }
+
     /// Whether this server knows a session of `kind`, running or ended: one a
     /// command, a stop or a read can be answered for.
     pub(crate) fn knows_a_session_of(&self, kind: SessionKind) -> bool {
         lock(&self.sessions)
             .values()
             .any(|session| session.kind == kind)
+    }
+
+    /// The ID of the session this server runs whose Godot process is `pid`:
+    /// a session not yet ended whose launch released that process. On Unix
+    /// the supervisor executes Godot in its own process, so the released
+    /// child is the Godot process.
+    pub(crate) fn running_process(&self, pid: u32) -> Option<String> {
+        lock(&self.sessions)
+            .values()
+            .find(|session| {
+                let live = lock(&session.live);
+                !live.finished
+                    && live
+                        .launch
+                        .as_ref()
+                        .is_some_and(|launch| launch.child_pid == pid)
+            })
+            .map(|session| session.id.clone())
     }
 
     /// Every session of `kind` this server knows, by ID.
@@ -550,6 +638,25 @@ impl SessionManager {
                     BTreeMap::new(),
                 ));
             }
+            // Every Godot build writes temporaries of an export under fixed
+            // names in the host's temporary directory (`tmpproject.binary`;
+            // on 4.4.1 also `packtmp`, every packed file), so a second export
+            // running beside the first could pack the first's files.
+            if request.kind == SessionKind::Export
+                && let Some((other, _)) = sessions.iter().find(|(_, session)| {
+                    session.kind() == SessionKind::Export && !session.state().is_terminal()
+                })
+            {
+                return Err(OutcomeError::new(
+                    ErrorKind::Unavailable,
+                    format!(
+                        "export {other} is still running; Godot writes the temporaries of every \
+                         export under the same names, so this server runs one export at a time"
+                    ),
+                    true,
+                    BTreeMap::new(),
+                ));
+            }
             if sessions.contains_key(&request.session_id) {
                 return Err(outcome_error(
                     ErrorKind::Conflict,
@@ -587,7 +694,14 @@ impl SessionManager {
                 write_probe(&paths).map_err(|error| outcome_error(ErrorKind::Internal, error))?;
                 Some(
                     EditorBridge::start_with(
-                        BridgeConfig::runtime(paths.rendezvous.clone(), probe_files::METHODS),
+                        BridgeConfig::runtime(
+                            paths.rendezvous.clone(),
+                            if self.scripts {
+                                probe_files::METHODS_WITH_SCRIPTS
+                            } else {
+                                probe_files::METHODS
+                            },
+                        ),
                         self.project.clone(),
                     )
                     .map_err(|error| outcome_error(ErrorKind::Internal, error))?,
@@ -611,6 +725,7 @@ impl SessionManager {
                 finished: false,
             }),
             changed: Condvar::new(),
+            stopping: Mutex::new(tokio_util::sync::CancellationToken::new()),
         });
         lock(&self.sessions).insert(request.session_id.clone(), Arc::clone(&session));
 
@@ -851,6 +966,11 @@ impl SessionManager {
                 record.state = SessionState::Stopping;
             }
         });
+        // Whatever spans frames on the probe — a wait, a sample, a replay —
+        // is withdrawn first: the probe runs one request at a time, and the
+        // stop would otherwise wait behind it. The token stays cancelled, so
+        // a request that slips in now is withdrawn at once.
+        lock(&session.stopping).cancel();
         let mut released = Value::Null;
         if let Some(bridge) = &session.bridge {
             match bridge.call(
@@ -1025,6 +1145,11 @@ impl SessionManager {
                 let bytes = export::evidence_bytes(&directory.join(OUTPUT_DIRECTORY));
                 export.outcome = Some("interrupted".to_owned());
                 export.recovery_evidence_bytes = (bytes > 0).then_some(bytes);
+                // Its private home, SDK view and base copies go once nothing of
+                // it can be running any more.
+                if proven_empty {
+                    export::remove_staging(&directory);
+                }
             }
             record.ended_at_unix_ms = Some(now_unix_ms());
             record.reason = Some(if proven_empty {
@@ -1057,6 +1182,7 @@ impl SessionManager {
                 finished: true,
             }),
             changed: Condvar::new(),
+            stopping: Mutex::new(tokio_util::sync::CancellationToken::new()),
         });
         lock(&self.sessions).insert(session.id.clone(), session);
     }
@@ -1213,6 +1339,9 @@ fn supervise(
             cancelled,
         );
         session.update(|current| current.export = record.export.take());
+        // What the export staged for itself — its private Godot home, its SDK
+        // view, its copies of base packs — is not kept past it.
+        export::remove_staging(&session.directory);
     }
     match exit {
         Ok(exit) => mark_finished(session, Some(&exit), None),

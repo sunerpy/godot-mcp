@@ -5,8 +5,10 @@ extends RefCounted
 ## and checks against the length and SHA-256 reported here.
 ##
 ## A capture is the editor's whole window, or the 2D or one 3D viewport of the
-## main screen shown. The plugin keeps the last few captures in memory only;
-## nothing is written to the project or the editor's settings.
+## main screen shown, or a resource's preview and its thumbnail
+## (`resource_preview.gd`), one frame each. The plugin keeps the last few
+## captures in memory only; nothing is written to the project or the editor's
+## settings.
 
 const MAX_CAPTURES := 4
 const MAX_CHUNK_BYTES := 1048576
@@ -84,32 +86,41 @@ func _drawn() -> void:
 
 
 func _keep(png: PackedByteArray, width: int, height: int, view: String) -> Dictionary:
+	return keep([png], {"width": width, "height": height, "view": view})
+
+
+## Keep `pngs` as one capture with a frame each, and describe it: `extra`
+## with the capture's id and each frame's length and SHA-256.
+func keep(pngs: Array, extra: Dictionary) -> Dictionary:
 	var id := "capture-%d" % _next
 	_next += 1
-	_captures[id] = png
+	_captures[id] = pngs
 	_order.append(id)
 	while _order.size() > MAX_CAPTURES:
 		_captures.erase(_order.pop_front())
-	var hashing := HashingContext.new()
-	hashing.start(HashingContext.HASH_SHA256)
-	if not png.is_empty():
-		hashing.update(png)
-	return {
-		"capture_id": id,
-		"width": width,
-		"height": height,
-		"view": view,
-		"frames": [{"byte_length": png.size(), "sha256": hashing.finish().hex_encode()}],
-	}
+	var frames: Array = []
+	for png in pngs:
+		var hashing := HashingContext.new()
+		hashing.start(HashingContext.HASH_SHA256)
+		# An empty update raises an engine error.
+		if not png.is_empty():
+			hashing.update(png)
+		frames.append({"byte_length": png.size(), "sha256": hashing.finish().hex_encode()})
+	var described: Dictionary = extra.duplicate()
+	described["capture_id"] = id
+	described["frames"] = frames
+	return described
 
 
 func chunk(payload: Dictionary) -> Dictionary:
 	var id := str(payload.get("capture_id", ""))
 	if not _captures.has(id):
 		return _fail("not_found", "%s is not a capture this editor still holds" % id)
-	if int(payload.get("frame", 0)) != 0:
-		return _fail("invalid_input", "an editor capture has one frame")
-	var bytes: PackedByteArray = _captures[id]
+	var frames: Array = _captures[id]
+	var frame := int(payload.get("frame", 0))
+	if frame < 0 or frame >= frames.size():
+		return _fail("invalid_input", "%s has %d frames, 0 to %d" % [id, frames.size(), frames.size() - 1])
+	var bytes: PackedByteArray = frames[frame]
 	var offset: int = int(payload.get("offset", 0))
 	var length: int = clampi(int(payload.get("length", MAX_CHUNK_BYTES)), 1, MAX_CHUNK_BYTES)
 	if offset < 0 or offset > bytes.size():
@@ -117,7 +128,7 @@ func chunk(payload: Dictionary) -> Dictionary:
 	var slice: PackedByteArray = bytes.slice(offset, offset + length)
 	return _ok({
 		"capture_id": id,
-		"frame": 0,
+		"frame": frame,
 		"offset": offset,
 		"length": slice.size(),
 		"total": bytes.size(),

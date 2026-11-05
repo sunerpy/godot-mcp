@@ -63,7 +63,9 @@ Linux x86_64, macOS universal and Windows x86_64. The semantic scene/resource mo
 - C# project authoring and .NET build orchestration.
 - User-authored native extension compilation.
 - Mobile and web export pipelines.
-- A general “execute arbitrary GDScript” method.
+- Script execution that runs without the operator's consent. Contract 0.4.0 adds three
+  declared script tools that run only while the operator allows them for a launch
+  ([ADR 0012](adr/0012-declared-script-execution.md)).
 - Public one-tool-per-Godot-method reflection.
 - More than one project bound to one running MCP process.
 
@@ -358,7 +360,7 @@ Names below are design targets. They enter discovery only when their milestone i
 | --- | --- | --- |
 | Bootstrap | project.create, project.bind | Create/bind the process's one project |
 | Coherent files | project.files.list, file.get, file.create, file.patch, file.move, file.delete | Safe source and asset CRUD with SHA preconditions |
-| GDScript | script.create, script.patch, script.check | Author and validate scripts without an arbitrary execution method |
+| GDScript | script.create, script.patch, script.check, script.run | Author and validate scripts; run one only while the operator allows scripts (ADR 0012) |
 | Project settings | project.settings.get, project.settings.patch | Typed main scene, autoload, input and selected project settings |
 | Scenes | scene.create, scene.batch.apply, scene.tree.get | Atomic semantic scene operations and reads |
 | Resources | resource.create, resource.batch.apply, resource.tree.get | Typed resources and dependency-safe edits |
@@ -624,7 +626,8 @@ These invariants are release blockers:
 2. All filesystem effects are held-root-relative and have create-absence or content-hash
    preconditions.
 3. Every effect is authorized before queue admission and rechecked at its final boundary.
-4. No public tool grants arbitrary editor/runtime method invocation or arbitrary script execution.
+4. No typed tool grants arbitrary editor/runtime method invocation, and caller code runs only
+   through the three declared script tools while the operator allows them (ADR 0012).
 5. A bridge is authenticated by launch/project facts and a fresh secret, not by loopback location.
 6. Godot editor calls execute on the main thread only.
 7. A live editor buffer is never overwritten by a headless writer.

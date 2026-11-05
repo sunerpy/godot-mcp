@@ -713,7 +713,7 @@ impl KernelToolHandler for AuthoringHandler {
             return match self.operation {
                 AuthoringOperation::FilesList => files::list(runtime, arguments),
                 AuthoringOperation::FileGet => files::get(runtime, arguments),
-                AuthoringOperation::SettingsGet => settings::get(runtime),
+                AuthoringOperation::SettingsGet => settings::get(runtime, arguments),
                 AuthoringOperation::AddonStatus => addon::status(runtime),
                 _ => assets::status(runtime, arguments),
             };

@@ -24,10 +24,10 @@
 //! helper:
 //!
 //! ```text
-//! res://godot_mcp_helpers/3/canonical_write.gd     the pinned script
-//! res://godot_mcp_helpers/3/io/<id>.request        the request document
-//! res://godot_mcp_helpers/3/io/<id>.response       the helper's answer
-//! res://godot_mcp_helpers/3/staging/<id>.<ext>     the staged artifact
+//! res://godot_mcp_helpers/4/canonical_write.gd     the pinned script
+//! res://godot_mcp_helpers/4/io/<id>.request        the request document
+//! res://godot_mcp_helpers/4/io/<id>.response       the helper's answer
+//! res://godot_mcp_helpers/4/staging/<id>.<ext>     the staged artifact
 //! ```
 //!
 //! The helper writes **only** inside `staging/` (plus the response document it
@@ -52,7 +52,7 @@ use crate::supervision::journal::hex_sha256;
 
 /// The installed helper version. Part of the `res://` path, so an upgrade never
 /// overwrites an older server's helper.
-pub const HELPER_VERSION: &str = "3";
+pub const HELPER_VERSION: &str = "4";
 
 /// The helper script's bytes, embedded from the committed file.
 const HELPER_SOURCE: &str = include_str!("../../scripts/canonical/canonical_write.gd");
@@ -61,7 +61,7 @@ const HELPER_SOURCE: &str = include_str!("../../scripts/canonical/canonical_writ
 ///
 /// Asserted by [`tests::the_embedded_helper_matches_its_pinned_digest`]. Editing
 /// the script without updating this constant fails that test.
-pub const HELPER_SHA256: &str = "09cdce6fe67d6d5387c32734bea50e24d55f0f8dd7fc6810bad16771afd5f983";
+pub const HELPER_SHA256: &str = "cdfb97d0b8f5795c8057e2dd89b6ffdbaeacd37ebd0669cb1f0d458ee2215bc8";
 
 /// Project-relative directory every helper artifact lives under.
 pub const HELPER_ROOT: &str = "godot_mcp_helpers";
@@ -152,7 +152,7 @@ impl HelperScript {
         Self::observed_sha256() == HELPER_SHA256
     }
 
-    /// The project-relative install path, e.g. `godot_mcp_helpers/3/canonical_write.gd`.
+    /// The project-relative install path, e.g. `godot_mcp_helpers/4/canonical_write.gd`.
     #[must_use]
     pub fn install_path() -> String {
         format!("{HELPER_ROOT}/{HELPER_VERSION}/canonical_write.gd")
@@ -379,7 +379,7 @@ mod tests {
     fn the_helper_only_ever_writes_inside_its_versioned_staging_prefix() {
         assert!(
             HELPER_SOURCE
-                .contains("const STAGING_PREFIX := \"res://godot_mcp_helpers/3/staging/\""),
+                .contains("const STAGING_PREFIX := \"res://godot_mcp_helpers/4/staging/\""),
             "the embedded helper's staging prefix must be the versioned one this module installs"
         );
         assert!(
@@ -402,14 +402,14 @@ mod tests {
         ];
         for path in &paths {
             assert!(
-                path.starts_with("godot_mcp_helpers/3/"),
+                path.starts_with("godot_mcp_helpers/4/"),
                 "{path} is versioned under the helper root"
             );
             assert!(HelperScript::is_helper_owned(path));
         }
         assert_eq!(
             HelperScript::script_argument(),
-            "res://godot_mcp_helpers/3/canonical_write.gd"
+            "res://godot_mcp_helpers/4/canonical_write.gd"
         );
         assert!(!HelperScript::is_helper_owned("scenes/main.tscn"));
         assert!(!HelperScript::is_helper_owned("godot_mcp_helpers_other/x"));
@@ -419,8 +419,8 @@ mod tests {
     fn the_argument_array_passes_user_arguments_after_a_bare_separator() {
         let argv = helper_arguments(
             Path::new("/tmp/a project"),
-            "godot_mcp_helpers/3/io/abc.request",
-            "godot_mcp_helpers/3/io/abc.response",
+            "godot_mcp_helpers/4/io/abc.request",
+            "godot_mcp_helpers/4/io/abc.response",
         );
         assert_eq!(
             argv,
@@ -429,12 +429,12 @@ mod tests {
                 "--path".to_owned(),
                 "/tmp/a project".to_owned(),
                 "--script".to_owned(),
-                "res://godot_mcp_helpers/3/canonical_write.gd".to_owned(),
+                "res://godot_mcp_helpers/4/canonical_write.gd".to_owned(),
                 "--".to_owned(),
                 "--request".to_owned(),
-                "godot_mcp_helpers/3/io/abc.request".to_owned(),
+                "godot_mcp_helpers/4/io/abc.request".to_owned(),
                 "--response".to_owned(),
-                "godot_mcp_helpers/3/io/abc.response".to_owned(),
+                "godot_mcp_helpers/4/io/abc.response".to_owned(),
             ],
             "a path with a space stays one element, and user arguments follow a bare --"
         );
@@ -450,16 +450,16 @@ mod tests {
         pairs.insert("operation".to_owned(), "create_resource".to_owned());
         pairs.insert(
             "artifact".to_owned(),
-            "godot_mcp_helpers/3/staging/a.tscn".to_owned(),
+            "godot_mcp_helpers/4/staging/a.tscn".to_owned(),
         );
         let document = request_document(&pairs);
         assert_eq!(
-            document, "artifact=godot_mcp_helpers/3/staging/a.tscn\noperation=create_resource\n",
+            document, "artifact=godot_mcp_helpers/4/staging/a.tscn\noperation=create_resource\n",
             "keys are sorted, so identical requests produce identical bytes"
         );
 
         let parsed = HelperResponse::parse(
-            "artifact=res://godot_mcp_helpers/3/staging/a.tscn\nhelper_version=3\nstatus=ok\n\
+            "artifact=res://godot_mcp_helpers/4/staging/a.tscn\nhelper_version=4\nstatus=ok\n\
              target=res://scenes/main.tscn\nuid=uid://b1234567890ab\nunexpected=kept\n",
         );
         assert!(parsed.reports_ok());
@@ -482,6 +482,15 @@ mod tests {
         assert!(
             HELPER_SOURCE.contains(&godot_mcp_domain::editing_methods::gdscript_table()),
             "the helper's copy of the editing methods must be the domain table's GDScript \
+             rendering, character for character"
+        );
+    }
+
+    #[test]
+    fn the_helper_carries_the_reading_methods_table_verbatim() {
+        assert!(
+            HELPER_SOURCE.contains(&godot_mcp_domain::reading_methods::gdscript_table()),
+            "the helper's copy of the reading methods must be the domain table's GDScript \
              rendering, character for character"
         );
     }

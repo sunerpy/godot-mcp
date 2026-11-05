@@ -15,17 +15,29 @@ const Capture = preload("capture.gd")
 const Preferences = preload("preferences.gd")
 const Shortcuts = preload("shortcuts.gd")
 const EditorConfig = preload("editor_config.gd")
+const EditorCamera = preload("editor_camera.gd")
+const EditorDialogs = preload("editor_dialogs.gd")
+const EditorMonitors = preload("editor_monitors.gd")
+const ResourcePreview = preload("resource_preview.gd")
+const ScriptTabs = preload("script_tabs.gd")
+const SceneReader = preload("scene_reader.gd")
 
-const PLUGIN_VERSION := "0.3.0"
+const PLUGIN_VERSION := "0.4.0"
 const MAX_NODES := 2000
 const MAX_PROPERTIES_PER_NODE := 256
 const READS := [
 	"bridge.describe_session",
 	"bridge.ping",
+	"bridge.server_status",
+	"editor.camera.read",
 	"editor.capture.chunk",
 	"editor.capture.viewport",
+	"editor.dialogs.read",
 	"editor.node",
+	"editor.performance.read",
 	"editor.preferences.read",
+	"editor.preview.resource",
+	"editor.scene.read",
 	"editor.scene.tree",
 	"editor.state",
 	"editor.types.class",
@@ -38,8 +50,11 @@ const SHOW_FRAMES := 30
 var plugin: EditorPlugin = null
 var mutations = null
 var captures = null
+var previews = null
 ## The plugin's log capture, which serves `editor.log.read` while it runs.
 var editor_log = null
+## The plugin's panel state, which takes `bridge.server_status`.
+var panel_state = null
 ## Script tabs this plugin proved are their script's, by path: the tab's
 ## CodeEdit, held weakly. Before Godot 4.7 the editor cannot say whether a tab
 ## is unsaved, but a tab seen here still says whether it is at its saved
@@ -49,12 +64,19 @@ var script_tabs: Dictionary = {}
 ## Undo-history version recorded when each history's scene was last known to
 ## match its file: when it was first seen open, and after every save.
 var saved_versions: Dictionary = {}
+## Whether an editor.restart was asked for and has not ended in a decline.
+var restart_pending := false
+## How many restarts the editor declined, and the question it asked last
+## ({"title", "text"}), which was cancelled.
+var restart_declines := 0
+var restart_question = null
 
 
 func _init(owner_plugin: EditorPlugin = null) -> void:
 	plugin = owner_plugin
 	mutations = Mutations.new(self)
 	captures = Capture.new()
+	previews = ResourcePreview.new()
 
 
 func methods() -> Array:
@@ -76,6 +98,10 @@ func supports(method: String) -> bool:
 		return scene_close()
 	if method == "editor.shortcuts.read" or method == "editor.shortcuts.set":
 		return shortcuts()
+	if method == "editor.camera.set":
+		return EditorCamera.can_set()
+	if method == "editor.script.close":
+		return ScriptTabs.can_close()
 	return READS.has(method) or Mutations.METHODS.has(method)
 
 
@@ -96,6 +122,14 @@ func log_capture() -> bool:
 	return editor_log != null and editor_log.capturing()
 
 
+## Record that the editor declined a restart it was asked for: it asked
+## `question`, which was cancelled.
+func restart_declined(question: Dictionary) -> void:
+	restart_pending = false
+	restart_declines += 1
+	restart_question = question
+
+
 func is_mutation(method: String) -> bool:
 	return Mutations.METHODS.has(method)
 
@@ -114,6 +148,13 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return ok(describe())
 		"bridge.ping":
 			return ok({"pong": true})
+		"bridge.server_status":
+			if panel_state == null:
+				return fail("unavailable", "the godot_mcp panel is not running")
+			var refusal: String = panel_state.accept_server_status(payload)
+			if refusal != "":
+				return fail("invalid_input", refusal)
+			return ok({"accepted": true})
 		"editor.state":
 			return ok(state())
 		"editor.scene.tree":
@@ -125,6 +166,8 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return fail(described["error_kind"], described["message"])
 		"editor.node":
 			return NodeReader.node(self, payload)
+		"editor.scene.read":
+			return SceneReader.read(self, payload)
 		"editor.types.search":
 			return NodeReader.search(payload)
 		"editor.preferences.read":
@@ -135,6 +178,14 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return await captures.viewport(payload)
 		"editor.capture.chunk":
 			return captures.chunk(payload)
+		"editor.camera.read":
+			return EditorCamera.read(payload, main_screen())
+		"editor.dialogs.read":
+			return EditorDialogs.read(payload)
+		"editor.performance.read":
+			return EditorMonitors.read(payload)
+		"editor.preview.resource":
+			return await previews.preview(payload, captures)
 		"editor.log.read":
 			if not log_capture():
 				return fail("unsupported", "this editor does not capture its log; log capture needs Godot 4.5 or later")
@@ -160,6 +211,9 @@ func describe() -> Dictionary:
 		"log_capture": log_capture(),
 		"scene_close": scene_close(),
 		"shortcuts": shortcuts(),
+		"camera_set": EditorCamera.can_set(),
+		"script_close": ScriptTabs.can_close(),
+		"pid": OS.get_process_id(),
 	}
 
 
@@ -349,6 +403,7 @@ func state() -> Dictionary:
 		"log_capture": log_capture(),
 		"scene_close": scene_close(),
 		"shortcuts": shortcuts(),
+		"restart": {"pending": restart_pending, "declined": restart_declines, "question": restart_question},
 	}
 
 

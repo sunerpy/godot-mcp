@@ -8,7 +8,15 @@
 //! chunks, checks each frame against the digest the probe reported, assembles
 //! a recording's frames into one animated PNG and registers the result in the
 //! artifact store; nothing about a capture is committed until that
-//! registration is.
+//! registration is. An input recording the probe hands back when it stops is
+//! answered in full and also kept as a JSON artifact; a failed registration
+//! leaves the answer without one and says why, since the probe keeps nothing
+//! of a recording it handed back.
+//!
+//! A time-scale change, an image comparison and a test scenario are composed
+//! here from several probe requests ([`super::scenario`]): the comparison's
+//! capture and difference image are kept like a screenshot, and a scenario's
+//! report is answered in full and also kept as a JSON artifact.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,6 +28,7 @@ use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::contracts::{ArtifactContract, ArtifactKind, OutcomeError, ProjectIdentity};
 use serde_json::{Map, Value, json};
 
+use super::scenario::{self, Reply, TimeScale};
 use super::{SessionManager, apng};
 use crate::artifacts::ArtifactStore;
 use crate::capture::CaptureSink;
@@ -33,6 +42,12 @@ use crate::journal::{EffectBoundaryKind, TypedProof};
 
 /// How long one capture or chunk read may take, beyond a recording's length.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The media type of an input recording kept as an artifact.
+const INPUT_RECORDING_MEDIA_TYPE: &str = "application/json";
+
+/// The media type of a scenario report kept as an artifact.
+const REPORT_MEDIA_TYPE: &str = "application/json";
 
 /// The runtime boundary `serve` installs.
 pub(crate) struct SessionRuntimeBoundary {
@@ -151,6 +166,20 @@ impl RuntimeEffectBoundary for SessionRuntimeBoundary {
                 &Value::Object(payload),
                 owner.as_ref(),
             )),
+            "runtime.input.record.stop" => self.input_recording(
+                ticket,
+                command,
+                &session,
+                &Value::Object(payload),
+                owner.as_ref(),
+            ),
+            "runtime.time_scale.set" => Ok(self.time_scale(ticket, command, &session, &payload)),
+            "runtime.image.compare" => {
+                Ok(self.image_compare(ticket, command, &session, &payload, owner.as_ref()))
+            }
+            "test.scenario.run" => {
+                Ok(self.scenario(ticket, command, &session, &payload, owner.as_ref()))
+            }
             action => {
                 let bridge = match self.sessions.running_game(&session) {
                     Ok(bridge) => bridge,
@@ -266,6 +295,96 @@ impl SessionRuntimeBoundary {
         }
     }
 
+    /// Stop the session's input recording and keep what it answers as a JSON
+    /// artifact beside the answer.
+    fn input_recording(
+        &self,
+        ticket: &EffectTicket,
+        command: &EditorMutation,
+        session: &str,
+        payload: &Value,
+        owner: Option<&Value>,
+    ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
+        let bridge = match self.sessions.running_game(session) {
+            Ok(bridge) => bridge,
+            Err(error) => return Ok(not_started(&error)),
+        };
+        let answer = bridge.call_cancellable(
+            &command.action,
+            OperationClass::Mutation,
+            payload,
+            &command.idempotency_id,
+            command.timeout,
+            &command.cancellation,
+        );
+        let mut outcome = bridge_outcome(ticket, &command.action, answer, "runtime")?;
+        if outcome.status != MutationStatus::Committed || outcome.error.is_some() {
+            return Ok(outcome);
+        }
+        let Value::Object(result) = &mut outcome.payload else {
+            return Ok(outcome);
+        };
+        // The recording itself, as input.replay takes its events; the frame and
+        // revision the probe answered at say nothing about it.
+        let mut document = result.clone();
+        document.remove("revision");
+        document.remove("frame");
+        let registered = serde_json::to_vec(&Value::Object(document))
+            .map_err(|error| {
+                OutcomeError::new(
+                    ErrorKind::Internal,
+                    error.to_string(),
+                    false,
+                    BTreeMap::new(),
+                )
+            })
+            .and_then(|bytes| {
+                let contract = self.contract(
+                    ticket,
+                    ArtifactKind::Recording,
+                    INPUT_RECORDING_MEDIA_TYPE,
+                    &bytes,
+                    owner,
+                )?;
+                let artifact = json!({
+                    "uri": contract.resource_uri().as_str(),
+                    "media_type": contract.metadata().media_type,
+                    "byte_length": contract.metadata().byte_length,
+                    "sha256": contract.metadata().sha256,
+                    "expires_at_unix_ms": contract.expires_at_unix_ms(),
+                });
+                self.artifacts.register(contract, bytes)?;
+                Ok(artifact)
+            });
+        match registered {
+            Ok(artifact) => {
+                outcome.proof = receipt(
+                    ticket,
+                    &command.action,
+                    &json!({ "digest": artifact["sha256"] }),
+                );
+                result.insert("artifact".to_owned(), artifact);
+            }
+            Err(error) => {
+                result.insert("artifact".to_owned(), Value::Null);
+                result.insert(
+                    "artifact_error".to_owned(),
+                    Value::String(error.message().to_owned()),
+                );
+            }
+        }
+        Ok(outcome)
+    }
+
+    fn sink(&self) -> CaptureSink {
+        CaptureSink {
+            store: Arc::clone(&self.artifacts),
+            project: self.project.clone(),
+            retention_ms: self.retention_ms,
+            max_range_bytes: self.max_range_bytes,
+        }
+    }
+
     fn contract(
         &self,
         ticket: &EffectTicket,
@@ -275,12 +394,7 @@ impl SessionRuntimeBoundary {
         owner: Option<&Value>,
     ) -> Result<ArtifactContract, OutcomeError> {
         crate::capture::contract(
-            &CaptureSink {
-                store: Arc::clone(&self.artifacts),
-                project: self.project.clone(),
-                retention_ms: self.retention_ms,
-                max_range_bytes: self.max_range_bytes,
-            },
+            &self.sink(),
             ticket,
             kind,
             media_type,
@@ -288,6 +402,299 @@ impl SessionRuntimeBoundary {
             owner,
             super::now_unix_ms(),
         )
+    }
+
+    /// Write `Engine.time_scale` and read it back: a read-back that differs
+    /// from the request is committed and uncertain.
+    fn time_scale(
+        &self,
+        ticket: &EffectTicket,
+        command: &EditorMutation,
+        session: &str,
+        payload: &Map<String, Value>,
+    ) -> EditorEffectOutcome {
+        let bridge = match self.sessions.running_game(session) {
+            Ok(bridge) => bridge,
+            Err(error) => return not_started(&error),
+        };
+        let Some(value) = payload
+            .get("time_scale")
+            .and_then(Value::as_f64)
+            .filter(|value| (0.0..=scenario::MAX_TIME_SCALE).contains(value))
+        else {
+            return failed(
+                ErrorKind::InvalidInput,
+                "a time-scale change names a scale from 0 to 100",
+            );
+        };
+        let probe = scenario::BridgeProbe::new(bridge, &command.idempotency_id);
+        let calls = scenario::Calls::new(&probe, command.cancellation.clone(), None);
+        match scenario::set_time_scale(&calls, value) {
+            TimeScale::Set(answer) => EditorEffectOutcome {
+                status: MutationStatus::Committed,
+                proof: receipt(ticket, &command.action, &answer),
+                payload: answer,
+                error: None,
+            },
+            TimeScale::Unsure { answer, message } => EditorEffectOutcome {
+                status: MutationStatus::Committed,
+                proof: receipt(ticket, &command.action, &answer),
+                payload: answer,
+                error: Some((ErrorKind::Uncertain, message)),
+            },
+            TimeScale::Other(reply) => mutation_outcome(ticket, &command.action, reply),
+        }
+    }
+
+    /// Compare the root viewport with the reference the tool read, and keep
+    /// the capture and the difference image. Like a capture, nothing is
+    /// committed until the capture's artifact is registered.
+    fn image_compare(
+        &self,
+        ticket: &EffectTicket,
+        command: &EditorMutation,
+        session: &str,
+        payload: &Map<String, Value>,
+        owner: Option<&Value>,
+    ) -> EditorEffectOutcome {
+        let bridge = match self.sessions.running_game(session) {
+            Ok(bridge) => bridge,
+            Err(error) => return not_started(&error),
+        };
+        let reference = payload.get("reference");
+        let path = reference
+            .and_then(|reference| reference.get("path"))
+            .and_then(Value::as_str);
+        let bytes = reference
+            .and_then(|reference| reference.get("data_base64"))
+            .and_then(Value::as_str)
+            .and_then(crate::capture::base64_decode);
+        let (Some(path), Some(bytes)) = (path, bytes) else {
+            return failed(
+                ErrorKind::InvalidInput,
+                "an image comparison carries the reference image it compares with",
+            );
+        };
+        let tolerance = payload
+            .get("tolerance")
+            .and_then(Value::as_u64)
+            .and_then(|tolerance| u8::try_from(tolerance).ok())
+            .unwrap_or(0);
+        let difference = payload
+            .get("difference")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let probe = scenario::BridgeProbe::new(bridge, &command.idempotency_id);
+        let calls = scenario::Calls::new(&probe, command.cancellation.clone(), None);
+        let keeper = EffectKeeper {
+            boundary: self,
+            ticket,
+            owner,
+        };
+        let compared = match scenario::compare_image(
+            &calls, &keeper, "compare", &bytes, tolerance, difference,
+        ) {
+            Ok(compared) => compared,
+            // A comparison changes nothing in the game: one the probe
+            // did not answer kept nothing, so nothing was committed.
+            Err(error) if error.kind() == ErrorKind::Uncertain => {
+                return failed(ErrorKind::Unavailable, error.message());
+            }
+            Err(error) => return not_started(&error),
+        };
+        let digest = compared.capture["sha256"].clone();
+        let mut result = compared.result;
+        if let Some(Value::Object(described)) = result.get_mut("reference") {
+            described.insert("path".to_owned(), json!(path));
+        }
+        result.insert("session".to_owned(), json!(session));
+        result.insert("capture".to_owned(), compared.capture);
+        result.insert(
+            "difference".to_owned(),
+            compared.difference.unwrap_or(Value::Null),
+        );
+        if let Some(error) = compared.difference_error {
+            result.insert("difference_error".to_owned(), json!(error));
+        }
+        EditorEffectOutcome {
+            status: MutationStatus::Committed,
+            proof: receipt(ticket, &command.action, &json!({ "digest": digest })),
+            payload: Value::Object(result),
+            error: None,
+        }
+    }
+
+    /// Run a scenario and keep its report as a JSON artifact beside the
+    /// answer. A scenario that ran is committed whatever its verdict: the
+    /// report says what each step did.
+    fn scenario(
+        &self,
+        ticket: &EffectTicket,
+        command: &EditorMutation,
+        session: &str,
+        payload: &Map<String, Value>,
+        owner: Option<&Value>,
+    ) -> EditorEffectOutcome {
+        let bridge = match self.sessions.running_game(session) {
+            Ok(bridge) => bridge,
+            Err(error) => return not_started(&error),
+        };
+        let Some(Ok(plan)) = payload
+            .get("plan")
+            .cloned()
+            .map(serde_json::from_value::<scenario::Plan>)
+        else {
+            return failed(
+                ErrorKind::InvalidInput,
+                "a scenario carries its checked plan",
+            );
+        };
+        let mut references = BTreeMap::new();
+        if let Some(listed) = payload.get("references").and_then(Value::as_object) {
+            for (path, data) in listed {
+                let Some(bytes) = data.as_str().and_then(crate::capture::base64_decode) else {
+                    return failed(
+                        ErrorKind::InvalidInput,
+                        format!("the reference image {path} is not carried as base64"),
+                    );
+                };
+                references.insert(path.clone(), bytes);
+            }
+        }
+        let probe = scenario::BridgeProbe::new(bridge, &command.idempotency_id);
+        let keeper = EffectKeeper {
+            boundary: self,
+            ticket,
+            owner,
+        };
+        let mut report = match scenario::run_scenario(
+            &probe,
+            &keeper,
+            &plan,
+            &references,
+            &command.cancellation,
+        ) {
+            Ok(report) => report,
+            Err(error) => return not_started(&error),
+        };
+        report["transaction_id"] = json!(ticket.transaction_id());
+        report["session"] = json!(session);
+        let kept = serde_json::to_vec(&report)
+            .map_err(|error| {
+                OutcomeError::new(
+                    ErrorKind::Internal,
+                    error.to_string(),
+                    false,
+                    BTreeMap::new(),
+                )
+            })
+            .and_then(|bytes| {
+                scenario::Keeper::keep(
+                    &keeper,
+                    "report",
+                    ArtifactKind::Report,
+                    REPORT_MEDIA_TYPE,
+                    bytes,
+                )
+            });
+        let proof = match kept {
+            Ok(artifact) => {
+                let proof = receipt(
+                    ticket,
+                    &command.action,
+                    &json!({ "digest": artifact["sha256"] }),
+                );
+                report["artifact"] = artifact;
+                proof
+            }
+            Err(error) => {
+                report["artifact"] = Value::Null;
+                report["artifact_error"] = json!(error.message());
+                receipt(ticket, &command.action, &json!({}))
+            }
+        };
+        EditorEffectOutcome {
+            status: MutationStatus::Committed,
+            proof,
+            payload: report,
+            error: None,
+        }
+    }
+}
+
+/// Keeps the artifacts of one runtime effect in the store, bound to its
+/// transaction and owned by the caller the tool recorded.
+struct EffectKeeper<'a> {
+    boundary: &'a SessionRuntimeBoundary,
+    ticket: &'a EffectTicket,
+    owner: Option<&'a Value>,
+}
+
+impl scenario::Keeper for EffectKeeper<'_> {
+    fn keep(
+        &self,
+        salt: &str,
+        kind: ArtifactKind,
+        media_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<Value, OutcomeError> {
+        let contract = crate::capture::contract_salted(
+            &self.boundary.sink(),
+            self.ticket,
+            salt,
+            kind,
+            media_type,
+            &bytes,
+            self.owner,
+            super::now_unix_ms(),
+        )?;
+        let artifact = json!({
+            "uri": contract.resource_uri().as_str(),
+            "media_type": contract.metadata().media_type,
+            "byte_length": contract.metadata().byte_length,
+            "sha256": contract.metadata().sha256,
+            "expires_at_unix_ms": contract.expires_at_unix_ms(),
+        });
+        self.boundary.artifacts.register(contract, bytes)?;
+        Ok(artifact)
+    }
+}
+
+/// How a mutation the probe did not answer with a result ends, as
+/// [`bridge_outcome`] decides it for one answer.
+fn mutation_outcome(ticket: &EffectTicket, action: &str, reply: Reply) -> EditorEffectOutcome {
+    match reply {
+        Reply::Done { status, payload } => EditorEffectOutcome {
+            status,
+            proof: if status == MutationStatus::Committed {
+                receipt(ticket, action, &payload)
+            } else {
+                unbound()
+            },
+            payload,
+            error: None,
+        },
+        Reply::Refused {
+            kind,
+            message,
+            status,
+        } => EditorEffectOutcome {
+            status,
+            payload: json!({}),
+            error: Some((kind, message)),
+            proof: if status == MutationStatus::Committed {
+                receipt(ticket, action, &json!({}))
+            } else {
+                unbound()
+            },
+        },
+        Reply::Unsent { kind, message } => failed(kind, message),
+        Reply::Lost { message } => EditorEffectOutcome {
+            status: MutationStatus::Unresolved,
+            payload: json!({}),
+            error: Some((ErrorKind::Uncertain, message)),
+            proof: unbound(),
+        },
     }
 }
 

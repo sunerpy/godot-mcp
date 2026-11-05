@@ -40,6 +40,7 @@ pub mod idempotency;
 pub(crate) mod journal;
 pub mod kernel;
 pub mod limits;
+pub(crate) mod live_script;
 pub(crate) mod node_handle;
 pub mod observability;
 pub mod operator;
@@ -49,6 +50,7 @@ pub mod rmcp_adapter;
 pub mod router;
 pub mod scheduler;
 pub(crate) mod schema;
+pub(crate) mod scripts;
 #[cfg(feature = "stdio")]
 pub mod stdio;
 #[cfg(feature = "test-hooks")]

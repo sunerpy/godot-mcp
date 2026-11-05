@@ -67,6 +67,14 @@ pub struct ExportTarget {
 
 /// How Godot names the macOS platform in `export_presets.cfg`.
 const MACOS: &str = "macOS";
+/// How Godot names the Android platform in `export_presets.cfg`.
+const ANDROID: &str = "Android";
+
+/// Whether a preset for `platform` exports an Android APK.
+#[must_use]
+pub fn exports_android(platform: &str) -> bool {
+    platform == ANDROID
+}
 
 /// Whether a preset for `platform` exports an app bundle.
 #[must_use]
@@ -123,18 +131,47 @@ pub enum TemplateError {
 ///
 /// A macOS preset needs the build's one `macos.zip`, for both modes, and its
 /// architecture defaults to `universal`, as in Godot; it exports an app
-/// bundle packed as a zip.
+/// bundle packed as a zip. An Android preset needs `android_debug.apk` or
+/// `android_release.apk` and exports an APK no desktop host runs; one that
+/// builds with Gradle, or exports an Android App Bundle, needs Godot's Gradle
+/// build template and a Gradle run, which this server does not do.
 ///
 /// # Errors
-/// Returns [`TemplateError::Unsupported`] for a platform or architecture this
-/// server does not export, and [`TemplateError::CustomTemplate`] for a preset
-/// that names its own template.
+/// Returns [`TemplateError::Unsupported`] for a platform, architecture or
+/// build this server does not export, and [`TemplateError::CustomTemplate`]
+/// for a preset that names its own template.
 pub fn target_for(preset: &ExportPreset, debug: bool) -> Result<ExportTarget, TemplateError> {
     let mode = if debug { "debug" } else { "release" };
     if preset.custom_template(debug).is_some() {
         return Err(TemplateError::CustomTemplate { mode });
     }
     let platform = preset.platform();
+    if platform == ANDROID {
+        if preset.option_bool("gradle_build/use_gradle_build") == Some(true) {
+            return Err(TemplateError::Unsupported(
+                "the preset builds with Gradle (`gradle_build/use_gradle_build`), which needs \
+                 Godot's Android build template and a Gradle run; this server exports Android \
+                 presets only through the build's installed APK templates"
+                    .to_owned(),
+            ));
+        }
+        if matches!(
+            preset.options.get("gradle_build/export_format"),
+            Some(crate::export::presets::PresetValue::Int(format)) if *format != 0
+        ) {
+            return Err(TemplateError::Unsupported(
+                "the preset exports an Android App Bundle (`gradle_build/export_format`), which \
+                 only a Gradle build produces; this server exports APKs"
+                    .to_owned(),
+            ));
+        }
+        return Ok(ExportTarget {
+            template: format!("android_{mode}.apk"),
+            extension: "apk",
+            app_bundle: false,
+            runnable_here: false,
+        });
+    }
     let app_bundle = exports_app_bundle(platform);
     let architecture = preset
         .option_str("binary_format/architecture")
@@ -146,7 +183,7 @@ pub fn target_for(preset: &ExportPreset, debug: bool) -> Result<ExportTarget, Te
         other => {
             return Err(TemplateError::Unsupported(format!(
                 "exporting for `{other}` is not supported by this server; it exports Linux, \
-                 Windows Desktop and macOS presets"
+                 Windows Desktop, macOS and Android presets"
             )));
         }
     };
@@ -288,7 +325,7 @@ mod tests {
         assert_eq!(windows.template, "windows_release_arm64.exe");
         assert!(!windows.runnable_here || cfg!(target_os = "windows"));
         assert!(matches!(
-            target_for(&preset("Android", ""), false),
+            target_for(&preset("Web", ""), false),
             Err(TemplateError::Unsupported(_))
         ));
         assert!(matches!(
@@ -357,6 +394,41 @@ mod tests {
         );
         assert!(exports_app_bundle("macOS"));
         assert!(!exports_app_bundle("Linux") && !exports_app_bundle("Windows Desktop"));
+    }
+
+    #[test]
+    fn an_android_preset_needs_the_apk_template_of_its_mode_and_no_gradle() {
+        for (debug, template) in [(true, "android_debug.apk"), (false, "android_release.apk")] {
+            let android = target_for(
+                &preset("Android", "gradle_build/use_gradle_build=false"),
+                debug,
+            )
+            .expect("an APK export");
+            assert_eq!(android.template, template);
+            assert_eq!(android.extension, "apk");
+            assert!(!android.app_bundle && !android.runnable_here);
+        }
+        assert!(exports_android("Android") && !exports_android("Linux"));
+        for options in [
+            "gradle_build/use_gradle_build=true",
+            "gradle_build/use_gradle_build=true\ngradle_build/export_format=1",
+            "gradle_build/export_format=1",
+        ] {
+            assert!(
+                matches!(
+                    target_for(&preset("Android", options), true),
+                    Err(TemplateError::Unsupported(_))
+                ),
+                "{options}"
+            );
+        }
+        assert_eq!(
+            target_for(
+                &preset("Android", "custom_template/debug=\"/opt/a.apk\""),
+                true
+            ),
+            Err(TemplateError::CustomTemplate { mode: "debug" })
+        );
     }
 
     #[test]

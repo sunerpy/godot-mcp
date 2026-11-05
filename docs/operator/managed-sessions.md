@@ -11,7 +11,8 @@ that started them, and are identified only by opaque IDs: `run_`, `editor_` or `
 followed by 32 hexadecimal digits. No answer names a process ID, a boundary or a private
 path.
 
-At most four sessions, exports included, run at once. A session ends at its
+At most four sessions, exports included, run at once, and at most one of them is an
+export (see [Exports](exports.md#one-export-at-a-time)). A session ends at its
 `lifetimeSeconds` (default 3600, at most 14400) at the latest; its boundary is then
 terminated.
 
@@ -71,6 +72,14 @@ tagged-value codec the editor bridge uses; a value it cannot represent is report
 such rather than approximated. `runtime.signals.get` with `watch` also counts every later
 emission of the node's signals, and later reads report the counts.
 
+`runtime.properties.batch.get` reads up to 32 `targets` in one answer: each a `node` with at
+most 64 named `properties` (its first 64 stored and editor-visible ones when none is named), or
+the `Engine` singleton, whose `time_scale`, `physics_ticks_per_second` and `max_fps` it reads.
+A target that cannot be read carries its own `error` — `not_found` for a node the game does not
+have — and the others are read all the same; property names a node lacks are listed in its
+`missing`. Once an answer holds about 2.5 MB of values, the targets after it are answered as
+`skipped` and the answer is `truncated`.
+
 `runtime.performance.get` reads the game's performance monitors: every monitor of its Godot
 build's Performance monitor list, by the name the build gives it (`TIME_FPS`,
 `OBJECT_NODE_COUNT`, `MEMORY_STATIC`, ...), and every custom monitor the project added, or only
@@ -79,8 +88,111 @@ unknown name is refused with `invalid_input`; a value that is not a finite numbe
 Measured on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds, by the live
 suite: frame rate, process time, object, node and static memory figures are numbers.
 
-The probe answers one request at a time. While an input sequence runs, reads to the same
-session wait for it.
+The probe answers one request at a time; see [Requests that span frames](#requests-that-span-frames)
+for what that means for waits, samples, walks, presses and replays.
+
+## Writing properties
+
+`runtime.properties.set` writes up to 32 properties of one `target`: a `node`, or the `Engine`
+singleton, whose writable properties here are `time_scale` (0 to 100),
+`physics_ticks_per_second` (1 to 1000) and `max_fps` (0 to 1000); no other singleton is written.
+Values are tagged values, as reads answer them. It is a journaled command and needs an
+`idempotencyId`.
+
+Every value is converted to its property's declared type first, and only where nothing is lost:
+an integer into a `float` property, a whole float into an `int`, a `Vector2` with whole
+components into a `Vector2i`, a `String`, `StringName` or `NodePath` into one another, a typed
+array or typed dictionary item by item, and anything into an untyped property. Godot itself would
+truncate a float written to an `int` and drop an untyped array written to a typed one without a
+word; the probe refuses such a value instead. A value that does not convert without loss, a
+property the node does not have (`not_found`), a native property without a setter, such as
+`multiplayer` (`invalid_input`, read-only), `script`, and an Engine value outside its range each
+refuse the whole write before any property changes.
+
+Each property is then written and read back. The answer lists, per property, its `before`,
+`requested` and `after` values and `matched`, which says whether the property holds exactly the
+requested value afterwards, and `all_matched` for the write. A setter that clamps or ignores a
+value is reported as `matched: false` with the value the property holds, never as a write that
+took.
+
+## Waiting and sampling
+
+`runtime.wait` evaluates one `condition` every frame until it holds or `timeoutMs` passes
+(default 5000, at most 30000):
+
+| Condition | Holds when |
+| --- | --- |
+| `node_exists`, `node_gone` | the `node` is in the running game, or is not |
+| `property` | the `node`'s `property` compares with `value` by `op`: `==`, `!=`, `<`, `<=`, `>`, `>=`, `contains` (a substring, an array element or a dictionary key), or `approx` within `tolerance` (numbers, vectors by distance, colors and quaternions per component) |
+| `signal` | the `node`'s `signal` was emitted at least `count` times (1 to 1000) after the wait started |
+| `ui_text` | a visible control shows `text`, exactly or, with `match: contains`, within its text |
+
+A comparison that can never hold for a typed property — an `int` against a string, `<` between
+strings — is refused with `invalid_input` instead of being waited out; a node or signal that does
+not exist is `not_found`. The answer says `satisfied`, the `outcome` (`satisfied`, `timeout`,
+`cancelled` or `interrupted`), `elapsed_ms`, `frames_waited` and `observed`: what the last check
+saw, such as the node's path, the property's value, the emission count or the control and its
+text. Measured by the live suite on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64
+builds, in headless sessions: a 300 ms wait timed out after 302 to 304 ms of game time.
+
+`runtime.sample` reads up to 32 `series` — a `property` of a `node` or of the `Engine`, or a
+performance `monitor` — every `intervalMs` (default 100, at most 1000) for `durationMs` (default
+1000, at most 10000), at most `maxSamples` (600) samples. Each sample has its time from the
+start, its process and physics frame, whether the game was `paused` and its window `focused`,
+and the Engine's `time_scale`; each series answers its values in order and, when they are numbers,
+their `count`, `min`, `max`, `mean` and `last`. A sample keeps booleans, numbers, short strings
+(at most 256 characters), vectors, rectangles, colors, quaternions, planes, boxes, bases and
+transforms; any other value is answered as `null` with the reason in `unsampled`. `time_base`
+names the clock and the frame range, and `focus_observable` is `false` under a headless display
+server, which reports every window focused. The answer stops at about 2.5 MB of values and says
+so in `stopped_by`. Measured as above: samples 100 ms apart were taken 94 to 109 ms apart, and a
+headless session drew 88 frames in 600 ms.
+
+## Finding and moving nodes
+
+`runtime.nodes.find` answers the game's nodes under `root` that match every given filter:
+`class` (an engine class or a script's `class_name`, inherited ones included), `script` (the
+attached script, or one it extends), `group`, `name` (a pattern with `*` and `?`) and `near`
+(within `radius` of a `point` or of another `node`, among nodes of the same dimension), nearest
+first with `near` and in tree order otherwise, at most `limit` (default 100, at most 500). It
+examines at most 20000 nodes and says when it stopped there (`scan_truncated`). A class name
+that is neither an engine class nor in the project's global class list is still matched against
+scripts' `class_name` and answered with `class_known: false`.
+
+`runtime.navigation.path.get` asks the navigation map a node uses — that of its
+`NavigationAgent2D` or `NavigationAgent3D` child, with the agent's layers, or its world's
+default map — for a path from the node's position, or `from`, to `to`. It first waits, at most
+`syncTimeoutMs` (default 1000, at most 5000), until the map has synchronized its regions: a map
+with no region, or one whose regions have not synchronized in time, is `unavailable` with the
+reason. The answer has the `path`, its `length`, the `end_distance` from its end to `to`, and
+`reaches_target`, which is true when that distance is within the map's cell size. Godot 4.5.1,
+4.6.1 and 4.7.1 synchronize a region's navigation mesh apart from its map, so the probe waits for
+one more map iteration once every region has synchronized; on Godot 4.4.1 a map that has iterated
+once answers paths over its regions.
+
+`runtime.node.move` moves a `Node2D` or `Node3D`. `teleport` sets its global position and says,
+one physics frame later, whether it still `held` there. `along_path` walks it along that path at
+`speed` units per second, setting its global position every physics frame, until it `arrived`,
+until 30 physics frames pass without progress (`blocked` — game code puts the node back), or
+until `timeoutMs` passes (`timeout`; default 10000, at most 30000). Either way the node is moved
+directly: the game's own movement code, `move_and_slide` and collision responses do not run for
+the move, so the answer reports where the probe put the node, not where the game's physics
+would have taken it. A walk is a journaled command. Measured as above: a 509.9-unit walk at 600
+units per second took 51 physics frames, 841 to 855 ms.
+
+## Pressing a button
+
+`runtime.ui.press` clicks one button: named by `node`, or by the `text` it shows, exactly or with
+`match: contains`; a text several visible buttons show is a `conflict` that names them. The probe
+moves the mouse to the centre of the button's rectangle and presses and releases the left mouse
+button through the same synthetic input `input.mouse.send` uses, holding it `holdMs` (default
+100, at most 5000). The answer says whether the button's `pressed` signal fired, how often
+`pressed`, `button_down`, `button_up` and `toggled` were emitted, and the button's state
+afterwards. A disabled or invisible button, one that ignores the mouse or the left button, and a
+node that is no button are refused with `invalid_input`; a button whose centre lies outside the
+root viewport is `unavailable` — a headless session's root viewport is 64 by 64 pixels — and one
+in a `SubViewport` is `unsupported`. A press is a journaled command, and the mouse button is
+never left held.
 
 ## Synthetic input, and when it is released
 
@@ -94,12 +206,92 @@ everything held is released:
 * when the sequence that pressed it ends, fails or is cancelled. A client's MCP
   cancellation of an `input.sequence.send` in flight is passed on to the probe, which
   stops between steps and inside waits;
+* when the replay that pressed it ends or is withdrawn, and when a press of
+  `runtime.ui.press` ends;
 * when the session is stopped;
 * when the probe loses its server — the bridge closing, or the server process dying —
   and the probe quits on its own 15 s after that.
 
 The real-client smoke `scripts/real_client/m5_smoke.py` checks every one of these paths
-against the game's own output on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1.
+against the game's own output on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1. The live suite
+`crates/godot-mcp-server/tests/live_runtime_control.rs` measures them with a fixture game that
+times its own key events. On Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds,
+in headless sessions: a key pressed with `holdMs` 100 was held 103 to 105 ms and one with 400
+was held 400 to 409 ms; a sequence's 300 ms `wait` between a press and a release held the key
+331 ms; a key still held when the session stopped was released before the game quit; and when
+its server was killed, the probe released a held key within 20 ms.
+
+## Recording and replaying input
+
+`input.recording.start` records every input event the game's root window receives — keys, mouse
+buttons and motion, joypad buttons and axes, input actions — with its time from the start, at
+most `maxEvents` (default and limit 3000) for at most `maxDurationMs` (default and limit 30000);
+a session keeps one recording at a time, and a second start is a `conflict`. Each recorded event
+says its `source` — `probe` for an event this server injected, `external` for one the game, the
+window or a device delivered — and which input `actions` it matched. `input.recording.stop` ends
+the recording and answers every event it kept with their counts, and keeps the recording as an
+artifact of media type `application/json`, read with `resources/read`. When the artifact cannot be
+kept, the answer still carries the events, with `artifact: null` and the reason in
+`artifact_error`. Both are journaled commands.
+
+`input.replay` delivers up to 3000 recorded events again at their times from now (at most
+30000 ms), in time order: the events `input.recording.stop` answers can be passed back as they
+are, and `other` events are skipped and counted in `events_skipped`. The answer has the
+`outcome`, how many events were sent, `max_lag_ms` (how late the latest event was delivered) and
+`released`: the input the replay pressed and still held when it ended, which it released then. A
+replay that is withdrawn, or whose session stops, releases the same way. Measured as above: a
+recorded 250 ms tap that the game saw held 255 ms was held 261 to 263 ms when it was replayed, no
+event was delivered more than 6 ms late, and a joypad button and an action event each triggered
+the game's input action.
+
+## Requests that span frames
+
+A wait, a sample, a path query waiting for its map, a walk, a press, a sequence, a replay, an
+image comparison and a stress window each span frames, and the probe answers one request at a
+time: every other request to the same session waits for the one that runs. Commands — replays,
+walks, presses, sequences, property writes, input, comparisons and scenarios — are also serialized
+with every other command of the project in its command lane, so a 30 s replay or walk delays them
+all. Each such request ends at its next frame, with `outcome` `cancelled` or `interrupted` and
+what it did until then:
+
+* when the client cancels the call (MCP `notifications/cancelled`), which the server passes on to
+  the probe;
+* when the session is stopped: `project.run.stop` withdraws what the probe runs for the session
+  before it waits for the command lane, so the stop is not queued behind it. Measured as above,
+  a stop sent during a 20 s replay answered, with the game ended, after 382 to 407 ms on 4.5.1,
+  4.6.1 and 4.7.1 and after 882 to 884 ms on 4.4.1;
+* when the probe loses its server.
+
+A probe says which methods it implements when it connects. A tool whose method the session's
+probe does not implement — a probe from an older server — is refused with `unsupported` before
+anything is journaled or sent. Where Godot builds differ (navigation map synchronization, and
+whether the display server reports window focus), the probe decides once, when it starts, and
+answers the same shape on every build.
+
+## Running a script in the game
+
+`runtime.script.run` compiles caller-written GDScript in the game and calls its `run()` on the
+game's main thread through the probe, awaiting it when it is a coroutine
+([ADR 0012](../contributor/adr/0012-declared-script-execution.md)). It runs nothing until the
+operator starts the server with `--allow-scripts`; until then it answers `permission_denied`,
+and the session's capabilities do not offer the probe the method, which the probe also checks.
+
+- **It runs in the running game.** The current scene, the autoloads and every engine API are in
+  reach; a source extending Node is added under the probe, in the scene tree, and released
+  after. It shares the editor add-on's runner, so it compiles as the editor would: `@tool` is
+  written in front of the first line when missing, and static initializers run on compile.
+- **It answers what happened**: what `run()` returned as a tagged value and as Godot's own
+  spelling; on Godot 4.5.1 and later the errors logged while it compiled and ran, with the line of
+  the source, and what it printed (on 4.4.1 a run that returned is `inconclusive`); and every
+  project file that differs from before the run, the game's own writes meanwhile included.
+- **Nothing confines it, and nothing is undone.** It runs with your privileges. Like the game's
+  own code, its file writes are outside the server's journal, so a run whose outcome is unknown
+  blocks nothing.
+- **A deadline ends the wait, not the code.** The server waits `deadline_ms` (60 s by default,
+  600 s at most) and a further two seconds. When it stops waiting — the deadline passed, the
+  client cancelled the call, or `project.run.stop` withdrew what the session runs — the probe
+  answers `uncertain` at its next frame and serves the requests behind it while the code goes
+  on. Stopping the session ends the code.
 
 ## Captures
 
@@ -118,6 +310,150 @@ Two captures of an unchanged frame are byte-identical on one Godot build. Differ
 builds can rasterize the same frame differently — the smoke fixture's frame has one
 SHA-256 on 4.4.1 and 4.5.1 and another on 4.6.1 and 4.7.1 — so compare captures taken
 with the same build.
+
+## Game speed
+
+`runtime.time_scale.set` writes the running game's `Engine.time_scale` to `timeScale` (0 to 100;
+1 is real time, 0 stops game time) with the probe's own property write and reads it back. The
+answer has the scale `before`, the one `requested`, the one read back `after`, `matched` and
+`persisted: false`. It changes the running game only: nothing is written to the project or saved,
+the scale holds until it is changed again or the session ends, and the next session starts at 1
+unless the game's code sets another. A scale out of range is refused with `invalid_input` before
+anything is journaled; a write that reads back otherwise, or whose answer does not say how it
+reads back, is answered as `uncertain`, with the three scales in the error's details. It is a
+journaled command and needs an `idempotencyId`.
+
+Game code that counts time with the delta Godot passes it runs faster or slower; the engine's tick
+clock (`Time.get_ticks_msec()`) does not. Measured on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1,
+official Linux x86_64 builds, in headless sessions, by the live suite: at a scale of 0.25 the
+fixture's game time advanced 0.250 to 0.251 seconds per second of the tick clock, at 3 it advanced
+2.986 to 3.015, and at 0 it did not advance over 300 ms.
+
+## Comparing with a reference image
+
+`runtime.image.compare` captures the root viewport after the next drawn frame, as
+`runtime.screenshot.capture` does, and compares it with the project PNG that `reference` names by
+its `path` (`res://` or project-relative). The server reads the reference through the held project,
+at most 16 MiB and never from `.godot`, `.godot-mcp` or `godot_mcp_helpers`, and sends it to the
+probe in chunks of at most 1 MiB that the probe checks against the image's SHA-256. The probe
+decodes both images with Godot's own Image API and compares them as RGBA8: a pixel differs when one
+of its four channels differs by more than `tolerance` (0 to 255, default 0). The answer has:
+
+| Field | Holds |
+| --- | --- |
+| `matched` | both images are of one size and no pixel differs |
+| `capture_size`, `reference` | both sizes; the reference's path, byte length and SHA-256 |
+| `same_size`, `total_pixels` | whether the sizes are equal, and the capture's pixel count |
+| `differing_pixels`, `ratio` | how many pixels differ, and their share of `total_pixels` |
+| `max_channel_difference` | the largest difference of one channel over every pixel |
+| `bounding_box` | `x`, `y`, `width` and `height` of the smallest rectangle around the differing pixels, or `null` |
+| `reason` | why the images do not match, or `null` |
+| `capture`, `difference` | the capture, and, when pixels differ and `differenceImage` is not `false`, a difference image: a darkened copy of the capture with every differing pixel opaque red; both are PNG artifacts |
+
+Images of two sizes are not compared and nothing is resized: the answer is `matched: false` and
+`same_size: false`, its `reason` names both sizes, and the counts are `null`. A session that renders
+nothing, a headless one, is refused with `unavailable` before anything is journaled; a reference
+that does not exist is `not_found`, and one that is not a PNG is `invalid_input`. A comparison is a
+journaled command and needs an `idempotencyId`; it changes nothing in the game. It lets a frame
+pass after every 40 ms of work, so a cancellation withdraws it.
+
+Measured by the live suite on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds,
+in 320 by 240 windows on Xvfb with the Compatibility renderer: a capture of an unchanged frame
+matched a screenshot taken before it, with no differing pixel; after the fixture's 100 by 50
+swatch was recoloured, 5000 pixels differed (ratio 0.065104), each by 31 in one channel, inside a
+bounding box equal to the swatch's rectangle; at a tolerance of 31 none differed, and at 30 all
+5000 did; a 2 by 2 reference failed as a size mismatch; and a 640 by 480 reference of 1229438
+bytes, sent in two chunks, reached the probe whole, which answered its size, byte length and
+SHA-256. As with captures, compare with a reference taken on the same Godot build: builds can
+rasterize one frame differently.
+
+## Test scenarios
+
+`test.scenario.run` runs an ordered list of 1 to 64 `steps` against one game session and answers
+one report. Each step sends the probe the request of the tool it mirrors, with the same arguments
+and limits, so it behaves as that tool does:
+
+| `kind` | Arguments | Mirrors | Passes when |
+| --- | --- | --- | --- |
+| `input` | `steps`: 1 to 64 input steps, waiting at most 10000 ms in total | `input.sequence.send` | every input step was sent |
+| `wait` | `condition`, `timeoutMs` | `runtime.wait` | the condition held |
+| `set_property` | `target` | `runtime.properties.set` | every property reads back as written |
+| `press` | `target`, `holdMs` | `runtime.ui.press` | the button was clicked and its `pressed` signal fired |
+| `time_scale` | `timeScale` | `runtime.time_scale.set` | the scale reads back as asked |
+| `assert_property` | `target`, `op`, `value`, `tolerance` | the comparison `runtime.wait` makes | the live value compares with `value` |
+| `assert_ui_text` | `node`, `op`, `text` | the text `runtime.ui.get` reports | the Control's text is `text`, or contains it |
+| `screenshot` | none | `runtime.screenshot.capture` | the capture was kept |
+| `compare_image` | `reference`, `tolerance`, `differenceImage` | `runtime.image.compare` | the images match |
+| `stress` | `scene`, `count`, `parent`, `durationMs`, `intervalMs` | none | every instance was added, and none is left after they were freed |
+
+Every step may carry an `id`: 1 to 64 letters, digits, `_`, `.` or `-`, unique in the scenario,
+and `step-<n>` by default.
+
+* `assert_property` reads the `property` of a `node`, or of the `Engine` singleton
+  (`time_scale`, `physics_ticks_per_second` or `max_fps`), and compares it with the tagged
+  `value` in the game, by the engine's own arithmetic: `op` is `equals`, `not_equals`, `less`,
+  `greater` or `approx` within `tolerance` (0 to 1e9; numbers by their difference, vectors by
+  distance, colors and quaternions per component). A value that is not a number, or that holds
+  one, never compares as near anything; the record names it in `special` (`nan`, `inf`, `-inf`,
+  or `non_finite` for a vector or color that holds one), and `not_equals` with a NaN holds, as it
+  does in GDScript.
+* `assert_ui_text` reads the `text` property of the Control `node`, as `runtime.ui.get` reports
+  it, and matches it exactly (`op: equals`, the default) or as a part (`op: contains`); nothing
+  reads the screen as text.
+* `compare_image` compares with a project PNG (`reference: {path}`) or with the screenshot an
+  earlier `screenshot` step took (`reference: {step}`, that step's `id`).
+* `stress` adds `count` (1 to 1000) instances of the project scene `scene` under `parent` (the
+  current scene by default), samples the frame rate, the process times and the object, node and
+  orphan node counts as `runtime.sample` does, every `intervalMs` (default 100, at most 1000) for
+  `durationMs` (default 1000, at most 10000), then frees every instance and counts those still
+  there two frames later. Its record has the counts before, during and after the window.
+
+Each step ends `passed`, `failed`, `error`, `skipped` or `uncertain`:
+
+* `failed`: it ran and what it checks does not hold; its record has `expected` and `actual`.
+* `error`: it could not run as asked. The probe refused it (the record's `error` has the probe's
+  kind, such as `not_found`), the comparison does not apply to the value (`invalid_input`, with the
+  reason, such as `<` between vectors), an image step ran in a session that renders nothing
+  (`unavailable`), or a stress window could not add every instance.
+* `uncertain`: whether it did what it asked cannot be decided: a wait that ran out, a request whose
+  answer was lost, a time scale that reads back otherwise, a step the deadline or a cancellation
+  withdrew.
+* `skipped`: it did not run, and its `reason` says why.
+
+After a `failed` or `error` step the rest are skipped while `stopOnFailure` is true, the default;
+after an `uncertain` step they are skipped whatever it is. `maxDurationMs` (default 60000, at most
+600000) bounds the run: the step that runs when it passes is withdrawn from the probe, as a client's
+cancellation withdraws it, and the rest are skipped. `stopped_by` says what ended the run early,
+`failure`, `uncertain`, `deadline` or `cancelled`, or is `null`. The `verdict` is `passed` only
+when every step passed; otherwise it is `failed` when a step failed, else `error` when a step could
+not run, else `uncertain`.
+
+The report has the `verdict`, `stopped_by`, the `counts` of each status, `elapsed_ms`, the Godot
+version and one record per step: its `index`, `id`, `kind`, `status`, `started_ms`, `elapsed_ms`,
+`expected`, `actual`, `detail` (what the probe answered), `error`, `reason` and `artifacts`, the
+screenshots, captures and difference images it kept. A field of a record larger than 64 KiB is
+replaced by its byte length and SHA-256. The report is also kept as an artifact of media type
+`application/json`, named in `artifact` (`null`, with the reason in `artifact_error`, when it could
+not be kept) and read with `resources/read`; there is no separate report tool.
+
+A scenario is one journaled command and needs an `idempotencyId`: it is committed whatever its
+verdict, and a retried call with the same `idempotencyId` runs nothing again: it answers the
+recorded status (`replayed: true`) without the report, which stays readable as the artifact the
+first answer named. Every other command of the project waits for it in the command lane. What the
+schema cannot check is refused before anything is journaled or sent: two steps with one `id`, a
+`{step}` reference that does not name an earlier screenshot step, more than 16 screenshot and
+comparison steps, an `input` step that waits more than 10000 ms, a reference image that does not
+exist or is not a PNG, references of more than 64 MiB together, and a step whose probe method the
+session's probe does not implement (`unsupported`).
+
+Measured by the live suite on Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds,
+in headless sessions: a 13-step scenario of text assertions, a press, a wait, property writes and
+assertions, time-scale changes, input and a 300 ms stress window of 50 instances passed in 576 to
+593 ms, and the window raised the game's node count from 9 to 59 and back to 9; a failed text
+assertion skipped the two steps after it, which left the game unchanged; a scenario with a
+`maxDurationMs` of 500 withdrew its 10 s wait and answered after 604 to 626 ms. Under Xvfb with the
+Compatibility renderer, a scenario compared the game with its own screenshot and with a project
+reference, and a recoloured swatch failed its comparison and skipped the step after it.
 
 ## Editor sessions and debugging
 

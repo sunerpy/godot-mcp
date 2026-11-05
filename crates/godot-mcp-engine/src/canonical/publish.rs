@@ -502,9 +502,9 @@ impl From<CanonicalOperation> for FileOperation {
             CanonicalOperation::UpdateResource
             | CanonicalOperation::RegisterUid
             | CanonicalOperation::ApplyBatch => Self::Update,
-            // A UID query publishes nothing; the entry exists only so the
-            // transaction records which path was inspected.
-            CanonicalOperation::QueryUid => Self::Update,
+            // A UID query and a read publish nothing; the entry exists only so
+            // the transaction records which path was inspected.
+            CanonicalOperation::QueryUid | CanonicalOperation::ReadCalls => Self::Update,
         }
     }
 }

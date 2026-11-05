@@ -290,7 +290,7 @@ async fn core_outcomes_happy_path() {
         harness.registered, canonical,
         "every canonical core tool must have a registered handler"
     );
-    assert_eq!(canonical.len(), 15, "the core profile has 15 tools");
+    assert_eq!(canonical.len(), 22, "the core profile has 22 tools");
     for profile in [
         CapabilityProfile::Core,
         CapabilityProfile::Editor,

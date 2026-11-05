@@ -780,6 +780,8 @@ fn startup_reconciliation_same_byte_staged_update_converges_to_compensated() {
         observed_at_unix_ms: 1_700_000_000_000,
         limits: Limits::default(),
         process: Default::default(),
+        allow_scripts: false,
+        android: Default::default(),
     })
     .expect("real startup reconciliation must converge for a staged same-byte update");
     drop(runtime);
@@ -831,6 +833,8 @@ fn startup_reconciliation_intent_only_create_and_update_prove_pre_state() {
         observed_at_unix_ms: 1_700_000_000_000,
         limits: Limits::default(),
         process: Default::default(),
+        allow_scripts: false,
+        android: Default::default(),
     })
     .expect("real startup reconciliation opens the project");
     let ordinary_permit = runtime.write_gate_status();
@@ -890,6 +894,8 @@ fn startup_reconciliation_intent_only_pre_state_mismatch_quarantines() {
         observed_at_unix_ms: 1_700_000_000_000,
         limits: Limits::default(),
         process: Default::default(),
+        allow_scripts: false,
+        android: Default::default(),
     })
     .expect("real startup reconciliation opens the project");
     let ordinary_permit = runtime.write_gate_status();
