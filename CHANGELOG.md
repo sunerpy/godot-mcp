@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/sunerpy/godot-mcp/compare/v0.4.0...v0.5.0) (2026-11-06)
+
+
+### Features
+
+* **http:** add the open mode, which serves a development network with no credential or one token ([1487e6f](https://github.com/sunerpy/godot-mcp/commit/1487e6ff0f1fa0beca19286cf0682a4bd261777b))
+* **recipes:** add scene.recipe.apply, which applies one of ten scene recipes by name as one journaled batch or one undoable editor action ([1487e6f](https://github.com/sunerpy/godot-mcp/commit/1487e6ff0f1fa0beca19286cf0682a4bd261777b))
+* **recipes:** add the smoke, sparks, rain, snow and explosion particle presets ([1487e6f](https://github.com/sunerpy/godot-mcp/commit/1487e6ff0f1fa0beca19286cf0682a4bd261777b))
+* **recipes:** offer every recipe as an MCP prompt, godot-mcp.recipe.&lt;name&gt;, in the editor and full profiles ([1487e6f](https://github.com/sunerpy/godot-mcp/commit/1487e6ff0f1fa0beca19286cf0682a4bd261777b))
+
 ## [0.4.0](https://github.com/sunerpy/godot-mcp/compare/v0.3.0...v0.4.0) (2026-11-06)
 
 
