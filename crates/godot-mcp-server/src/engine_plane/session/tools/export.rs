@@ -598,7 +598,8 @@ impl SessionHandler {
                 smoke,
                 runnable_here: target.as_ref().is_some_and(|target| target.runnable_here),
                 owner_principal: Some(access.principal().as_str().to_owned()),
-                owner_session: access.session().map(|session| session.as_str().to_owned()),
+                // The owner is the principal; any of its sessions reads the outputs.
+                owner_session: None,
                 kind,
                 bases,
                 android: android_plan,

@@ -1,3 +1,7 @@
+---
+description: Register godot-mcp with Claude Code or a client configured with JSON, and set its environment.
+---
+
 # MCP clients
 
 godot-mcp is a plain MCP server over stdio. Any client that can start a process and speak

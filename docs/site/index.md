@@ -25,6 +25,8 @@ home:
       text: One process your MCP client starts, beside your project, on Linux, macOS or Windows. It speaks stdio by default, with no port and no account.
     - term: Godot
       text: Analysis reads the project's files and needs no engine. Running, testing and exporting use the Godot 4.4.0 or later build you point it at.
+    - term: Built as
+      text: A Rust server, not an editor plugin. It works with no editor open; GDScript runs inside Godot only where the engine is needed, as the optional editor add-on and the probe it gives each game it starts.
 
   visual:
     label: An MCP exchange with godot-mcp on a small Godot project. scene.tree.get on main.tscn answers its five nodes with their types and scripts, and the exact connection of Mob's body_entered signal to the root. gdscript.references.get for take_damage in player/player.gd answers one inferred call, at main.gd line 6.

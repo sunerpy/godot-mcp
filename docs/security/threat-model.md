@@ -210,7 +210,7 @@ See [Managed sessions](../operator/managed-sessions.md).
 
 An export is a managed session too. It runs the project through the resolved build's own
 installed templates only, writes into private storage rather than the project, and its
-outputs are served only as artifacts bound to the session that asked for them. A preset
+outputs are served only as artifacts bound to the principal that asked for them. A preset
 with a password, passphrase, token, secret or key written into `export_presets.cfg` is
 refused before anything runs, and only the option names are ever reported. What an
 exported build contains is whatever the project contains, and its smoke run executes it
@@ -289,7 +289,7 @@ rendezvous-authenticated through a private file with a constant-time comparison.
   independently re-validates a composite transaction's linked sub-proof.
 * **Raw artifact locations.** An artifact is addressable only as an opaque
   `godot-mcp://artifacts/{artifact_id}` resource, bound to project generation, principal,
-  session, retention and size limits. A returned path would be a durable capability that
+  retention and size limits. A returned path would be a durable capability that
   bypasses every one of those checks.
 * **In-process TLS.** No certificate setting exists, so no misconfiguration of one is
   possible here.

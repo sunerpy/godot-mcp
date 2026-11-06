@@ -18,8 +18,8 @@ concatenated with anything to form a path. There is no tool, resource or CLI fla
 that returns where the bytes live on disk.
 
 That is a deliberate boundary. A returned path is a capability: whoever holds it can
-usually read it again later, from a different session, without passing any of the
-checks the resource read applies. Keeping the address opaque means every read goes
+usually read it again later, as anyone, without passing any of the checks the
+resource read applies. Keeping the address opaque means every read goes
 through those checks.
 
 ## Every read is bound
@@ -28,24 +28,29 @@ A read succeeds only when all of these still hold:
 
 * the artifact belongs to the **project generation** it was produced under. A new
   generation invalidates it rather than serving stale bytes under a live name;
-* the requesting **principal and session** are the ones the artifact is bound to,
-  in whichever mode the transport is using;
+* the requesting **principal** is the one the artifact is bound to, in whichever mode
+  the transport is using;
 * the artifact is within its **retention window**;
 * the requested range is within the **size and range limits**.
 
-Over stdio the transport has one local principal and no session, so an artifact is bound
-to that principal and the project: a restarted stdio server still serves it to the same
-client until its retention ends. Over authenticated HTTP an artifact is bound to the MCP
-session that asked for it. Another session cannot read it, even one opened with the same
-credential, and neither can a client of another launch.
+An artifact is bound to the principal that asked for it and to the project, not to one
+MCP session. Over stdio the transport has one local principal, so a restarted stdio server
+still serves an artifact to the same client until its retention ends. Over authenticated
+HTTP every session opened with the same credential is the same principal: a client that
+reconnects between a capture and its read, as one does after the session idle timeout,
+still reads it. In `trusted_local` the principal comes from the launch secret, so a client
+of another launch is another principal and reads nothing the previous launch produced. In
+`proxied_oidc` the principal is the configured `(iss, sub)`, which outlives a restart, so
+after a restart that principal still reads what it produced, within the retention window,
+as over stdio.
 
 A failure here is a typed outcome, never a partial read. Over stdio it is `not_found` for
 an identifier that no longer resolves and `permission_denied` for a binding mismatch.
 Over HTTP every refusal is the same `not_found`, so a refusal does not reveal whether the
 artifact exists.
 
-`resources/list` names only the artifacts the caller could read: the ones bound to it, and
-none that has expired.
+`resources/list` names only the artifacts the caller could read: the ones bound to its
+principal, and none that has expired.
 
 ## Transport parity
 
@@ -57,9 +62,8 @@ same server over each transport and compares the reads.
 
 ## Retention
 
-Artifacts are transient by design. Read what you need while the session that
-produced it is the current one; do not treat an identifier as a durable handle to
-store and reuse later. When retention expires the identifier stops resolving, which
+Artifacts are transient by design. Read what you need within the retention window; do
+not treat an identifier as a durable handle to store and reuse later. When retention expires the identifier stops resolving, which
 is the intended behaviour rather than a bug to work around.
 
 An expired artifact gives its bytes and its share of the store's budget back: the next
@@ -76,8 +80,8 @@ frame count, pixel size and SHA-256. The bytes are kept under the server's priva
 directory, never in the project, and are checked against that length and SHA-256 before
 the artifact becomes readable; nothing about a capture is committed until it is.
 
-* The artifact is bound to the project generation and to the principal and session that
-  asked for the capture.
+* The artifact is bound to the project generation and to the principal that asked for
+  the capture.
 * It stays readable for 15 minutes; a server restart keeps the artifacts still inside
   that window whose bytes still match their SHA-256, and removes the rest.
 * The store holds at most 256 MiB of artifacts at once. A capture that does not fit is

@@ -1,3 +1,7 @@
+---
+description: Connect a running Godot editor to the server with the godot_mcp add-on, and what an agent can then do in it.
+---
+
 # The editor add-on
 
 The `godot_mcp` editor add-on connects a Godot editor you are running to the server. With it, an

@@ -1,3 +1,7 @@
+---
+description: Install godot-mcp from a release or from source, update it to a new release, and uninstall it.
+---
+
 # Install
 
 godot-mcp is one package per platform: the `godot-mcp` executable, the process supervisor beside
@@ -86,6 +90,22 @@ Analysis needs no engine. For the tools that run Godot, install a Godot 4.4.0 or
 build yourself; the server looks for one in the usual install locations and on `PATH`, or uses the
 `godot_binary` you name in a configuration file ([Quick start](quick-start.md#give-it-a-godot-build)).
 Exports also need the export templates of exactly that build.
+
+## Update
+
+godot-mcp does not check for updates; the [releases page](https://github.com/sunerpy/godot-mcp/releases)
+lists each release and its changes. To update, run the installer again. It installs the latest
+release, or the one `GODOTMCP_VERSION` names, beside the package you have: on Linux and macOS it
+points the launcher at the new package, and on Windows it replaces the earlier package's entry in
+your user PATH, so open a new terminal. `godot-mcp version` prints the version you now run.
+
+A running server keeps the version it started with. An MCP client starts the new version the next
+time it starts the server; stop an HTTP server you started yourself and start it again. When the
+project has the editor add-on, `editor.addon.status` compares its files with the add-on of the new
+version and `editor.addon.update` updates them; `editor.addon.reload` then loads them into the
+open editor.
+
+The earlier package stays in the install root; delete its directory once no server runs from it.
 
 ## Uninstall
 

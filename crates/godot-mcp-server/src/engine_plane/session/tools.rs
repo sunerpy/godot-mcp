@@ -1618,7 +1618,6 @@ impl SessionHandler {
                 "owner".to_owned(),
                 json!({
                     "principal": call.access.principal().as_str(),
-                    "session": call.access.session().map(|session| session.as_str().to_owned()),
                 }),
             );
         }

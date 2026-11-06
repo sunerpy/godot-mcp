@@ -139,8 +139,13 @@ fn seeded_artifact_is_bound_only_to_its_mode_specific_principal() {
     let stranger_session = registry
         .bind_session("stranger-internal", &stranger, EXPIRY)
         .expect("stranger session");
+    let owner_again = registry
+        .bind_session("owner-internal-again", &owner, EXPIRY)
+        .expect("a second owner session");
 
-    // When both sessions request the artifact, then only its owner resolves it.
+    // When the sessions request the artifact, then every session of its owner
+    // resolves it, the way a session opened after a restart reloaded it does,
+    // and the stranger does not.
     registry
         .authorize_artifact_read(
             owner_session.handle().as_str(),
@@ -150,6 +155,9 @@ fn seeded_artifact_is_bound_only_to_its_mode_specific_principal() {
             None,
         )
         .expect("owner read");
+    registry
+        .authorize_artifact_read(owner_again.handle().as_str(), Some(&owner), NOW, &uri, None)
+        .expect("another session of the owner reads it too");
     let stolen = registry
         .authorize_artifact_read(
             stranger_session.handle().as_str(),

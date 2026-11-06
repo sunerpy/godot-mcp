@@ -101,9 +101,35 @@ pub(crate) fn fetch_frames(
     Ok(fetched)
 }
 
+/// Who may read an artifact the caller `principal`, in `session`, produced.
+///
+/// The principal alone: every session of the principal that produced it reads
+/// it, so a client that reconnects keeps what it captured. Every session one
+/// deployment admits is already the same principal with the same capabilities,
+/// so this grants no session anything it could not produce itself. Only when no
+/// principal is recorded does the session still bind it, so an artifact never
+/// becomes readable by everyone through a missing principal.
+pub(crate) fn artifact_owner(
+    principal: Option<&str>,
+    session: Option<&str>,
+) -> Option<ArtifactOwner> {
+    if let Some(principal) = principal.and_then(|principal| PrincipalId::parse(principal).ok()) {
+        return Some(ArtifactOwner {
+            principal: Some(principal),
+            session: None,
+        });
+    }
+    session
+        .and_then(|session| SessionId::parse(session).ok())
+        .map(|session| ArtifactOwner {
+            principal: None,
+            session: Some(session),
+        })
+}
+
 /// The contract of one capture's artifact: its identity is bound to the
-/// transaction that made it, and it belongs to the `owner` the tool handler
-/// recorded, `{principal, session}`.
+/// transaction that made it, and it belongs to the principal of the `owner` the
+/// tool handler recorded (see [`artifact_owner`]).
 pub(crate) fn contract(
     sink: &CaptureSink,
     ticket: &EffectTicket,
@@ -148,16 +174,14 @@ pub(crate) fn contract_salted(
     let id = ArtifactId::parse(format!("artifact_{token}"))
         .map_err(|error| internal(error.to_string()))?;
     let length = bytes.len() as u64;
-    let principal = owner
-        .and_then(|owner| owner.get("principal"))
-        .and_then(Value::as_str)
-        .and_then(|principal| PrincipalId::parse(principal).ok());
-    let session = owner
-        .and_then(|owner| owner.get("session"))
-        .and_then(Value::as_str)
-        .and_then(|session| SessionId::parse(session).ok());
-    let owner =
-        (principal.is_some() || session.is_some()).then_some(ArtifactOwner { principal, session });
+    let owner = artifact_owner(
+        owner
+            .and_then(|owner| owner.get("principal"))
+            .and_then(Value::as_str),
+        owner
+            .and_then(|owner| owner.get("session"))
+            .and_then(Value::as_str),
+    );
     let violation = |error: ContractViolation| internal(error.to_string());
     ArtifactContract::new(
         id.clone(),
@@ -246,6 +270,42 @@ pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PRINCIPAL: &str = "principal_00112233445566778899aabbccddeeff";
+    const SESSION: &str = "session_00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn an_artifact_belongs_to_its_principal_not_to_one_session() {
+        assert_eq!(
+            artifact_owner(Some(PRINCIPAL), Some(SESSION)),
+            Some(ArtifactOwner {
+                principal: Some(PrincipalId::parse(PRINCIPAL).expect("principal")),
+                session: None,
+            }),
+            "every session of the principal that produced it may read it"
+        );
+    }
+
+    #[test]
+    fn an_owner_without_a_principal_is_never_widened() {
+        assert_eq!(
+            artifact_owner(None, Some(SESSION)),
+            Some(ArtifactOwner {
+                principal: None,
+                session: Some(SessionId::parse(SESSION).expect("session")),
+            }),
+            "without a principal the session still binds it"
+        );
+        assert_eq!(
+            artifact_owner(Some("not a principal"), Some(SESSION)),
+            Some(ArtifactOwner {
+                principal: None,
+                session: Some(SessionId::parse(SESSION).expect("session")),
+            }),
+            "an unreadable principal is no principal"
+        );
+        assert_eq!(artifact_owner(None, None), None);
+    }
 
     #[test]
     fn base64_encodes_what_godot_decodes() {

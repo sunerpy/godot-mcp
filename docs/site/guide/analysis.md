@@ -1,3 +1,7 @@
+---
+description: Tools that read the project, its GDScript, scenes, resources and dependencies without starting Godot.
+---
+
 # Analysis
 
 Every tool on this page reads the project's files and nothing else. They work in every profile, on

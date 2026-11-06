@@ -1,3 +1,7 @@
+---
+description: How the server settles a change that a crash interrupted, and how to resolve a quarantine.
+---
+
 # Recovery
 
 A change to the project either happened or it did not, and after a crash the server has to work

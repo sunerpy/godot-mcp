@@ -58,7 +58,17 @@ The sync stops before it writes anything when:
 - Do not name private paths or hosts. Examples use a project under `/path/to/my-game`, loopback
   addresses and names under `example.invalid`.
 - Chinese pages are written in Chinese, not translated word for word, and keep the English names
-  of tools, fields and products.
+  of tools, fields and products. Use standard written Chinese (「无法读取」「未设置」), not
+  colloquial words.
+- Every page but the two home pages opens with frontmatter holding one `description:` line, a
+  sentence that says what the page helps with. VitePress writes it into the page's
+  `<meta name="description">`, so search engines and link previews show it. Quote it when it
+  contains `: `.
+- When a release changes what a user sees, the page describes the new behaviour and then says in
+  one sentence how earlier versions behave, naming the last version that behaves the old way:
+  "godot-mcp 0.3.0 and earlier close a session after five minutes".
+- A troubleshooting entry is headed by the symptom as the user sees it, and says what causes it
+  and what to change.
 
 ## Links
 

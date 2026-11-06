@@ -11,6 +11,7 @@ use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 #[cfg(any(unix, windows))]
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -197,6 +198,10 @@ const DEFAULT_OIDC_ALGORITHM: OidcSigningAlgorithm = OidcSigningAlgorithm::Rs256
 const DEFAULT_OIDC_SCOPE: &str = "godot.read";
 const DEFAULT_OIDC_CAPABILITY: Capability = Capability::Read;
 
+/// How long an HTTP MCP session may stay idle before the server closes it, when
+/// `http.session_idle_timeout_ms` is not set: one hour.
+pub const DEFAULT_SESSION_IDLE_TIMEOUT_MS: u64 = 3_600_000;
+
 /// A frozen OIDC issuer/subject principal.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -256,9 +261,27 @@ pub struct HttpConfig {
     pub required_scopes: Option<Vec<String>>,
     #[serde(default)]
     pub required_capabilities: Option<Vec<Capability>>,
+    /// How long an MCP session may stay idle before the server closes it, in
+    /// milliseconds. Omission keeps [`DEFAULT_SESSION_IDLE_TIMEOUT_MS`].
+    #[serde(default)]
+    pub session_idle_timeout_ms: Option<u64>,
+    /// How long an MCP session is honoured after it opened, in milliseconds,
+    /// whatever it does. Omission derives it from `[limits]` as
+    /// `deadline_ms * max_queue`.
+    #[serde(default)]
+    pub session_lifetime_ms: Option<u64>,
 }
 
 impl HttpConfig {
+    /// How long an MCP session may stay idle before the server closes it.
+    #[must_use]
+    pub fn session_idle_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.session_idle_timeout_ms
+                .unwrap_or(DEFAULT_SESSION_IDLE_TIMEOUT_MS),
+        )
+    }
+
     /// Effective algorithm policy. Omission narrows to RS256 rather than widening.
     #[must_use]
     pub fn effective_allowed_algorithms(&self) -> Vec<OidcSigningAlgorithm> {
@@ -614,6 +637,8 @@ struct HttpPartial {
     allowed_algorithms: Option<Vec<OidcSigningAlgorithm>>,
     required_scopes: Option<Vec<String>>,
     required_capabilities: Option<Vec<Capability>>,
+    session_idle_timeout_ms: Option<u64>,
+    session_lifetime_ms: Option<u64>,
 }
 
 impl From<HttpConfig> for HttpPartial {
@@ -630,6 +655,8 @@ impl From<HttpConfig> for HttpPartial {
             allowed_algorithms: value.allowed_algorithms,
             required_scopes: value.required_scopes,
             required_capabilities: value.required_capabilities,
+            session_idle_timeout_ms: value.session_idle_timeout_ms,
+            session_lifetime_ms: value.session_lifetime_ms,
         }
     }
 }
@@ -694,6 +721,8 @@ impl HttpPartial {
             allowed_algorithms: self.allowed_algorithms,
             required_scopes: self.required_scopes,
             required_capabilities: self.required_capabilities,
+            session_idle_timeout_ms: self.session_idle_timeout_ms,
+            session_lifetime_ms: self.session_lifetime_ms,
         })
     }
 }
@@ -1240,6 +1269,14 @@ fn validate_http(http: &HttpConfig) -> Result<(), ConfigError> {
     let origin = http.origin.as_deref().ok_or(ConfigError::MissingOrigin)?;
     require_nonempty("http.origin", origin)?;
     validate_origin(origin)?;
+    for (field, value) in [
+        ("http.session_idle_timeout_ms", http.session_idle_timeout_ms),
+        ("http.session_lifetime_ms", http.session_lifetime_ms),
+    ] {
+        if value == Some(0) {
+            return Err(ConfigError::ZeroLimit { field });
+        }
+    }
 
     match http.mode {
         HttpMode::TrustedLocal => {

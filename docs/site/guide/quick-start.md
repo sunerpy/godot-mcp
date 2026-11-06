@@ -1,3 +1,7 @@
+---
+description: Register godot-mcp with an MCP client, make the first calls and give the server a Godot build.
+---
+
 # Quick start
 
 This page registers godot-mcp with an MCP client, makes the first calls and then gives the server

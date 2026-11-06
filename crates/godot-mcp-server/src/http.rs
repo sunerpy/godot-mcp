@@ -63,7 +63,9 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt as _;
-use godot_mcp_domain::config::{HttpMode, Limits, ServerConfig, Transport};
+use godot_mcp_domain::config::{
+    DEFAULT_SESSION_IDLE_TIMEOUT_MS, HttpMode, Limits, ServerConfig, Transport,
+};
 use godot_mcp_domain::contracts::Capability;
 use rmcp::model::ProtocolVersion;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -204,6 +206,8 @@ pub struct HttpTransportOptions {
     required_scopes: Vec<String>,
     required_capabilities: Vec<Capability>,
     binding_policy_error: Option<String>,
+    session_idle_timeout: Duration,
+    session_lifetime_ms: Option<u64>,
     #[cfg(feature = "auth")]
     boundary: Option<Arc<crate::auth::ResourceServer>>,
 }
@@ -224,6 +228,8 @@ impl HttpTransportOptions {
             required_scopes: Vec::new(),
             required_capabilities: Vec::new(),
             binding_policy_error: None,
+            session_idle_timeout: Duration::from_millis(DEFAULT_SESSION_IDLE_TIMEOUT_MS),
+            session_lifetime_ms: None,
             #[cfg(feature = "auth")]
             boundary: None,
         }
@@ -248,6 +254,8 @@ impl HttpTransportOptions {
             required_scopes: Vec::new(),
             required_capabilities: Vec::new(),
             binding_policy_error: None,
+            session_idle_timeout: Duration::from_millis(DEFAULT_SESSION_IDLE_TIMEOUT_MS),
+            session_lifetime_ms: None,
             #[cfg(feature = "auth")]
             boundary: None,
         }
@@ -287,6 +295,30 @@ impl HttpTransportOptions {
         self
     }
 
+    /// Close an MCP session that received nothing for `idle`.
+    ///
+    /// The SDK's own default is five minutes; a client that idles longer must open
+    /// a new session, so this defaults to `http.session_idle_timeout_ms`'s one hour.
+    #[must_use]
+    pub const fn with_session_idle_timeout(mut self, idle: Duration) -> Self {
+        self.session_idle_timeout = idle;
+        self
+    }
+
+    /// Honour a bound session for `milliseconds` after it opened, whatever it
+    /// does, instead of the lifetime the binding policy derived from `[limits]`.
+    ///
+    /// It applies to a binding attached before or after it. Zero is ignored: the
+    /// configuration loader already refuses it.
+    #[must_use]
+    pub fn with_session_lifetime_ms(mut self, milliseconds: u64) -> Self {
+        self.session_lifetime_ms = Some(milliseconds);
+        self.binding = self
+            .binding
+            .map(|policy| policy.with_configured_lifetime_ms(milliseconds));
+        self
+    }
+
     /// Bind every session, task and artifact of this listener to `policy`.
     ///
     /// Without one the listener behaves exactly as Todo 28/29 left it: authentication
@@ -296,6 +328,10 @@ impl HttpTransportOptions {
     /// the binding, and every artifact range read is authorized individually.
     #[must_use]
     pub fn with_session_binding(mut self, policy: SessionBindingPolicy) -> Self {
+        let policy = match self.session_lifetime_ms {
+            Some(milliseconds) => policy.with_configured_lifetime_ms(milliseconds),
+            None => policy,
+        };
         let policy = policy.with_required_scopes(self.required_scopes.clone());
         match policy.with_required_capabilities(self.required_capabilities.iter().copied()) {
             Ok(policy) => self.binding = Some(policy),
@@ -327,6 +363,12 @@ impl HttpTransportOptions {
         self.binding.as_ref()
     }
 
+    /// How long an MCP session may stay idle before it is closed.
+    #[must_use]
+    pub const fn session_idle_timeout(&self) -> Duration {
+        self.session_idle_timeout
+    }
+
     /// Derive options from validated configuration, or `None` when no HTTP
     /// listener was configured.
     ///
@@ -352,7 +394,12 @@ impl HttpTransportOptions {
                     .ok_or(HttpTransportError::MissingResourceUrl)?,
             ),
         };
-        options = options.with_limits(config.limits.clone());
+        options = options
+            .with_limits(config.limits.clone())
+            .with_session_idle_timeout(http.session_idle_timeout());
+        if let Some(lifetime) = http.session_lifetime_ms {
+            options = options.with_session_lifetime_ms(lifetime);
+        }
         if let Some(host) = http.host.as_deref() {
             options = options.with_allowed_hosts([host]);
         }
@@ -1006,7 +1053,7 @@ pub async fn bind_http_transport(
     let service: StreamableHttpService<StagedHandler, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(handler.clone()),
-            Arc::new(LocalSessionManager::default()),
+            Arc::new(session_manager(options.session_idle_timeout)),
             StreamableHttpServerConfig::default()
                 .with_sse_keep_alive(Some(SSE_KEEP_ALIVE))
                 .with_allowed_hosts(allowed_hosts)
@@ -1266,6 +1313,13 @@ fn apply_cors(response: &mut Response, origin: Option<&HeaderValue>) {
     );
 }
 
+/// The SDK session manager, closing a session that received nothing for `idle`.
+fn session_manager(idle: Duration) -> LocalSessionManager {
+    let mut sessions = LocalSessionManager::default();
+    sessions.session_config.keep_alive = Some(idle);
+    sessions
+}
+
 /// The one refusal shape a binding failure produces, from constants only.
 fn refusal_response(refusal: &BindingRefusal) -> Response {
     let status =
@@ -1406,6 +1460,109 @@ mod self_audit {
                 .count()
                 .min(4),
             "authentication refusals must all funnel through one variant"
+        );
+    }
+
+    /// A validated `trusted_local` configuration whose `[http]` table also holds
+    /// `http_keys`.
+    fn trusted_local_config(http_keys: &str) -> ServerConfig {
+        let config = ServerConfig::from_toml_str(&format!(
+            "transport = \"http\"\n\n[http]\nbind = \"127.0.0.1:9\"\nmode = \"trusted_local\"\n\
+             host = \"127.0.0.1:9\"\norigin = \"http://127.0.0.1:9\"\n{http_keys}\n\n\
+             [http.local_secret.env]\nvar = \"GODOT_MCP_TEST_SECRET\"\n"
+        ))
+        .expect("the configuration parses");
+        config.validate().expect("the configuration validates");
+        config
+    }
+
+    fn configured_options(http_keys: &str) -> HttpTransportOptions {
+        HttpTransportOptions::from_config(
+            &trusted_local_config(http_keys),
+            Path::new("/nonexistent"),
+        )
+        .expect("the options resolve")
+        .expect("the configuration describes a listener")
+    }
+
+    fn tiny_policy() -> SessionBindingPolicy {
+        let limits = Limits {
+            deadline_ms: 10,
+            max_queue: 1,
+            ..Limits::default()
+        };
+        let project = godot_mcp_domain::contracts::ProjectIdentity::from_lease_key(
+            godot_mcp_domain::objid::LeaseKey {
+                root: godot_mcp_domain::objid::StableObjectId::Unix { dev: 30, ino: 1 },
+                project_file: godot_mcp_domain::objid::StableObjectId::Unix { dev: 30, ino: 2 },
+            },
+            1,
+        );
+        SessionBindingPolicy::new(
+            godot_mcp_domain::CapabilityProfile::Core,
+            "http://127.0.0.1:9/mcp",
+            project,
+            &limits,
+        )
+        .expect("policy")
+    }
+
+    #[test]
+    fn an_unconfigured_session_idles_for_an_hour() {
+        let options = configured_options("");
+        assert_eq!(options.session_idle_timeout(), Duration::from_secs(3600));
+        assert_eq!(
+            session_manager(options.session_idle_timeout())
+                .session_config
+                .keep_alive,
+            Some(Duration::from_secs(3600)),
+            "the SDK closes an idle session only after the configured hour"
+        );
+    }
+
+    #[test]
+    fn a_configured_idle_timeout_reaches_the_session_manager() {
+        let options = configured_options("session_idle_timeout_ms = 1234");
+        assert_eq!(
+            session_manager(options.session_idle_timeout())
+                .session_config
+                .keep_alive,
+            Some(Duration::from_millis(1234))
+        );
+    }
+
+    #[test]
+    fn a_configured_session_lifetime_reaches_the_binding_policy_in_either_order() {
+        assert_eq!(
+            configured_options("")
+                .with_session_binding(tiny_policy())
+                .session_binding()
+                .expect("a binding")
+                .binding_lifetime_ms(),
+            10,
+            "without the key the lifetime stays derived from [limits]"
+        );
+        assert_eq!(
+            configured_options("session_lifetime_ms = 3600000")
+                .with_session_binding(tiny_policy())
+                .session_binding()
+                .expect("a binding")
+                .binding_lifetime_ms(),
+            3_600_000,
+            "configuration may lengthen it past the derived one"
+        );
+        assert_eq!(
+            HttpTransportOptions::trusted_local(
+                "127.0.0.1:9".parse().expect("address"),
+                Path::new("/nonexistent")
+            )
+            .with_session_binding(tiny_policy())
+            .with_session_lifetime_ms(500)
+            .session_binding()
+            .expect("a binding")
+            .binding_lifetime_ms(),
+            500,
+            "a lifetime set after the binding still applies to it"
         );
     }
 

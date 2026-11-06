@@ -1,3 +1,7 @@
+---
+description: The four profiles that decide what the server may do to a project, and what each kind of answer means.
+---
+
 # Profiles and answers
 
 A profile is a deliberate choice about what the server may do to your project. It is not a
