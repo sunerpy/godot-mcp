@@ -1,3 +1,7 @@
+---
+description: 在 Claude Code 或用 JSON 配置的客户端里注册 godot-mcp，并设置它的环境变量。
+---
+
 # MCP 客户端
 
 godot-mcp 是一个普通的 stdio MCP 服务器。任何能启动进程、并在它的标准输入输出上收发按行分隔的 JSON-RPC 的客户端都能用它，这也是首选的方式：不开端口、不需要凭据、不走网络。你用哪个编辑器或 IDE 无关紧要，客户端连接的是 `godot-mcp` 进程，而不是 Godot 编辑器。

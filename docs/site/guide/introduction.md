@@ -1,3 +1,7 @@
+---
+description: What godot-mcp gives an agent working on a Godot project, how it is built and organised, and what it is not.
+---
+
 # Introduction
 
 godot-mcp is a [Model Context Protocol](https://modelcontextprotocol.io) server for one Godot
@@ -18,6 +22,28 @@ does not matter which editor or IDE you use.
 - **Games and editors it owns.** It starts the game or a headless editor, sends input, reads the
   live scene tree, captures screenshots and recordings, and debugs through the editor's language
   server and debug adapter.
+
+## A Rust server, not an editor plugin
+
+godot-mcp is written in Rust and GDScript, each where it does the most good. The server is one
+static Rust binary, with no language runtime to install: it speaks MCP, reads GDScript, scenes and
+resources without the engine, keeps the journal that makes every change provable, and starts and
+contains every Godot process it uses. GDScript runs inside Godot, and only where a task needs the
+engine:
+
+- the **headless helper**, a script pinned by its SHA-256, with which Godot itself writes the text
+  of every scene and resource the server changes and answers the reads only the engine can;
+- the **runtime probe**, which the server passes on the command line to each game it starts: no
+  autoload is installed and no project setting changes, so there is nothing to undo when the game
+  stops;
+- the **`godot_mcp` add-on**, which you install only to bring the editor you have open into the
+  work.
+
+An editor plugin lives inside the editor: it works only while the editor runs, and only with what
+the editor holds. godot-mcp works beside the project instead. Analysis and file edits need no
+Godot at all; a Godot executable is enough for checks, imports, tests, exports and games; and the
+add-on adds the editor you are using, with the server keeping its journal, policy and recovery
+rules for the edits made there.
 
 ## How it is organised
 

@@ -2677,7 +2677,6 @@ impl KernelToolHandler for EditorHandler {
                         // removes the owner before the editor is asked.
                         "owner": {
                             "principal": call.access.principal().as_str(),
-                            "session": call.access.session().map(|session| session.as_str().to_owned()),
                         },
                     }),
                     EditorScope::state(),
@@ -2925,7 +2924,6 @@ impl KernelToolHandler for EditorHandler {
                         // removes the owner before the editor is asked.
                         "owner": {
                             "principal": call.access.principal().as_str(),
-                            "session": call.access.session().map(|session| session.as_str().to_owned()),
                         },
                     }),
                     EditorScope::state().within(Duration::from_millis(timeout_ms) + PREVIEW_MARGIN),

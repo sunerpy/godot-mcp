@@ -38,10 +38,17 @@
 //! could legitimately keep one session busy. Both factors are validated by the
 //! Todo 2 loader; neither is invented here.
 //!
+//! An operator who wants another lifetime configures `http.session_lifetime_ms`,
+//! applied with [`SessionBindingPolicy::with_configured_lifetime_ms`]; it may be
+//! longer or shorter than the derived default, because it is configuration too.
+//! A longer lifetime does not let a session outlive its credential: every request
+//! re-proves its credential before the binding is consulted, so a session is only
+//! honoured for a caller who still presents a valid one.
+//!
 //! A deployment whose credentials expire sooner supplies the shorter value with
 //! [`SessionBindingPolicy::with_binding_lifetime_ms`], because a binding must never
-//! outlive the credential behind it. It may not exceed the derived default: the
-//! ceiling is configuration, not a caller's preference.
+//! outlive the credential behind it. It may not exceed the lifetime the policy
+//! holds: that ceiling is configuration, not a caller's preference.
 
 use std::collections::BTreeSet;
 
@@ -138,6 +145,19 @@ impl SessionBindingPolicy {
     #[must_use]
     pub const fn with_binding_lifetime_ms(mut self, milliseconds: u64) -> Self {
         if milliseconds > 0 && milliseconds < self.binding_lifetime_ms {
+            self.binding_lifetime_ms = milliseconds;
+        }
+        self
+    }
+
+    /// Replace the derived lifetime with the operator's configured one,
+    /// `http.session_lifetime_ms`.
+    ///
+    /// Unlike [`Self::with_binding_lifetime_ms`] it may lengthen the lifetime: the
+    /// value is configuration, not a caller's preference. Zero is ignored, as there.
+    #[must_use]
+    pub const fn with_configured_lifetime_ms(mut self, milliseconds: u64) -> Self {
+        if milliseconds > 0 {
             self.binding_lifetime_ms = milliseconds;
         }
         self
@@ -427,6 +447,49 @@ mod tests {
                 .binding_lifetime_ms(),
             policy.binding_lifetime_ms(),
             "zero is not a lifetime"
+        );
+    }
+
+    #[test]
+    fn a_configured_session_lifetime_replaces_the_derived_one() {
+        let limits = Limits {
+            deadline_ms: 10,
+            max_queue: 1,
+            ..Limits::default()
+        };
+        let policy =
+            SessionBindingPolicy::new(CapabilityProfile::Core, "local", project(1), &limits)
+                .expect("policy");
+        assert_eq!(policy.binding_lifetime_ms(), 10);
+        let longer = policy.clone().with_configured_lifetime_ms(3_600_000);
+        assert_eq!(
+            longer.binding_lifetime_ms(),
+            3_600_000,
+            "the operator's configured lifetime may lengthen the derived one"
+        );
+        assert_eq!(longer.expires_at(1_000), 3_601_000);
+        assert_eq!(
+            policy
+                .clone()
+                .with_configured_lifetime_ms(4)
+                .binding_lifetime_ms(),
+            4,
+            "and may shorten it"
+        );
+        assert_eq!(
+            policy
+                .clone()
+                .with_configured_lifetime_ms(0)
+                .binding_lifetime_ms(),
+            10,
+            "zero is not a lifetime"
+        );
+        assert_eq!(
+            longer
+                .with_binding_lifetime_ms(60_000)
+                .binding_lifetime_ms(),
+            60_000,
+            "a caller may still shorten what the operator configured"
         );
     }
 

@@ -1,3 +1,7 @@
+---
+description: Everything godot-mcp keeps on your machine and every place it sends data.
+---
+
 # Data and network
 
 This page lists everything godot-mcp keeps and every place it sends data. It runs on your machine,

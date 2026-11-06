@@ -1,3 +1,7 @@
+---
+description: How the server changes files, scripts, scenes, resources, settings and assets, and the rules every write follows.
+---
+
 # Editing the project
 
 Under the `editor` and `full` profiles the server changes the project. Every change is a journaled

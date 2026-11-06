@@ -7,7 +7,7 @@
 //! export writes into the session's private output directory, never into the
 //! project. When the process ends, every output file of a successful export is
 //! checked against the artifact budget, hashed and registered as an artifact
-//! bound to the principal and session that asked for it, and a build this host
+//! bound to the principal that asked for it, and a build this host
 //! runs is smoke-run once if asked: a Linux or Windows build itself, a macOS
 //! app bundle unpacked from its zip and run from the executable its
 //! `Info.plist` names. A failed or cancelled export registers nothing and
@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::contracts::{
-    ArtifactContract, ArtifactId, ArtifactKind, ArtifactMetadata, ArtifactOwner,
-    ArtifactResourceUri, OutcomeError, PrincipalId, ProjectIdentity, RangeSemantics, SessionId,
+    ArtifactContract, ArtifactId, ArtifactKind, ArtifactMetadata, ArtifactResourceUri,
+    OutcomeError, ProjectIdentity, RangeSemantics,
 };
 use godot_mcp_engine::export::bundle::unpack_app;
 use godot_mcp_engine::export::pack::{
@@ -531,16 +531,10 @@ fn register(
     let token = sha256_hex(format!("{session_id}\n{name}\n{sha256}").as_bytes());
     let id = ArtifactId::parse(format!("artifact_{token}"))
         .map_err(|error| internal(error.to_string()))?;
-    let principal = record
-        .owner_principal
-        .as_deref()
-        .and_then(|principal| PrincipalId::parse(principal).ok());
-    let session = record
-        .owner_session
-        .as_deref()
-        .and_then(|session| SessionId::parse(session).ok());
-    let owner =
-        (principal.is_some() || session.is_some()).then_some(ArtifactOwner { principal, session });
+    let owner = crate::capture::artifact_owner(
+        record.owner_principal.as_deref(),
+        record.owner_session.as_deref(),
+    );
     let length = bytes.len() as u64;
     let expires = now_unix_ms.saturating_add(artifacts.retention_ms.max(1));
     let violation =

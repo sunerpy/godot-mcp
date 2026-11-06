@@ -1,3 +1,7 @@
+---
+description: 服务器启动并持有的游戏与编辑器：运行游戏、发送输入、读取和截取画面，以及测试与调试。
+---
+
 # 游戏与编辑器
 
 在 `runtime` 和 `full` profile 下，服务器会启动并持有长期运行的 Godot 进程：用 `project.run.start` 启动的**游戏会话**，以及用 `editor.session.start` 启动的**编辑器会话**。会话只属于启动它的那个服务器，只能通过一个不透明的 ID 来识别（`run_` 或 `editor_` 后跟 32 位十六进制数字）。包括导出在内，同时最多运行四个会话，每个会话最晚在它的 `lifetimeSeconds` 到期时结束——默认一小时，最长四小时。
@@ -38,7 +42,7 @@
 
 ## 截取
 
-`runtime.screenshot.capture` 把根视口截成一张 PNG；`runtime.recording.capture` 以最多每秒 30 帧录制最长 10 秒，生成一个动态 PNG。每一帧都对照探针报告的摘要校验，答复把截取结果作为一个产物——带媒体类型、大小和 SHA-256 的不透明 URI——客户端用 `resources/read` 读取。无界面会话不渲染画面，在其中截取会答复 `unavailable`。
+`runtime.screenshot.capture` 把根视口截成一张 PNG；`runtime.recording.capture` 以最多每秒 30 帧录制最长 10 秒，生成一个动态 PNG。每一帧都对照探针报告的摘要校验，答复把截取结果作为一个产物——带媒体类型、大小和 SHA-256 的不透明 URI——客户端用 `resources/read` 读取。产物默认在 15 分钟内可读，同一个客户端打开的任何会话都能读取它：客户端即使在截取和读取之间重新连接，也仍能读取它（见 [HTTP 会话](../operate/http.md#会话)）。无界面会话不渲染画面，在其中截取会答复 `unavailable`。
 
 ## 测试游戏
 

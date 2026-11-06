@@ -27,7 +27,15 @@
 //! |---|---|
 //! | MCP session | mode, mode-specific principal, resource, profile, capabilities, scopes, project object, project generation, credential expiry |
 //! | Task | its session, and its tool family's mutation status |
-//! | Artifact | its session, its contract's range semantics and its contract's expiry |
+//! | Artifact | the principal that produced it, its project generation, its contract's range semantics and its contract's expiry |
+//!
+//! An artifact belongs to its principal rather than to one session: a session of the
+//! same subject reads it, so a client that reconnects keeps what it captured. Only an
+//! artifact whose owner records no principal stays bound to its session.
+//!
+//! A session binding lasts `limits.deadline_ms * limits.max_queue` from when it
+//! opened, or `http.session_lifetime_ms` when that is configured; independently, the
+//! SDK closes a session that received nothing for `http.session_idle_timeout_ms`.
 //!
 //! The project generation is part of the subject, so a generation bump makes every
 //! binding made under the old one unresumable ([`BindingRegistry::revoke_other_generations`]),

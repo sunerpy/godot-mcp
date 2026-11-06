@@ -107,10 +107,16 @@ impl StagedHandler {
     }
 
     /// The binding refusal, in the protocol shape a genuine absence also takes.
-    fn binding_error(refusal: &BindingRefusal) -> ErrorData {
+    ///
+    /// `code` is what the refused method answers for a genuine absence: a tool
+    /// call answers an unknown tool with `METHOD_NOT_FOUND`, and a resource read
+    /// answers an absent resource with `RESOURCE_NOT_FOUND`. A refusal therefore
+    /// carries the code its method's real absence carries, and every refusal of
+    /// one method is byte-identical to every other.
+    fn binding_error(refusal: &BindingRefusal, code: ErrorCode) -> ErrorData {
         let error = refusal.to_outcome();
         ErrorData::new(
-            ErrorCode::METHOD_NOT_FOUND,
+            code,
             error.message().to_owned(),
             Some(json!({
                 "code": error.code(),
@@ -249,7 +255,10 @@ impl ServerHandler for StagedHandler {
             Some(bindings) => {
                 let (subject, lease) = Self::bound_subject(&context);
                 let Some(lease) = lease else {
-                    return Err(Self::binding_error(&binding_refusal()));
+                    return Err(Self::binding_error(
+                        &binding_refusal(),
+                        ErrorCode::METHOD_NOT_FOUND,
+                    ));
                 };
                 let idempotency = request
                     .arguments
@@ -265,7 +274,9 @@ impl ServerHandler for StagedHandler {
                         &request.name,
                         idempotency.as_deref(),
                     )
-                    .map_err(|refusal| Self::binding_error(&refusal))?;
+                    .map_err(|refusal| {
+                        Self::binding_error(&refusal, ErrorCode::METHOD_NOT_FOUND)
+                    })?;
                 Some((Arc::clone(bindings), lease, subject, task))
             }
         };
@@ -311,7 +322,10 @@ impl ServerHandler for StagedHandler {
         {
             let range = parse_range(Some(&context.meta))?;
             let Some(lease) = lease.as_ref() else {
-                return Err(Self::binding_error(&binding_refusal()));
+                return Err(Self::binding_error(
+                    &binding_refusal(),
+                    ErrorCode::RESOURCE_NOT_FOUND,
+                ));
             };
             bindings
                 .authorize_artifact_read(
@@ -321,7 +335,7 @@ impl ServerHandler for StagedHandler {
                     &request.uri,
                     range,
                 )
-                .map_err(|refusal| Self::binding_error(&refusal))?;
+                .map_err(|refusal| Self::binding_error(&refusal, ErrorCode::RESOURCE_NOT_FOUND))?;
         }
         self.record_dispatch();
         let request_adapter = match (subject.as_ref(), lease.as_ref()) {

@@ -25,6 +25,8 @@ home:
       text: 由 MCP 客户端启动的一个本地进程，跑在你的项目旁边，支持 Linux、macOS 和 Windows。默认走 stdio，不开端口，也不需要账号。
     - term: Godot
       text: 分析只读项目文件，不需要引擎。运行、测试和导出使用你指定的 Godot 4.4.0 或更新版本。
+    - term: 构成
+      text: Rust 服务器，而不是编辑器插件。不打开编辑器也能工作；GDScript 只在需要引擎的地方于 Godot 内部运行：可选的编辑器插件，以及它启动每个游戏时交给游戏的探针。
 
   visual:
     label: 与 godot-mcp 的一段 MCP 交互，对象是一个小型 Godot 项目。对 main.tscn 调用 scene.tree.get，答复列出它的五个节点及其类型和脚本，以及 Mob 的 body_entered 信号到根节点的确切连接。对 player/player.gd 里的 take_damage 调用 gdscript.references.get，答复列出一处推断出的调用，位于 main.gd 第 6 行。

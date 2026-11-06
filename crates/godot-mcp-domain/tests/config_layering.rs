@@ -7,6 +7,7 @@
 //! invariant so a regression names itself.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 #[cfg(windows)]
 use std::io::Write;
@@ -1149,4 +1150,111 @@ fn the_android_sdk_and_jdk_must_be_absolute_and_known() {
         matches!(error, ConfigError::UnknownEnvVar { .. }),
         "{error}"
     );
+}
+
+/// A `trusted_local` file whose `[http]` table also holds `http_keys`.
+fn trusted_local_with(http_keys: &str) -> String {
+    format!(
+        r#"
+transport = "http"
+
+[http]
+bind = "127.0.0.1:9000"
+mode = "trusted_local"
+host = "127.0.0.1:9000"
+origin = "http://127.0.0.1:9000"
+{http_keys}
+
+[http.local_secret.env]
+var = "GODOT_MCP_LAUNCH_SECRET"
+"#
+    )
+}
+
+#[test]
+fn an_http_session_idles_for_an_hour_unless_configured() {
+    let http = load_config(
+        Some(TRUSTED_LOCAL_FILE),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("the file validates")
+    .http
+    .expect("an [http] section");
+    assert_eq!(http.session_idle_timeout_ms, None);
+    assert_eq!(http.session_idle_timeout(), Duration::from_secs(3600));
+
+    let http = load_config(
+        Some(&trusted_local_with("session_idle_timeout_ms = 120000")),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("the file validates")
+    .http
+    .expect("an [http] section");
+    assert_eq!(http.session_idle_timeout_ms, Some(120_000));
+    assert_eq!(http.session_idle_timeout(), Duration::from_secs(120));
+}
+
+#[test]
+fn an_http_session_lifetime_is_derived_unless_configured() {
+    let http = load_config(
+        Some(TRUSTED_LOCAL_FILE),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("the file validates")
+    .http
+    .expect("an [http] section");
+    assert_eq!(
+        http.session_lifetime_ms, None,
+        "without the key the server derives the lifetime from [limits]"
+    );
+
+    let http = load_config(
+        Some(&trusted_local_with("session_lifetime_ms = 3600000")),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("the file validates")
+    .http
+    .expect("an [http] section");
+    assert_eq!(http.session_lifetime_ms, Some(3_600_000));
+}
+
+#[test]
+fn a_zero_session_timing_is_rejected_by_name() {
+    for (key, field) in [
+        ("session_idle_timeout_ms", "http.session_idle_timeout_ms"),
+        ("session_lifetime_ms", "http.session_lifetime_ms"),
+    ] {
+        let err = load_config(
+            Some(&trusted_local_with(&format!("{key} = 0"))),
+            &no_env(),
+            &CliOverrides::default(),
+        )
+        .expect_err("a zero session timing is refused");
+        assert!(
+            matches!(err, ConfigError::ZeroLimit { field: named } if named == field),
+            "{key}: got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn session_timing_survives_an_http_environment_override() {
+    let e = env(&[("GODOT_MCP_HTTP_HOST", "localhost:9000")]);
+    let http = load_config(
+        Some(&trusted_local_with(
+            "session_idle_timeout_ms = 120000\nsession_lifetime_ms = 7200000",
+        )),
+        &e,
+        &CliOverrides::default(),
+    )
+    .expect("the layered configuration validates")
+    .http
+    .expect("an [http] section");
+    assert_eq!(http.host.as_deref(), Some("localhost:9000"));
+    assert_eq!(http.session_idle_timeout_ms, Some(120_000));
+    assert_eq!(http.session_lifetime_ms, Some(7_200_000));
 }

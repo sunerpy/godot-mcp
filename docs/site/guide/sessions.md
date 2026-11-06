@@ -1,3 +1,7 @@
+---
+description: "Games and editors the server starts and keeps: run the game, send it input, read and capture it, test it and debug it."
+---
+
 # Games and editors
 
 Under the `runtime` and `full` profiles the server starts long-lived Godot processes and keeps
@@ -93,7 +97,10 @@ Stopping the session ends it.
 records up to 10 seconds at up to 30 frames per second as an animated PNG. Each frame is checked
 against the digest the probe reported, and the answer names the capture as an artifact — an
 opaque URI with its media type, size and SHA-256 — that the client reads with `resources/read`.
-In a headless session a capture answers `unavailable`: the session renders nothing.
+The artifact stays readable for 15 minutes by default, from any session the same client opens: a
+client that reconnects between the capture and the read still reads it (see
+[HTTP sessions](../operate/http.md#sessions)). In a headless session a capture answers
+`unavailable`: the session renders nothing.
 
 ## Test the game
 

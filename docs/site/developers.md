@@ -1,3 +1,7 @@
+---
+description: "Working on godot-mcp itself: the layout of the repository, the checks a change has to pass, and how releases and this site are made."
+---
+
 # Contributing
 
 This page is for working on godot-mcp itself: the layout of the repository, the checks a change

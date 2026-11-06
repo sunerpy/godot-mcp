@@ -676,8 +676,9 @@ fn an_export_a_killed_server_left_running_keeps_its_output_private() {
 }
 
 /// An export's artifact reads the same over stdio and authenticated HTTP:
-/// the same bytes for the ranges its contract admits, a refusal for the one it
-/// does not, and nothing at all for another session or another principal.
+/// the same bytes for the ranges its contract admits and a refusal for the one
+/// it does not. Another session of the same launch is the same principal and
+/// reads it too; another principal reads nothing.
 #[test]
 fn an_export_artifact_reads_the_same_over_stdio_and_authenticated_http() {
     let tree = project("m6-parity", None);
@@ -766,27 +767,169 @@ fn an_export_artifact_reads_the_same_over_stdio_and_authenticated_http() {
         );
         assert_eq!(http_artifacts(&owner).await, vec![uri.clone()]);
 
-        // Another session of the same subject, and the artifact the stdio
-        // principal produced, are refused and never listed.
+        // Another session of the same launch is the same principal, as a client
+        // that reconnected is: it reads the same bytes and sees the artifact
+        // listed. The artifact the stdio principal produced stays unreadable.
         let sibling = http.client().await;
-        assert!(
-            http_read(&sibling, &uri, None).await.is_err(),
-            "another session never reads it"
+        assert_eq!(
+            http_read(&sibling, &uri, None).await,
+            over_stdio[0],
+            "another session of the same principal reads it"
+        );
+        assert_eq!(
+            http_artifacts(&sibling).await,
+            vec![uri.clone()],
+            "and sees it listed"
         );
         assert!(
-            http_artifacts(&sibling).await.is_empty(),
-            "nor sees it listed"
+            http_read(&sibling, &stdio_uri, None).await.is_err(),
+            "another principal's artifact is not readable over HTTP"
         );
         assert!(
             http_read(&owner, &stdio_uri, None).await.is_err(),
             "another principal's artifact is not readable over HTTP"
         );
-        // The owner still reads it after a refusal elsewhere.
+        // The owner still reads it.
         assert_eq!(http_read(&owner, &uri, Some((3, 10))).await, over_stdio[1]);
         let _ = owner.cancel().await;
         let _ = sibling.cancel().await;
     });
     http.finish();
+}
+
+/// Export the Linux preset over HTTP and answer its artifact's URI.
+async fn http_export(client: &RunningService<RoleClient, ()>, idempotency: &str) -> String {
+    let started = http_call(
+        client,
+        "project.export",
+        json!({ "preset": "Linux", "idempotencyId": idempotency }),
+    )
+    .await;
+    let export = started["export"]["session"]
+        .as_str()
+        .expect("export id")
+        .to_owned();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let status = loop {
+        let status = http_call(client, "project.export.status", json!({ "export": export })).await;
+        if status["state"] != json!("running") && status["state"] != json!("starting") {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the export never ended: {status}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(status["export"]["outcome"], json!("succeeded"), "{status}");
+    status["export"]["outputs"][0]["artifact"]
+        .as_str()
+        .expect("artifact uri")
+        .to_owned()
+}
+
+/// A screenshot captured over authenticated HTTP belongs to its principal:
+/// another session of the same launch, which is what a client that reconnected
+/// between capturing and reading holds, reads the same bytes and sees it listed.
+#[test]
+fn a_screenshot_captured_over_http_reads_from_another_session_of_the_same_launch() {
+    let tree = project("m6-http-shot", None);
+    let data = data_home(false);
+    let http = HttpServer::start(&tree, &data);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let owner = http.client().await;
+        let started = http_call(
+            &owner,
+            "project.run.start",
+            json!({ "idempotencyId": "http-shot-start", "display": "headless" }),
+        )
+        .await;
+        let session = started["session"]["session"]
+            .as_str()
+            .expect("session id")
+            .to_owned();
+        let shot = http_call(
+            &owner,
+            "runtime.screenshot.capture",
+            json!({ "session": session, "idempotencyId": "http-shot" }),
+        )
+        .await;
+        let uri = shot["artifact"]["uri"]
+            .as_str()
+            .expect("artifact uri")
+            .to_owned();
+        let captured = http_read(&owner, &uri, None)
+            .await
+            .expect("the capturing session reads it");
+        assert!(!captured.is_empty(), "the capture has bytes");
+
+        let sibling = http.client().await;
+        assert_eq!(
+            http_read(&sibling, &uri, None).await,
+            Ok(captured),
+            "another session of the same principal reads the capture"
+        );
+        assert!(
+            http_artifacts(&sibling).await.contains(&uri),
+            "and sees it listed"
+        );
+
+        let stopped = http_call(
+            &owner,
+            "project.run.stop",
+            json!({ "session": session, "idempotencyId": "http-shot-stop" }),
+        )
+        .await;
+        assert_eq!(stopped["mutation_status"], json!("committed"), "{stopped}");
+        let _ = owner.cancel().await;
+        let _ = sibling.cancel().await;
+    });
+    http.finish();
+}
+
+/// A restarted `trusted_local` server publishes a new launch secret, so its
+/// clients are a new principal: what the previous launch produced is neither
+/// readable nor listed, even within its retention.
+#[test]
+fn an_artifact_of_a_previous_trusted_local_launch_stays_unreadable() {
+    let tree = project("m6-relaunch", None);
+    let data = data_home(true);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let first = HttpServer::start(&tree, &data);
+    let uri = runtime.block_on(async {
+        let owner = first.client().await;
+        let uri = http_export(&owner, "relaunch-export").await;
+        assert!(
+            http_read(&owner, &uri, None).await.is_ok(),
+            "the launch that produced it reads it"
+        );
+        let _ = owner.cancel().await;
+        uri
+    });
+    first.finish();
+
+    let second = HttpServer::start(&tree, &data);
+    runtime.block_on(async {
+        let client = second.client().await;
+        assert!(
+            http_read(&client, &uri, None).await.is_err(),
+            "a later launch is another principal and never reads it"
+        );
+        assert!(
+            !http_artifacts(&client).await.contains(&uri),
+            "nor sees it listed"
+        );
+        let _ = client.cancel().await;
+    });
+    second.finish();
 }
 
 /// A restart after an artifact's retention removes it, while an export a

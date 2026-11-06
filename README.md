@@ -27,6 +27,15 @@ directly, and the process works in your project the way a careful collaborator
 would: it reads before it writes, it proves what it did, and it says so when it
 cannot.
 
+- **A Rust server, not an editor plugin.** One static Rust binary, with no
+  language runtime to install, serves MCP, analyses the project, journals every
+  change and contains every Godot process it starts. GDScript runs inside Godot
+  only where the engine is needed: a headless helper pinned by its SHA-256, with
+  which Godot itself writes every scene and resource the server changes; a probe
+  passed on the command line to each game it starts, so no autoload is installed
+  and no project setting changes; and the optional `godot_mcp` editor add-on.
+  With no editor open it still reads, edits, runs, tests and exports the project,
+  and analysis and file edits need no Godot at all.
 - **Analysis without the engine.** Project discovery and validation, GDScript
   symbols, references and impact, text scene and resource trees, the dependency
   graph, and project-wide views — unused files, reference cycles, signal flow,

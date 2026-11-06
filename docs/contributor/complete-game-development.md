@@ -582,7 +582,7 @@ private state directory; public results contain only opaque artifact URIs and me
 Required properties:
 
 - atomic registration after producer close and SHA-256 verification;
-- project, principal and session binding;
+- project and principal binding;
 - media type, length, dimensions/duration where applicable;
 - expiry and total-byte accounting;
 - bounded range reads over both transports;
@@ -759,7 +759,7 @@ all other mutation work.
 
 - Implement ArtifactStore and migrate existing artifact tests to its production API.
 - Add preset inspection, export start/status/cancel and output smoke checks.
-- Bind output to project/principal/session and retention.
+- Bind output to project/principal and retention.
 
 **Acceptance**
 

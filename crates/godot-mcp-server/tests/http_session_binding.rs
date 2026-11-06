@@ -437,7 +437,11 @@ fn call_tool_body(id: u64, name: &str, arguments: Value) -> Value {
 }
 
 fn read_artifact_body(id: u64, range: Option<(u64, u64)>) -> Value {
-    let mut params = json!({ "uri": fixture_artifact_uri() });
+    read_body(id, &fixture_artifact_uri(), range)
+}
+
+fn read_body(id: u64, uri: &str, range: Option<(u64, u64)>) -> Value {
+    let mut params = json!({ "uri": uri });
     if let Some((start, end_inclusive)) = range {
         params.as_object_mut().expect("object").insert(
             "_meta".to_owned(),
@@ -1143,6 +1147,7 @@ async fn http_session_binding_failure_paths() -> anyhow::Result<()> {
 
     // --- An invalid range is refused before the kernel sees it. ---
     let dispatches_before_range = proxied.kernel_dispatches();
+    let mut range_refusals = Vec::new();
     for range in [
         (0_u64, ARTIFACT_BYTES.len() as u64),
         (0, ARTIFACT_BYTES.len() as u64 - 1),
@@ -1165,6 +1170,30 @@ async fn http_session_binding_failure_paths() -> anyhow::Result<()> {
                 .and_then(Value::as_str),
             Some(BINDING_REFUSAL_MESSAGE),
             "an out-of-contract range refusal is the non-enumerating one"
+        );
+        assert_eq!(
+            envelope
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_i64),
+            Some(-32002),
+            "a refused read answers what an absent resource answers, resource not found"
+        );
+        range_refusals.push(envelope["error"].clone());
+    }
+    // An artifact that never existed is refused with the same error object, so a
+    // refusal does not tell a caller that the identifier is real.
+    let never_existed = format!("godot-mcp://artifacts/artifact_{}", "6".repeat(64));
+    let refused = Rpc::post(read_body(10, &never_existed, None))
+        .credential(owner.clone())
+        .session(&session)
+        .send(&proxied)
+        .await;
+    let envelope = rpc_envelope(&refused.text().await?)?;
+    for refusal in &range_refusals {
+        assert_eq!(
+            &envelope["error"], refusal,
+            "a never-existing artifact and an out-of-contract range are refused alike"
         );
     }
     assert_eq!(

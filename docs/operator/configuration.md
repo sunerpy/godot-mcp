@@ -220,6 +220,8 @@ subject = "operator@example.invalid"
 | `http.allowed_algorithms` | `proxied_oidc` only: a nonempty subset of `RS256`, `PS256`, and `ES256`. Omission defaults to `RS256` only. |
 | `http.required_scopes` | `proxied_oidc` only: nonempty RFC 6749 scope tokens required on every bearer token. Omission defaults to `godot.read`. |
 | `http.required_capabilities` | `proxied_oidc` only: nonempty capabilities required by the served profile. Omission defaults to `read`. |
+| `http.session_idle_timeout_ms` | Either mode: how long an MCP session may receive nothing before the server closes it. Omission defaults to 3,600,000 (one hour). |
+| `http.session_lifetime_ms` | Either mode: how long an MCP session is honoured after it opened, however busy it is. Omission derives it from `[limits]` as `deadline_ms` × `max_queue`, 32 minutes with the default limits. |
 
 The schema also retains the socket-path proxy-hop form for the frozen transport
 contract. The shipped backend currently accepts requests over TCP, so it cannot
@@ -230,6 +232,54 @@ form with mode `0600` for the shipped TCP listener.
 The mode-specific keys are mutually exclusive. Supplying a `trusted_local` secret
 under `proxied_oidc`, or a principal under `trusted_local`, is rejected rather than
 ignored — a key that looks configured but has no effect is a security trap.
+
+#### Session timing
+
+Two clocks end an MCP session, whichever runs out first: the idle timeout, which
+restarts whenever the session receives or sends a message, and the lifetime, which
+runs from the moment the session opened. Either way the client receives HTTP 404 for the
+session and opens a new one, as the MCP specification requires; the artifacts it
+captured stay readable from the new session (see [Artifacts](artifacts.md)). The
+idle timeout defaults to one hour, not to the five minutes the MCP SDK would use on
+its own. With both defaults the lifetime ends a session first, after 32 minutes, so
+set both keys for sessions that last an hour or more:
+
+<!-- docs-check:config expect="accept" -->
+```toml
+transport = "http"
+
+[http]
+bind = "127.0.0.1:8765"
+mode = "trusted_local"
+host = "127.0.0.1:8765"
+origin = "http://127.0.0.1:8765"
+session_idle_timeout_ms = 3600000
+session_lifetime_ms = 3600000
+
+[http.local_secret.env]
+var = "GODOT_MCP_LAUNCH_SECRET"
+```
+
+A longer lifetime does not let a session outlive its credential: every request
+re-proves its launch secret or token before the session is consulted. Both keys are
+read from the file only; no environment variable or command-line flag sets them.
+Zero is rejected, because a session that ended the moment it opened would make the
+listener unusable while looking like an authentication failure:
+
+<!-- docs-check:config expect="reject" -->
+```toml
+transport = "http"
+
+[http]
+bind = "127.0.0.1:8765"
+mode = "trusted_local"
+host = "127.0.0.1:8765"
+origin = "http://127.0.0.1:8765"
+session_idle_timeout_ms = 0
+
+[http.local_secret.env]
+var = "GODOT_MCP_LAUNCH_SECRET"
+```
 
 #### `http.local_secret`
 
@@ -245,8 +295,9 @@ whole truth:
   from the unknown-variable rejection described under
   [Environment variables](#environment-variables);
 * the `serve` path never resolves it. `HttpTransportOptions::from_config` reads
-  `http.bind`, `http.mode`, `http.host`, `http.origin` and the `proxied_oidc` keys and
-  nothing else, so neither the named variable nor the named file is ever read;
+  `http.bind`, `http.mode`, `http.host`, `http.origin`, the two session timing keys and
+  the `proxied_oidc` keys and nothing else, so neither the named variable nor the
+  named file is ever read;
 * the bearer secret a `trusted_local` request must present is **published by the
   server**, not supplied by you: each launch draws 256 bits from the OS CSPRNG and
   writes them to `<project>/.godot-mcp/http-launch-secret` with owner-only

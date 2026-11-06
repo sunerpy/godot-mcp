@@ -1,3 +1,7 @@
+---
+description: 在 MCP 客户端里注册 godot-mcp，发出第一批调用，再给服务器指定一个 Godot。
+---
+
 # 快速开始
 
 本页在 MCP 客户端里注册 godot-mcp、发出第一批调用，然后给服务器指定一个 Godot。这里假设 `godot-mcp` 已经[安装](install.md)并且在 PATH 上。

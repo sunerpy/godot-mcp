@@ -26,8 +26,9 @@ process's environment (`XDG_DATA_HOME`, else `~/.local/share`, on Linux; `HOME` 
 5. The same server on authenticated `trusted_local` HTTP (the binary must be built with
    the `http` feature): with templates, an export over HTTP reads back in ranges to its
    reported SHA-256 and refuses a range past its end, exactly as over stdio; a second
-   HTTP session neither reads nor lists it; the artifact the stdio principal produced is
-   not readable over HTTP. Without templates, the export is refused the same way.
+   HTTP session of the same launch is the same principal and reads and lists it too;
+   the artifact the stdio principal produced is not readable over HTTP. Without
+   templates, the export is refused the same way.
 """
 
 from __future__ import annotations
@@ -283,7 +284,7 @@ async def refusals(client, report: dict) -> None:
 
 
 async def http_phase(server: Server, stdio_artifact: str | None, label: str, report: dict) -> None:
-    """The same server on authenticated HTTP: the same answers, bound to the session."""
+    """The same server on authenticated HTTP: the same answers, bound to the principal."""
     async with connect_http(server) as http:
         async with http.session() as owner:
             if stdio_artifact is None:
@@ -306,13 +307,14 @@ async def http_phase(server: Server, stdio_artifact: str | None, label: str, rep
             assert stdio_artifact not in listed, "another principal's artifact is listed"
             foreign = await read_refused(owner, stdio_artifact, 0, 15)
             async with http.session() as sibling:
-                sibling_read = await read_refused(sibling, output["artifact"], 0, 15)
-                assert output["artifact"] not in await listed_artifacts(sibling), "a sibling lists it"
+                sibling_read = await read_range(sibling, output["artifact"], 0, 15)
+                assert sibling_read == data[:16], "a sibling of the same principal reads other bytes"
+                assert output["artifact"] in await listed_artifacts(sibling), "a sibling does not list it"
             again = await read_range(owner, output["artifact"], 0, 15)
-            assert again == data[:16], "the owner lost its artifact after a refusal elsewhere"
+            assert again == data[:16], "the owner lost its artifact after a sibling read it"
             report["http"] = {
                 "bytes": output["bytes"], "sha256": output["sha256"], "artifact_verified": True,
-                "past_end_refused": bool(past_end), "sibling_session_refused": bool(sibling_read),
+                "past_end_refused": bool(past_end), "sibling_session_reads": True,
                 "stdio_principal_artifact_refused": bool(foreign),
             }
 

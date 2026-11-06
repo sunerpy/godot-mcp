@@ -20,6 +20,11 @@ socket.
   near-miss authority is refused rather than normalized into a match, which is what
   stops a browser page on the same machine from driving the server.
 * The MCP path is `http-protocol:/mcp`.
+* A session that receives nothing for `http.session_idle_timeout_ms` (one hour by
+  default) is closed, and every session ends at `http.session_lifetime_ms` after it
+  opened (32 minutes with the default limits); the client then opens a new one. Its
+  artifacts belong to the launch's principal, not to the session, so the new session
+  still reads them. See [Session timing](configuration.md#session-timing).
 
 ## What it is not
 
