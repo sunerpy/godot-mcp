@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/sunerpy/godot-mcp/compare/v0.3.0...v0.4.0) (2026-11-06)
+
+
+### Features
+
+* **http:** close an idle HTTP session after http.session_idle_timeout_ms, one hour by default ([12b3b0e](https://github.com/sunerpy/godot-mcp/commit/12b3b0e01a5a2521fd65b42c30b7f183e98e959c))
+* **http:** set how long an HTTP session is honoured with http.session_lifetime_ms ([12b3b0e](https://github.com/sunerpy/godot-mcp/commit/12b3b0e01a5a2521fd65b42c30b7f183e98e959c))
+
+
+### Bug Fixes
+
+* **http:** answer -32002 when resources/read refuses an artifact ([12b3b0e](https://github.com/sunerpy/godot-mcp/commit/12b3b0e01a5a2521fd65b42c30b7f183e98e959c))
+* **http:** bind artifacts to the principal, so every session with the same credential reads them ([12b3b0e](https://github.com/sunerpy/godot-mcp/commit/12b3b0e01a5a2521fd65b42c30b7f183e98e959c))
+
 ## [0.3.0](https://github.com/sunerpy/godot-mcp/compare/v0.2.0...v0.3.0) (2026-11-05)
 
 
