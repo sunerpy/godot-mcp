@@ -1,5 +1,6 @@
 ---
 layout: home
+markdownStyles: false
 title: "godot-mcp: an MCP server for Godot projects"
 titleTemplate: false
 description: godot-mcp is one static Rust binary that gives an MCP client a Godot project — analysis without the engine, journaled edits, and the games and editors it runs, drives, captures and debugs.
@@ -22,126 +23,238 @@ hero:
 home:
   facts:
     - term: Runs as
-      text: One process your MCP client starts, beside your project, on Linux, macOS or Windows. It speaks stdio by default, with no port and no account.
+      text: One local process, stdio by default
     - term: Godot
-      text: Analysis reads the project's files and needs no engine. Running, testing and exporting use the Godot 4.4.0 or later build you point it at.
+      text: 4.4.0 or later, the build you point it at
     - term: Built as
-      text: A Rust server, not an editor plugin. It works with no editor open; GDScript runs inside Godot only where the engine is needed, as the optional editor add-on and the probe it gives each game it starts.
+      text: A Rust server with an optional editor plugin
 
-  visual:
-    label: An MCP exchange with godot-mcp on a small Godot project. scene.tree.get on main.tscn answers its five nodes with their types and scripts, and the exact connection of Mob's body_entered signal to the root. gdscript.references.get for take_damage in player/player.gd answers one inferred call, at main.gd line 6.
-    transcript:
-      - kind: call
-        text: scene.tree.get
-      - kind: argument
-        text: "scene: main.tscn"
-      - kind: answer
-        text: ".            Node         main.gd"
-      - kind: answer
-        text: "Player       Area2D       player/player.gd"
-      - kind: answer
-        text: "HUD          CanvasLayer  ui/hud.gd"
-      - kind: answer
-        text: "HUD/Message  Label"
-      - kind: answer
-        text: "Mob          RigidBody2D"
-      - kind: answer
-        text: "Mob.body_entered → ._on_mob_body_entered  exact"
-      - kind: call
-        text: gdscript.references.get
-      - kind: argument
-        text: "script: player/player.gd"
-      - kind: argument
-        text: "symbol: take_damage"
-      - kind: answer
-        text: "main.gd:6  player.take_damage()  calls  inferred"
+  stages:
+    steps:
+      - What an agent sent the running game
+      - The screenshot godot-mcp answered
+    exchange:
+      label: An agent plays the demo game through godot-mcp. input.sequence.send presses ui_right for 2000 ms and answers that both of its steps ran. runtime.wait waits until score is 2 and answers satisfied. runtime.screenshot.capture answers a 960 by 540 artifact of 529325 bytes.
+      transcript:
+        - kind: call
+          text: input.sequence.send
+        - kind: argument
+          text: "action ui_right  press  holdMs 2000"
+        - kind: argument
+          text: "wait  ms 2000"
+        - kind: answer
+          text: "steps_run  2"
+        - kind: call
+          text: runtime.wait
+        - kind: argument
+          text: "property score  ==  2"
+        - kind: answer
+          text: "satisfied  true"
+        - kind: call
+          text: runtime.screenshot.capture
+        - kind: answer
+          text: "artifact  960 × 540  529325 bytes"
+    screen:
+      src: /screens/game.webp
+      width: 960
+      height: 540
+      alt: The demo game. A round teal robot stands on a grassy ledge against a wooden crate, one coin floats above the crate and one at the far left, and the counter in the top-right corner shows 2.
+    caption: The demo project in examples/site-demo, running in Godot 4.7.1. The picture is the PNG of this answer, converted to WebP for the page.
 
-  index:
-    title: What godot-mcp does
-    intro: Everything here is a tool your agent calls. The ones marked No engine answer from the project's files on a machine without Godot; the others need a Godot executable, and some of them a game or an editor that godot-mcp starts itself.
-    groups:
-      - name: Read the project
-        items:
-          - title: Project and settings
-            body: The project root, its name and main scene, every setting and every file, found from any directory inside the project.
-            status: no-engine
-            link: /guide/analysis#the-project
-          - title: GDScript
-            body: Symbols, references, callers and impact across scripts, each edge with how sure it is.
-            status: no-engine
-            link: /guide/analysis#gdscript
-          - title: Scenes and resources
-            body: The node tree, scripts, instances, groups and signal connections of text .tscn and .tres files.
-            status: no-engine
-            link: /guide/analysis#scenes-and-resources
-          - title: Dependencies
-            body: What a scene or resource loads and what loads it, with the references that point at nothing.
-            status: no-engine
-            link: /guide/analysis#dependencies
-      - name: Change it
-        items:
-          - title: Files and scripts
-            body: Create, patch, move and delete, each against the SHA-256 of what it changes, so a stale edit is refused instead of applied.
-            status: no-engine
-            link: /guide/editing#files-and-scripts
-          - title: Scenes and resources
-            body: Node, property and connection changes as one batch, journaled as one transaction, through Godot or the open editor.
-            status: engine
-            link: /guide/editing#scenes-and-resources
-          - title: Settings and assets
-            body: The main scene, autoloads, input actions, plugins and settings changed through typed operations, and binary assets uploaded in chunks.
-            status: no-engine
-            link: /guide/editing#settings-and-assets
-          - title: The editor
-            body: The godot_mcp add-on connects a running editor. Edit, save, paint tiles, key animations, capture, read its log and run the game; every change to an open scene is one undoable editor action.
-            status: engine
-            link: /guide/editor
-      - name: Run it
-        items:
-          - title: Check, import and test
-            body: GDScript checked by Godot itself, the import pipeline, and the project's tests with exact counts.
-            status: engine
-            link: /guide/engine
-          - title: Export
-            body: A preset exported with the exact templates of your Godot build, as a managed export you can follow and cancel.
-            status: engine
-            link: /guide/engine#export
-          - title: Run the game
-            body: The main scene or any scene, in a window or headless, with its logs and status, until you stop it.
-            status: engine
-            link: /guide/sessions#run-the-game
-      - name: Drive and debug
-        items:
-          - title: Input
-            body: Keys, mouse, actions and timed sequences, each released when its hold ends or the session stops.
-            status: engine
-            link: /guide/sessions#send-input
-          - title: Live reads
-            body: The running scene tree, properties, signals and UI, read without changing the game.
-            status: engine
-            link: /guide/sessions#read-the-running-game
-          - title: Captures
-            body: Screenshots and short recordings, returned as artifacts with their SHA-256.
-            status: engine
-            link: /guide/sessions#capture
-          - title: Debugger
-            body: Breakpoints, the stack, scopes and variables through the editor's debug adapter, and its language server's diagnostics.
-            status: engine
-            link: /guide/sessions#debug
+  built:
+    title: A Rust server, not only an editor plugin
+    intro: Your client talks to one Rust binary. GDScript runs inside Godot only where a task needs the engine, so analysis and file edits work with no editor open and no Godot installed.
+    client:
+      name: Your MCP client
+      detail: Starts godot-mcp as a process and talks to it over stdio, or over loopback HTTP when you turn that on.
+    server:
+      name: godot-mcp
+      detail: One static Rust binary beside the project, with no language runtime to install.
+      parts:
+        - Speaks MCP
+        - Reads GDScript, scenes and resources without the engine
+        - Journals every change before it runs
+        - Starts and contains every Godot process it uses
+    targets:
+      - name: The project's files
+        detail: GDScript, scenes, resources and settings, read and changed on a machine with no Godot installed.
+        status: no-engine
+        link: /guide/analysis
+      - name: The headless helper
+        detail: A GDScript file pinned by its SHA-256, with which Godot writes every scene and resource the server changes.
+        status: engine
+        link: /guide/editing#scenes-and-resources
+      - name: The runtime probe
+        detail: GDScript passed on the command line to each game the server starts. No autoload is installed and no setting changes.
+        status: engine
+        link: /guide/sessions#run-the-game
+      - name: The godot_mcp add-on
+        detail: An optional editor plugin for the editor you have open. Each change it makes is one undoable editor action.
+        status: engine
+        link: /guide/editor
+    note: A tool that is only an editor plugin works only while the editor runs, and only with what the editor holds. godot-mcp works beside the project, and its add-on brings in your editor when you want it.
 
-  steps:
-    title: From install to the first answer
+  capabilities:
+    title: What your agent can do with it
+    intro: Each of these is a set of tools the agent calls. The ones marked No engine answer from the project's files on a machine without Godot; the others run the Godot build you configure.
     items:
-      - title: Install
-        body: Run the installer for your platform from the Install section below, or download an archive from GitHub Releases; the installer checks it against the release's SHA256SUMS.txt.
-      - title: Register it with your client
-        command: claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game
-        body: Any MCP client that starts a process takes the same command. It starts in the read-only core profile.
-      - title: Ask about the project
-        body: Ask your agent about a scene or a script. It calls capabilities.get and health.get to see what it may do here, then the analysis tools.
-      - title: Grant more when you need it
-        command: --profile full
-        body: editor adds writes, runtime adds running and watching the game. Point godot_binary at your Godot build for the engine-backed tools.
+      - icon: scan-search
+        title: Read the project
+        wide: true
+        status: no-engine
+        body: Scene trees, GDScript symbols, references, callers and impact, and the dependency graph, read from the files. Every relation says how sure it is.
+        evidence:
+          kind: code
+          text: |-
+            Player       CharacterBody2D  player.gd
+            Coins/CoinA.collected → ._on_coin_collected  exact
+        link: /guide/analysis
+      - icon: file-pen-line
+        title: Change it safely
+        status: no-engine
+        body: Every write names the SHA-256 of what it replaces and is journaled before it runs. A stale edit is refused, and a crash part-way is settled before the next request.
+        evidence:
+          kind: code
+          text: "file.patch player.gd  →  conflict"
+        link: /guide/editing
+      - icon: cpu
+        title: Check, import and test
+        status: engine
+        body: Scripts checked by Godot itself, the import pipeline, and the project's own GUT or gdUnit4 suite with exact counts, in the build you configure.
+        evidence:
+          kind: code
+          text: "script.check player.gd  →  passed"
+        link: /guide/engine
+      - icon: package
+        title: Export
+        status: engine
+        body: A preset exported with exactly the templates of your Godot build, as a managed export you can follow and cancel. The output goes to the server's storage, never into the project.
+        evidence:
+          kind: chips
+          items: [export.presets.list, project.export, project.export.status, project.export.cancel]
+        link: /guide/engine#export
+      - icon: gamepad-2
+        title: Run the game
+        status: engine
+        body: The main scene or any scene, in a window or headless, with a probe the server passes on the command line, so nothing in the project changes.
+        evidence:
+          kind: code
+          text: "project.run.start  →  running, probe connected"
+        link: /guide/sessions#run-the-game
+      - icon: mouse-pointer-click
+        title: Play it and check it
+        status: engine
+        body: Keys, mouse and actions that are always released afterwards, then waits and assertions in one scenario that reports every step.
+        evidence:
+          kind: code
+          text: "test.scenario.run  →  passed, 5 of 5 steps"
+        link: /guide/sessions#test-the-game
+      - icon: app-window
+        title: Work in your editor
+        status: engine
+        body: With the `godot_mcp` add-on, edit and save the scenes your editor holds, paint tiles, key animations, capture the window and read the log. Each edit is one undoable action.
+        evidence:
+          kind: chips
+          items: [editor.scene.edit, editor.undo, editor.scene.save, editor.screenshot.capture]
+        link: /guide/editor
+      - icon: bug
+        title: Debug
+        status: engine
+        body: A headless editor session hosts Godot's language server and debug adapter, for breakpoints, the stack, scopes and variables, and a script's diagnostics.
+        evidence:
+          kind: chips
+          items: [editor.session.start, debug.command, debug.session.get]
+        link: /guide/sessions#debug
+
+  showcases:
+    - title: Edits you can undo, in your editor
+      intro: The `godot_mcp` add-on connects the Godot editor you have open. An agent's change to an open scene goes into the editor's own undo history, and the add-on's panel lists the requests the editor answered.
+      screen:
+        src: /screens/editor-en-light.webp
+        dark: /screens/editor-en-dark.webp
+        width: 1600
+        height: 1000
+        alt: The Godot 4.7.1 editor with the demo project's main scene open in the 2D view. The Player node is selected, and the Inspector shows its script's Speed and Jump Speed. The godot_mcp dock reads godot-mcp connected, and the Godot MCP panel at the bottom lists 13 requests, newest first, from editor.scene.save down to editor.scene.open.
+      caption: Godot 4.7.1 with the godot_mcp add-on, on the demo project.
+      points:
+        - title: One undoable action
+          body: "`editor.scene.edit` applies a batch of changes as one entry in the scene's undo history, and `editor.undo` takes it back."
+        - title: Nothing saved until you ask
+          body: An edit stays in the editor until `editor.scene.save`, and a headless write to a file the editor holds is refused with `conflict`.
+        - title: Requests on the panel
+          body: The panel lists the newest 500 requests the editor answered, each with its method, what it was about and its result, but never its arguments.
+        - title: A switch for you
+          body: While **Pause agent edits** is on, the editor refuses every change the server asks it to make; reads still work.
+      guide:
+        text: The editor add-on
+        link: /guide/editor
+    - title: A game it plays and checks
+      intro: The server starts the game with a probe of its own, sends it input and reads its state back. `test.scenario.run` runs input, waits and assertions in one call and answers a report.
+      screen:
+        src: /screens/game-scenario.webp
+        width: 960
+        height: 540
+        alt: The demo game after the scenario. The robot is back at the left edge, the coin that was there is gone, one coin still floats above the crate, and the counter shows 3.
+      caption: The screenshot the scenario's last step took, converted to WebP for the page.
+      points:
+        - title: Input that is always released
+          body: Every key, button and action is released when its hold ends, when the sequence ends or when the session stops.
+        - title: Waits on the game's own state
+          body: A wait holds until a node exists or is gone, a property compares, a signal fires or a control shows a text.
+        - title: A report, not a log
+          body: Each step passes, fails with what was expected and what was found, or says why it could not run.
+      exchange:
+        label: The report test.scenario.run answered for five steps. An assert_property step, an input step that walks left, a wait until score is 3, an assert_ui_text step on HUD/Count and a screenshot all passed, and the verdict is passed with 5 of 5 steps passed.
+        transcript:
+          - kind: call
+            text: test.scenario.run
+          - kind: argument
+            text: "steps: assert_property, input, wait,"
+          - kind: argument
+            text: "       assert_ui_text, screenshot"
+          - kind: answer
+            text: "two-coins   assert_property  passed"
+          - kind: answer
+            text: "walk-back   input            passed"
+          - kind: answer
+            text: "third-coin  wait             passed"
+          - kind: answer
+            text: "hud         assert_ui_text   passed"
+          - kind: answer
+            text: "after       screenshot       passed"
+          - kind: answer
+            text: "verdict  passed   passed 5  total 5"
+      guide:
+        text: Test the game
+        link: /guide/sessions#test-the-game
+
+  clients:
+    title: One command in any MCP client
+    intro: godot-mcp is a stdio MCP server. Every client that starts a process runs the same command, and most register it in one line.
+    items:
+      - name: Claude Code
+        command: claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+        link: /guide/clients#claude-code
+      - name: Codex
+        mark: codex
+        command: codex mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+        link: /guide/clients#codex
+      - name: OpenCode
+        mark: opencode
+        note: An `mcp` entry in `opencode.json`, in the project or in its global configuration.
+        link: /guide/clients#opencode
+      - name: Pi Agent
+        mark: pi
+        command: pi mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+        link: /guide/clients#pi-agent
+      - name: Cursor
+        mark: cursor
+        note: The same command as an entry of the `mcpServers` JSON block.
+        link: /guide/clients#clients-configured-with-json
+    more: Claude Desktop and any other client that starts a process over stdio run the same command, most of them from a JSON block.
+    guide:
+      text: MCP clients
+      link: /guide/clients
 
   profiles:
     columns: [Profile, Adds, Tools such as]
@@ -153,39 +266,33 @@ home:
     code: [0, 2]
     caption: A tool outside the profile is not listed. A listed tool whose engine, game or editor is not there answers unavailable and says which one.
 
-  sessions:
-    columns: [To, Call, Notes]
-    rows:
-      - cells: [Run the game, project.run.start project.run.stop, "In a window or headless, until its lifetime ends"]
-      - cells: [Press and click, input.key.send input.mouse.send input.action.send input.sequence.send, Everything held is released]
-      - cells: [Read it live, runtime.tree.get runtime.properties.get runtime.signals.get runtime.ui.get, Changes nothing in the game]
-      - cells: [Capture it, runtime.screenshot.capture runtime.recording.capture, "PNG or animated PNG, as an artifact"]
-      - cells: [Debug it, editor.session.start debug.command, "Breakpoints, stack and variables"]
-    code: [1]
-    caption: At most four sessions run at once. Each belongs to the server that started it, and a server that starts after a crash ends the ones left behind.
-
-  versions:
-    columns: [Godot, CI runs, Platforms]
-    rows:
-      - cells: [4.7.1, "Editor check, export templates, display check, packaged smoke", "Linux, macOS, Windows"]
-      - cells: [4.6.1, "Editor check, export templates", Linux]
-      - cells: [4.5.1, "Editor check, export templates", Linux]
-      - cells: [4.4.1, "Editor check, export templates", Linux]
-    code: [0]
-    caption: Exact builds from one lock, each checked against its official SHA-256. The minimum supported version is 4.4.0.
-
-  platforms:
-    title: Platforms
-    intro: Every release has an archive for each platform below, built and smoke-tested on that platform against the locked Godot build.
-    columns: [Platform, Archive, Games and editors]
-    rows:
+  engine:
+    title: The engine, exactly
+    intro: Every Godot build the project supports is an exact patch version in one lock, with its official download and digest. Each release has an archive for every platform below, smoke-tested there against the newest build.
+    versions:
+      - version: 4.7.1
+        detail: Editor check, export templates, display check and the packaged smoke, on Linux, macOS and Windows
+      - version: 4.6.1
+        detail: Editor check and export templates, on Linux
+      - version: 4.5.1
+        detail: Editor check and export templates, on Linux
+      - version: 4.4.1
+        detail: Editor check and export templates, on Linux
+    platforms:
       - name: Linux x86_64
-        cells: ["x86_64-unknown-linux-musl, statically linked", "A window under X11 or Wayland, or headless; contained by a process group, a delegated cgroup or a container adapter"]
+        archive: x86_64-unknown-linux-musl
+        detail: Statically linked. Games and editors run in a window under X11 or Wayland, or headless, contained by a process group, a delegated cgroup or a container adapter.
       - name: macOS Apple silicon
-        cells: [aarch64-apple-darwin, "A window in a logged-in user's session, or headless; contained by a process group or a container adapter"]
+        archive: aarch64-apple-darwin
+        detail: Games and editors run in a window in a logged-in user's session, or headless, contained by a process group or a container adapter.
       - name: Windows x86_64
-        cells: ["x86_64-pc-windows-msvc, crt-static", "A window in a logged-on desktop session, or headless; contained by a Job Object"]
-    note: Intel macOS, Linux arm64 and Windows ARM64 have no archive; build from source there.
+        archive: x86_64-pc-windows-msvc
+        detail: Statically linked C runtime. Games and editors run in a window in a logged-on desktop session, or headless, contained by a Job Object.
+    install: The installer checks the archive it downloads against the release's SHA256SUMS.txt.
+    guide:
+      text: The install guide
+      link: /guide/install
+    note: The minimum supported version is 4.4.0. Intel macOS, Linux arm64 and Windows ARM64 have no archive; build from source there.
 
   privacy:
     title: Where your project goes
@@ -197,7 +304,7 @@ home:
         detail: Over stdio the client and the server talk through two pipes. An answer carries the project data the call asked for, and nothing goes anywhere else.
       - name: HTTP, when you turn it on
         sends: A loopback listener
-        detail: trusted_local accepts only requests that carry the per-launch secret; proxied_oidc only an authenticated proxy hop carrying one user's token.
+        detail: "`trusted_local` accepts only requests that carry the per-launch secret; `proxied_oidc` only an authenticated proxy hop carrying one user's token."
       - name: The engine
         sends: Your machine
         detail: Godot runs locally from the build you configure, inside a process boundary the server owns. godot-mcp never downloads an engine or export templates.
@@ -205,19 +312,61 @@ home:
         sends: Local files
         detail: Diagnostics go to stderr or a rolling file with secrets and source redacted. Screenshots, recordings and exports stay on disk as artifacts until their retention ends.
 
-  scope:
-    title: What it does not do
+  faq:
+    title: Questions
     items:
-      - It runs no GDScript an agent writes until you start it with --allow-scripts, and its typed tools call no engine method outside their own fixed set.
-      - It does not download Godot or export templates. It uses the build and templates you installed.
-      - It does not edit binary .scn and .res files. It asks for them to be saved as text instead.
-      - It does not make an untrusted project safe to open. Loading a project runs its code.
-      - It is not a shared service. One server serves one project for one user.
+      - q: Do I need the Godot editor open?
+        a: No. Analysis and file edits work from the project's files with no Godot installed. Checks, imports, tests, exports and games need a Godot executable, which the server starts itself. Only the editor tools need your editor, through the `godot_mcp` add-on.
+        guide:
+          text: How it is organised
+          link: /guide/introduction#how-it-is-organised
+      - q: Is it an editor plugin?
+        a: It includes one, the optional `godot_mcp` add-on, which brings the editor you have open into the work. The server itself is one Rust binary beside the project, so with no editor open it still reads, edits, runs, tests and exports the project.
+        guide:
+          text: A Rust server, not only an editor plugin
+          link: /guide/introduction#a-rust-server-not-only-an-editor-plugin
+      - q: Which Godot versions does it support?
+        a: Godot 4.4.0 or later. CI checks the exact builds 4.4.1, 4.5.1, 4.6.1 and 4.7.1, and a tool that needs a newer build says so, such as `editor.log.get`, which needs 4.5.1.
+        guide:
+          text: Godot versions
+          link: /reference/godot-versions
+      - q: Can it break my project?
+        a: Every write names the SHA-256 of what it replaces and is journaled before it runs, so a stale edit is refused with `conflict` and a crash part-way is settled before the next request. It does not edit binary `.scn` and `.res` files; save them as text first.
+        guide:
+          text: Editing the project
+          link: /guide/editing
+      - q: Does it run GDScript an agent writes?
+        a: Only after you start the server with `--allow-scripts`, and its typed tools call no engine method outside their own fixed set. Loading a project runs that project's own code, so the server contains what it starts without making an untrusted project safe to open.
+        guide:
+          text: Threat model
+          link: /reference/threat-model
+      - q: Does it send my project anywhere?
+        a: No. It makes no network request of its own, apart from fetching your identity provider's signing keys when you configure OIDC, and it never downloads Godot or export templates. One server serves one project for one user; it is not a shared service.
+        guide:
+          text: HTTP
+          link: /operate/http
+
+  closer:
+    title: Install godot-mcp
+    body: One binary for Linux, macOS and Windows, under the MIT License. Bug reports and feature requests go to [GitHub Issues](https://github.com/sunerpy/godot-mcp/issues).
+    actions:
+      - text: Install
+        link: /guide/install
+        theme: brand
+        icon: download
+      - text: Quick start
+        link: /guide/quick-start
+        theme: alt
+        icon: arrow-right
 ---
 
-<HomeIndex />
+<HomeBuilt />
 
-<HomeSteps />
+<HomeCapabilities />
+
+<HomeShowcases />
+
+<HomeClients />
 
 <SplitBlock proof="profiles">
 
@@ -225,42 +374,16 @@ home:
 
 A profile is the ceiling for everything the server may do to your project. `core` reads and
 changes nothing. `editor` adds the writes, each one journaled and checked against what it
-replaces. `runtime` adds running the project and watching it. Running an agent's own GDScript is off in
-every profile until you start the server with `--allow-scripts`.
+replaces. `runtime` adds running the project and watching it.
+
+Running an agent's own GDScript is off in every profile until you start the server with
+`--allow-scripts`.
 
 [Profiles and answers](guide/profiles.md) · [Tools and resources](../protocol/tool-inventory.md)
 
 </SplitBlock>
 
-<SplitBlock proof="sessions" flip>
-
-## A game it can play and watch
-
-godot-mcp starts the game itself, with a probe of its own that changes nothing in the project.
-Your agent presses keys, reads the live scene tree and takes screenshots; an editor session adds
-breakpoints and the call stack. When the session ends, every input it held is released.
-
-[Games and editors](guide/sessions.md) · [Managed sessions](../operator/managed-sessions.md)
-
-</SplitBlock>
-
-<SplitBlock proof="versions">
-
-## The engine, exactly
-
-Every Godot build the project supports is an exact patch version in one lock, with its official
-download and digest. CI probes each editor and has it check scripts, verifies each set of export
-templates, and smoke-tests every release archive against the newest, on its own platform.
-
-[Running the engine](guide/engine.md) · [Godot versions](../operator/version-matrix.md)
-
-</SplitBlock>
-
-<HomePlatforms />
-
-<HomePrivacy />
-
-## Install
+<HomeEngine>
 
 ::: code-group
 
@@ -279,12 +402,10 @@ cd godot-mcp && make dist
 
 :::
 
-The [install guide](guide/install.md) covers the archives, verifying a download and building from
-source.
+</HomeEngine>
 
-<HomeScope />
+<HomePrivacy />
 
-## Feedback
+<HomeFaq />
 
-Bug reports and feature requests go to [GitHub Issues](https://github.com/sunerpy/godot-mcp/issues).
-godot-mcp is MIT licensed and is not affiliated with the Godot Engine project.
+<HomeCloser />

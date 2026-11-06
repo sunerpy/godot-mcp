@@ -1,5 +1,6 @@
 ---
 layout: home
+markdownStyles: false
 title: godot-mcp：面向 Godot 项目的 MCP 服务器
 titleTemplate: false
 description: godot-mcp 是一个静态 Rust 二进制，把 Godot 项目交给 MCP 客户端：不需要引擎的分析、写入日志的改动，以及它自己运行、操控、截取和调试的游戏与编辑器。
@@ -22,126 +23,238 @@ hero:
 home:
   facts:
     - term: 运行方式
-      text: 由 MCP 客户端启动的一个本地进程，跑在你的项目旁边，支持 Linux、macOS 和 Windows。默认走 stdio，不开端口，也不需要账号。
+      text: 一个本地进程，默认走 stdio
     - term: Godot
-      text: 分析只读项目文件，不需要引擎。运行、测试和导出使用你指定的 Godot 4.4.0 或更新版本。
+      text: 4.4.0 或更新，用你指定的版本
     - term: 构成
-      text: Rust 服务器，而不是编辑器插件。不打开编辑器也能工作；GDScript 只在需要引擎的地方于 Godot 内部运行：可选的编辑器插件，以及它启动每个游戏时交给游戏的探针。
+      text: Rust 服务器，外加可选的编辑器插件
 
-  visual:
-    label: 与 godot-mcp 的一段 MCP 交互，对象是一个小型 Godot 项目。对 main.tscn 调用 scene.tree.get，答复列出它的五个节点及其类型和脚本，以及 Mob 的 body_entered 信号到根节点的确切连接。对 player/player.gd 里的 take_damage 调用 gdscript.references.get，答复列出一处推断出的调用，位于 main.gd 第 6 行。
-    transcript:
-      - kind: call
-        text: scene.tree.get
-      - kind: argument
-        text: "scene: main.tscn"
-      - kind: answer
-        text: ".            Node         main.gd"
-      - kind: answer
-        text: "Player       Area2D       player/player.gd"
-      - kind: answer
-        text: "HUD          CanvasLayer  ui/hud.gd"
-      - kind: answer
-        text: "HUD/Message  Label"
-      - kind: answer
-        text: "Mob          RigidBody2D"
-      - kind: answer
-        text: "Mob.body_entered → ._on_mob_body_entered  exact"
-      - kind: call
-        text: gdscript.references.get
-      - kind: argument
-        text: "script: player/player.gd"
-      - kind: argument
-        text: "symbol: take_damage"
-      - kind: answer
-        text: "main.gd:6  player.take_damage()  calls  inferred"
+  stages:
+    steps:
+      - Agent 发给运行中游戏的调用
+      - godot-mcp 答复的截图
+    exchange:
+      label: Agent 通过 godot-mcp 操作演示游戏。input.sequence.send 按住 ui_right 2000 毫秒，答复两个步骤都已执行。runtime.wait 等到 score 等于 2，答复条件已满足。runtime.screenshot.capture 答复一个 960 × 540、529325 字节的产物。
+      transcript:
+        - kind: call
+          text: input.sequence.send
+        - kind: argument
+          text: "action ui_right  press  holdMs 2000"
+        - kind: argument
+          text: "wait  ms 2000"
+        - kind: answer
+          text: "steps_run  2"
+        - kind: call
+          text: runtime.wait
+        - kind: argument
+          text: "property score  ==  2"
+        - kind: answer
+          text: "satisfied  true"
+        - kind: call
+          text: runtime.screenshot.capture
+        - kind: answer
+          text: "artifact  960 × 540  529325 bytes"
+    screen:
+      src: /screens/game.webp
+      width: 960
+      height: 540
+      alt: 演示游戏。一个圆形的青色小机器人站在草地上，紧挨着一个木箱；木箱上方和最左侧各浮着一枚硬币，右上角的计数显示 2。
+    caption: 画面来自 examples/site-demo 里的演示项目，运行在 Godot 4.7.1 上。这张图就是这次答复里的 PNG，为网页转成了 WebP。
 
-  index:
-    title: godot-mcp 能做什么
-    intro: 下面每一项都是 Agent 可以调用的工具。标着「无需引擎」的只读项目文件，在没装 Godot 的机器上也能回答；其余的需要一个 Godot 可执行文件，其中一部分还需要 godot-mcp 自己启动的游戏或编辑器。
-    groups:
-      - name: 读懂项目
-        items:
-          - title: 项目与设置
-            body: 项目根目录、名称和主场景、每一项设置、每一个文件；从项目内任意目录都能找到项目。
-            status: no-engine
-            link: /zh/guide/analysis#项目
-          - title: GDScript
-            body: 跨脚本的符号、引用、调用方与影响面，每条关系都标明有多确定。
-            status: no-engine
-            link: /zh/guide/analysis#gdscript
-          - title: 场景与资源
-            body: 文本格式 .tscn 与 .tres 的节点树、脚本、实例、分组与信号连接。
-            status: no-engine
-            link: /zh/guide/analysis#场景与资源
-          - title: 依赖
-            body: 一个场景或资源加载了什么、被什么加载，以及指向不存在目标的引用。
-            status: no-engine
-            link: /zh/guide/analysis#依赖
-      - name: 修改项目
-        items:
-          - title: 文件与脚本
-            body: 创建、修补、移动和删除，每次都对照被改内容的 SHA-256，过期的修改会被拒绝而不是被应用。
-            status: no-engine
-            link: /zh/guide/editing#文件与脚本
-          - title: 场景与资源
-            body: 节点、属性与连接的改动打成一批，作为一个写入日志的事务，经由 Godot 或已打开的编辑器执行。
-            status: engine
-            link: /zh/guide/editing#场景与资源
-          - title: 设置与资产
-            body: 主场景、自动加载、输入动作、插件和设置通过类型化操作修改；二进制资产可以分块上传。
-            status: no-engine
-            link: /zh/guide/editing#设置与资产
-          - title: 编辑器
-            body: godot_mcp 插件让正在运行的编辑器连进来：修改并保存场景、画图块、给动画打关键帧、截图、读取日志、运行游戏；对已打开场景的每次改动都是编辑器里一次可撤销的操作。
-            status: engine
-            link: /zh/guide/editor
-      - name: 运行项目
-        items:
-          - title: 检查、导入与测试
-            body: 由 Godot 自己检查 GDScript，运行导入流程，以及运行项目自带的测试并给出确切计数。
-            status: engine
-            link: /zh/guide/engine
-          - title: 导出
-            body: 用你这个 Godot 版本的确切导出模板导出一个预设，作为可以跟踪和取消的托管导出。
-            status: engine
-            link: /zh/guide/engine#导出
-          - title: 运行游戏
-            body: 运行主场景或任意场景，带窗口或无窗口，可以读日志和状态，直到你停止它。
-            status: engine
-            link: /zh/guide/sessions#运行游戏
-      - name: 操控与调试
-        items:
-          - title: 输入
-            body: 键盘、鼠标、输入动作和定时序列；按住的输入在保持时间结束或会话停止时一定会被松开。
-            status: engine
-            link: /zh/guide/sessions#发送输入
-          - title: 运行时读取
-            body: 读取运行中的场景树、属性、信号和 UI，不改动游戏。
-            status: engine
-            link: /zh/guide/sessions#读取运行中的游戏
-          - title: 截取
-            body: 截图和短录屏，以带 SHA-256 的产物返回。
-            status: engine
-            link: /zh/guide/sessions#截取
-          - title: 调试器
-            body: 通过编辑器的调试适配器设断点、看调用栈、作用域和变量，并取得语言服务器的诊断。
-            status: engine
-            link: /zh/guide/sessions#调试
+  built:
+    title: Rust 服务器，不只是编辑器插件
+    intro: 客户端只和一个 Rust 二进制通信。GDScript 只在任务需要引擎的地方于 Godot 内部运行，所以不打开编辑器、不安装 Godot，也能分析项目、修改文件。
+    client:
+      name: 你的 MCP 客户端
+      detail: 把 godot-mcp 当作一个进程启动，通过 stdio 与它通信；打开回环 HTTP 后也可以走 HTTP。
+    server:
+      name: godot-mcp
+      detail: 跑在项目旁边的一个静态 Rust 二进制，不需要安装任何语言运行时。
+      parts:
+        - 提供 MCP 服务
+        - 不用引擎就能读懂 GDScript、场景和资源
+        - 每次改动执行前先写入日志
+        - 启动并限定它用到的每个 Godot 进程
+    targets:
+      - name: 项目文件
+        detail: GDScript、场景、资源和设置，在没装 Godot 的机器上也能读取和修改。
+        status: no-engine
+        link: /zh/guide/analysis
+      - name: 无界面辅助脚本
+        detail: 一个按 SHA-256 固定的 GDScript 文件，服务器修改的每个场景和资源都由 Godot 借助它写出。
+        status: engine
+        link: /zh/guide/editing#场景与资源
+      - name: 运行时探针
+        detail: 服务器启动每个游戏时通过命令行交给它的 GDScript。不安装自动加载，也不改任何设置。
+        status: engine
+        link: /zh/guide/sessions#运行游戏
+      - name: godot_mcp 插件
+        detail: 装在你正打开的编辑器里的可选插件。它的每次改动都是编辑器里一次可撤销的操作。
+        status: engine
+        link: /zh/guide/editor
+    note: 只做成编辑器插件的工具，只能在编辑器运行时工作，也只能处理编辑器里已有的内容。godot-mcp 在项目旁边工作，需要时再由它的插件把你的编辑器接进来。
 
-  steps:
-    title: 从安装到第一个答复
+  capabilities:
+    title: Agent 能用它做什么
+    intro: 下面每一项都是 Agent 可以调用的一组工具。标着「无需引擎」的只读项目文件，在没装 Godot 的机器上也能回答；其余的使用你配置的 Godot。
     items:
-      - title: 安装
-        body: 运行下方「安装」一节里对应平台的安装脚本，或者从 GitHub Releases 下载归档，安装脚本会用发布里的 SHA256SUMS.txt 核对归档。
-      - title: 在客户端里注册
-        command: claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game
-        body: 任何会启动进程的 MCP 客户端都用同一条命令。默认是只读的 core profile。
-      - title: 问它关于项目的问题
-        body: 问 Agent 某个场景或脚本。它会先调 capabilities.get 和 health.get 了解这里能做什么，再调用分析工具。
-      - title: 需要时再放开权限
-        command: --profile full
-        body: editor 增加写入，runtime 增加运行和观察游戏。依赖引擎的工具需要把 godot_binary 指向你的 Godot。
+      - icon: scan-search
+        title: 读懂项目
+        wide: true
+        status: no-engine
+        body: 场景树，GDScript 的符号、引用、调用方与影响面，以及依赖图，都从文件中读出。每条关系都标明有多确定。
+        evidence:
+          kind: code
+          text: |-
+            Player       CharacterBody2D  player.gd
+            Coins/CoinA.collected → ._on_coin_collected  exact
+        link: /zh/guide/analysis
+      - icon: file-pen-line
+        title: 安全地修改
+        status: no-engine
+        body: 每次写入都对照被替换内容的 SHA-256，并在执行前写入日志。过期的修改会被拒绝，中途崩溃的事务在处理下一个请求之前就会被理清。
+        evidence:
+          kind: code
+          text: "file.patch player.gd  →  conflict"
+        link: /zh/guide/editing
+      - icon: cpu
+        title: 检查、导入与测试
+        status: engine
+        body: 用你配置的 Godot 检查脚本、运行导入流程，并运行项目自带的 GUT 或 gdUnit4 测试，给出确切计数。
+        evidence:
+          kind: code
+          text: "script.check player.gd  →  passed"
+        link: /zh/guide/engine
+      - icon: package
+        title: 导出
+        status: engine
+        body: 只用你这个 Godot 版本的导出模板导出预设，作为可以跟踪和取消的托管导出。产物放在服务器自己的存储里，不会写进项目。
+        evidence:
+          kind: chips
+          items: [export.presets.list, project.export, project.export.status, project.export.cancel]
+        link: /zh/guide/engine#导出
+      - icon: gamepad-2
+        title: 运行游戏
+        status: engine
+        body: 运行主场景或任意场景，带窗口或无窗口。服务器通过命令行交给游戏一个探针，项目里的东西都不会改动。
+        evidence:
+          kind: code
+          text: "project.run.start  →  running, probe connected"
+        link: /zh/guide/sessions#运行游戏
+      - icon: mouse-pointer-click
+        title: 试玩并检查
+        status: engine
+        body: 按键、鼠标和输入动作结束后一定会被松开；等待和断言写在同一个场景里，报告列出每一步的结果。
+        evidence:
+          kind: code
+          text: "test.scenario.run  →  passed, 5 of 5 steps"
+        link: /zh/guide/sessions#测试游戏
+      - icon: app-window
+        title: 在编辑器里工作
+        status: engine
+        body: 借助 `godot_mcp` 插件，修改并保存编辑器里的场景、画图块、给动画打关键帧、截取窗口、读取日志。每次修改都是一次可撤销的操作。
+        evidence:
+          kind: chips
+          items: [editor.scene.edit, editor.undo, editor.scene.save, editor.screenshot.capture]
+        link: /zh/guide/editor
+      - icon: bug
+        title: 调试
+        status: engine
+        body: 无界面的编辑器会话承载 Godot 的语言服务器和调试适配器，用来设断点、看调用栈、作用域和变量，以及取得脚本的诊断。
+        evidence:
+          kind: chips
+          items: [editor.session.start, debug.command, debug.session.get]
+        link: /zh/guide/sessions#调试
+
+  showcases:
+    - title: 在你的编辑器里修改，随时可以撤销
+      intro: "`godot_mcp` 插件把你正打开的 Godot 编辑器接到服务器上。Agent 对已打开场景的改动进入编辑器自己的撤销历史，插件的面板列出编辑器答复过的请求。"
+      screen:
+        src: /screens/editor-zh-light.webp
+        dark: /screens/editor-zh-dark.webp
+        width: 1600
+        height: 1000
+        alt: Godot 4.7.1 编辑器，2D 视图里打开着演示项目的主场景。Player 节点处于选中状态，检查器显示它的脚本里的 Speed 和 Jump Speed。godot_mcp 停靠栏显示 godot-mcp 已连接，底部的 Godot MCP 面板按时间倒序列出 13 个请求，从 editor.scene.save 到 editor.scene.open。
+      caption: Godot 4.7.1 与 godot_mcp 插件，打开的是演示项目。
+      points:
+        - title: 一次可撤销的操作
+          body: "`editor.scene.edit` 把一批改动作为场景撤销历史里的一项应用，`editor.undo` 可以把它撤回。"
+        - title: 不保存，除非你要求
+          body: 改动一直留在编辑器里，直到调用 `editor.scene.save`；编辑器占着的文件，无界面写入会被拒绝并答复 `conflict`。
+        - title: 面板上的请求记录
+          body: 面板列出编辑器最近答复过的 500 个请求，每个都有方法、涉及的对象和结果，但不显示请求参数。
+        - title: 由你掌控的开关
+          body: 打开 **Pause agent edits** 后，编辑器拒绝服务器要求的每一次改动，读取仍然可用。
+      guide:
+        text: 编辑器插件
+        link: /zh/guide/editor
+    - title: 它能试玩游戏，也能检查结果
+      intro: 服务器带着自己的探针启动游戏，向它发送输入，再读回它的状态。`test.scenario.run` 在一次调用里执行输入、等待和断言，并答复一份报告。
+      screen:
+        src: /screens/game-scenario.webp
+        width: 960
+        height: 540
+        alt: 场景跑完后的演示游戏。机器人回到了最左侧，那里的硬币已被收走，木箱上方还浮着一枚硬币，计数显示 3。
+      caption: 这是场景最后一步截下的画面，为网页转成了 WebP。
+      points:
+        - title: 输入一定会被松开
+          body: 每个按键、按钮和输入动作，都会在保持时间结束、序列结束或会话停止时被松开。
+        - title: 按游戏自身的状态等待
+          body: 可以一直等到某个节点出现或消失、某个属性满足比较条件、某个信号被发出，或某个控件显示指定文字。
+        - title: 是报告，而不是日志
+          body: 每一步要么通过，要么失败并给出期望值和实际值，要么说明它为什么无法执行。
+      exchange:
+        label: test.scenario.run 为五个步骤答复的报告。assert_property、向左走的输入、等到 score 等于 3 的等待、对 HUD/Count 的 assert_ui_text 和截图全部通过，结论为 passed，5 个步骤全部通过。
+        transcript:
+          - kind: call
+            text: test.scenario.run
+          - kind: argument
+            text: "steps: assert_property, input, wait,"
+          - kind: argument
+            text: "       assert_ui_text, screenshot"
+          - kind: answer
+            text: "two-coins   assert_property  passed"
+          - kind: answer
+            text: "walk-back   input            passed"
+          - kind: answer
+            text: "third-coin  wait             passed"
+          - kind: answer
+            text: "hud         assert_ui_text   passed"
+          - kind: answer
+            text: "after       screenshot       passed"
+          - kind: answer
+            text: "verdict  passed   passed 5  total 5"
+      guide:
+        text: 测试游戏
+        link: /zh/guide/sessions#测试游戏
+
+  clients:
+    title: 任何 MCP 客户端，同一条命令
+    intro: godot-mcp 是一个 stdio MCP 服务器。每个会启动进程的客户端运行的都是同一条命令，大多数一行就能注册。
+    items:
+      - name: Claude Code
+        command: claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+        link: /zh/guide/clients#claude-code
+      - name: Codex
+        mark: codex
+        command: codex mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+        link: /zh/guide/clients#codex
+      - name: OpenCode
+        mark: opencode
+        note: 项目里或全局配置里 `opencode.json` 的一条 `mcp`。
+        link: /zh/guide/clients#opencode
+      - name: Pi Agent
+        mark: pi
+        command: pi mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+        link: /zh/guide/clients#pi-agent
+      - name: Cursor
+        mark: cursor
+        note: 同一条命令，写成 `mcpServers` 这段 JSON 里的一项。
+        link: /zh/guide/clients#用-json-配置的客户端
+    more: Claude Desktop 以及其他任何通过 stdio 启动进程的客户端，运行的也是这条命令，大多数写在一段 JSON 里。
+    guide:
+      text: MCP 客户端
+      link: /zh/guide/clients
 
   profiles:
     columns: [Profile, 增加的能力, 工具举例]
@@ -153,39 +266,33 @@ home:
     code: [0, 2]
     caption: 不在 profile 里的工具不会被列出。已列出的工具如果它需要的引擎、游戏或编辑器不在，就答复 unavailable 并说明缺的是哪一个。
 
-  sessions:
-    columns: [要做的事, 调用, 说明]
-    rows:
-      - cells: [运行游戏, project.run.start project.run.stop, 带窗口或无窗口，直到生命周期结束]
-      - cells: [按键与点击, input.key.send input.mouse.send input.action.send input.sequence.send, 按住的一切都会被松开]
-      - cells: [实时读取, runtime.tree.get runtime.properties.get runtime.signals.get runtime.ui.get, 不改动游戏]
-      - cells: [截取, runtime.screenshot.capture runtime.recording.capture, PNG 或 APNG，作为产物返回]
-      - cells: [调试, editor.session.start debug.command, 断点、调用栈与变量]
-    code: [1]
-    caption: 同时最多运行四个会话。每个会话只属于启动它的那个服务器；崩溃后新启动的服务器会结束遗留的会话。
-
-  versions:
-    columns: [Godot, CI 运行的内容, 平台]
-    rows:
-      - cells: [4.7.1, 编辑器检查、导出模板、显示检查、打包冒烟, Linux、macOS、Windows]
-      - cells: [4.6.1, 编辑器检查、导出模板, Linux]
-      - cells: [4.5.1, 编辑器检查、导出模板, Linux]
-      - cells: [4.4.1, 编辑器检查、导出模板, Linux]
-    code: [0]
-    caption: 确切版本来自同一个锁文件，每个都用官方 SHA-256 校验。最低支持版本是 4.4.0。
-
-  platforms:
-    title: 平台
-    intro: 每次发布都为下面每个平台提供一个归档，并在该平台上针对锁定的 Godot 版本构建和冒烟测试。
-    columns: [平台, 归档, 游戏与编辑器]
-    rows:
+  engine:
+    title: 引擎，版本精确
+    intro: 项目支持的每个 Godot 版本都是锁文件里的一个确切补丁版本，带官方下载地址和摘要。每次发布都为下面每个平台提供一个归档，并在该平台上针对最新版本冒烟测试。
+    versions:
+      - version: 4.7.1
+        detail: 编辑器检查、导出模板、显示检查和打包冒烟，覆盖 Linux、macOS 和 Windows
+      - version: 4.6.1
+        detail: 编辑器检查和导出模板，在 Linux 上
+      - version: 4.5.1
+        detail: 编辑器检查和导出模板，在 Linux 上
+      - version: 4.4.1
+        detail: 编辑器检查和导出模板，在 Linux 上
+    platforms:
       - name: Linux x86_64
-        cells: [x86_64-unknown-linux-musl，静态链接, X11 或 Wayland 下带窗口，或无窗口；由进程组、委派 cgroup 或容器适配器限定]
+        archive: x86_64-unknown-linux-musl
+        detail: 静态链接。游戏和编辑器在 X11 或 Wayland 下带窗口运行，或无窗口运行，由进程组、委派 cgroup 或容器适配器限定。
       - name: macOS Apple 芯片
-        cells: [aarch64-apple-darwin, 已登录用户的会话里带窗口，或无窗口；由进程组或容器适配器限定]
+        archive: aarch64-apple-darwin
+        detail: 游戏和编辑器在已登录用户的会话里带窗口运行，或无窗口运行，由进程组或容器适配器限定。
       - name: Windows x86_64
-        cells: [x86_64-pc-windows-msvc，crt-static, 已登录的桌面会话里带窗口，或无窗口；由 Job Object 限定]
-    note: Intel 版 macOS、Linux arm64 和 Windows ARM64 没有现成归档，请从源码构建。
+        archive: x86_64-pc-windows-msvc
+        detail: 静态链接 C 运行时。游戏和编辑器在已登录的桌面会话里带窗口运行，或无窗口运行，由 Job Object 限定。
+    install: 安装脚本会用发布里的 SHA256SUMS.txt 核对它下载的归档。
+    guide:
+      text: 安装指南
+      link: /zh/guide/install
+    note: 最低支持版本是 4.4.0。Intel 版 macOS、Linux arm64 和 Windows ARM64 没有现成归档，请从源码构建。
 
   privacy:
     title: 项目数据去了哪里
@@ -197,7 +304,7 @@ home:
         detail: 走 stdio 时，客户端与服务器通过两条管道通信。答复里只有这次调用要求的项目数据，不会发往别处。
       - name: HTTP（需要你打开）
         sends: 回环监听
-        detail: trusted_local 只接受带本次启动密钥的请求；proxied_oidc 只接受经过认证的代理转发、并携带某一个用户令牌的请求。
+        detail: "`trusted_local` 只接受带本次启动密钥的请求；`proxied_oidc` 只接受经过认证的代理转发、并携带某一个用户令牌的请求。"
       - name: 引擎
         sends: 你的机器
         detail: Godot 用你配置的版本在本地运行，处在服务器管理的进程边界之内。godot-mcp 从不下载引擎或导出模板。
@@ -205,55 +312,75 @@ home:
         sends: 本地文件
         detail: 诊断信息写到 stderr 或滚动日志文件，密钥和源码会被遮蔽。截图、录屏和导出结果作为产物留在磁盘上，直到保留期结束。
 
-  scope:
-    title: 它不做的事
+  faq:
+    title: 常见问题
     items:
-      - 除非你用 --allow-scripts 启动它，否则不执行 Agent 自己写的 GDScript；类型化工具只调用它们自己那一组固定的引擎方法。
-      - 不下载 Godot 或导出模板，只使用你安装好的版本和模板。
-      - 不修改二进制 .scn 和 .res，而是请你先把它们另存为文本格式。
-      - 不能让一个不可信的项目变得可以放心打开。加载项目就会运行它的代码。
-      - 不是共享服务。一个服务器只为一个用户服务一个项目。
+      - q: 需要打开 Godot 编辑器吗？
+        a: 不需要。分析和文件修改直接读写项目文件，不装 Godot 也能用。检查、导入、测试、导出和游戏需要一个 Godot 可执行文件，由服务器自己启动。只有编辑器工具需要你的编辑器，通过 `godot_mcp` 插件连接。
+        guide:
+          text: 它是怎样组织的
+          link: /zh/guide/introduction#它是怎样组织的
+      - q: 它是编辑器插件吗？
+        a: 包含一个，就是可选的 `godot_mcp` 编辑器插件，用来把你正打开的编辑器接进来。服务器本身是项目旁边的一个 Rust 二进制，所以不打开编辑器也能读取、修改、运行、测试和导出项目。
+        guide:
+          text: Rust 服务器，不只是编辑器插件
+          link: /zh/guide/introduction#rust-服务器不只是编辑器插件
+      - q: 支持哪些 Godot 版本？
+        a: Godot 4.4.0 或更新版本。CI 检查 4.4.1、4.5.1、4.6.1 和 4.7.1 这几个确切版本；需要更新版本的工具会说明，例如 `editor.log.get` 需要 4.5.1。
+        guide:
+          text: Godot 版本
+          link: /zh/reference/godot-versions
+      - q: 会不会改坏项目？
+        a: 每次写入都对照被替换内容的 SHA-256，并在执行前写入日志，所以过期的修改会被拒绝并答复 `conflict`，中途崩溃的事务在处理下一个请求之前就会被理清。它不修改二进制的 `.scn` 和 `.res`，请先把它们另存为文本格式。
+        guide:
+          text: 修改项目
+          link: /zh/guide/editing
+      - q: 会运行 Agent 写的 GDScript 吗？
+        a: 只有你用 `--allow-scripts` 启动服务器之后才会；类型化工具只调用它们自己那一组固定的引擎方法。加载项目会运行项目自己的代码，所以服务器能限定它启动的进程，却不能让一个不可信的项目变得可以放心打开。
+        guide:
+          text: 威胁模型
+          link: /zh/reference/threat-model
+      - q: 会把项目发到别处吗？
+        a: 不会。除了在你配置 OIDC 时去取身份提供方的签名密钥，它自己不发起任何网络请求，也从不下载 Godot 或导出模板。一个服务器只为一个用户服务一个项目，不是共享服务。
+        guide:
+          text: HTTP
+          link: /zh/operate/http
+
+  closer:
+    title: 安装 godot-mcp
+    body: 一个二进制，支持 Linux、macOS 和 Windows，采用 MIT 许可证。问题和功能建议请提交到 [GitHub Issues](https://github.com/sunerpy/godot-mcp/issues)。
+    actions:
+      - text: 安装
+        link: /zh/guide/install
+        theme: brand
+        icon: download
+      - text: 快速开始
+        link: /zh/guide/quick-start
+        theme: alt
+        icon: arrow-right
 ---
 
-<HomeIndex />
+<HomeBuilt />
 
-<HomeSteps />
+<HomeCapabilities />
+
+<HomeShowcases />
+
+<HomeClients />
 
 <SplitBlock proof="profiles">
 
 ## 决定它能做什么
 
-profile 是服务器能对项目做的一切的上限。`core` 只读，什么都不改。`editor` 增加写入，每次写入都写进日志，并核对它替换的内容。`runtime` 增加运行和观察项目。执行 Agent 自己写的 GDScript 在每个 profile 里都默认关闭，只有用 `--allow-scripts` 启动服务器才会打开。
+profile 是服务器能对项目做的一切的上限。`core` 只读，什么都不改。`editor` 增加写入，每次写入都写进日志，并核对它替换的内容。`runtime` 增加运行和观察项目。
+
+执行 Agent 自己写的 GDScript 在每个 profile 里都默认关闭，只有用 `--allow-scripts` 启动服务器才会打开。
 
 [Profile 与答复](guide/profiles.md) · [工具与资源](../../protocol/tool-inventory.md)
 
 </SplitBlock>
 
-<SplitBlock proof="sessions" flip>
-
-## 它能玩、也能看着的游戏
-
-游戏由 godot-mcp 自己启动，带一个它自己的探针，不改动项目里的任何东西。Agent 可以按键、读取实时场景树、截图；编辑器会话还能设断点、看调用栈。会话结束时，它按住的每一个输入都会被松开。
-
-[游戏与编辑器](guide/sessions.md) · [托管会话](../../operator/managed-sessions.md)
-
-</SplitBlock>
-
-<SplitBlock proof="versions">
-
-## 引擎，版本精确
-
-项目支持的每个 Godot 版本都是锁文件里的一个确切补丁版本，带官方下载地址和摘要。CI 探测每个版本的编辑器并用它检查脚本，核对每套导出模板，并在各自平台上针对最新版本冒烟测试每个发布归档。
-
-[运行引擎](guide/engine.md) · [Godot 版本](../../operator/version-matrix.md)
-
-</SplitBlock>
-
-<HomePlatforms />
-
-<HomePrivacy />
-
-## 安装
+<HomeEngine>
 
 ::: code-group
 
@@ -272,10 +399,10 @@ cd godot-mcp && make dist
 
 :::
 
-[安装指南](guide/install.md)介绍各个归档、如何校验下载以及从源码构建。
+</HomeEngine>
 
-<HomeScope />
+<HomePrivacy />
 
-## 反馈
+<HomeFaq />
 
-问题和功能建议请提交到 [GitHub Issues](https://github.com/sunerpy/godot-mcp/issues)。godot-mcp 采用 MIT 许可证，与 Godot Engine 项目没有隶属关系。
+<HomeCloser />

@@ -43,11 +43,13 @@ plugin is too old for answers `unsupported` and says to update it.
 
 The add-on puts a small dock in the editor, with the connection status, a **Pause agent edits**
 switch, **Reconnect now** and **Details**, which opens the **Godot MCP** bottom panel. The panel
-shows the connection and the server's version, profile and session; every request the editor
-answered, with its method, the scene, node or script path it was about and its result, but never
-its arguments; the server's tools, grouped by what they need and whether that is available now;
+shows the connection and the server's version, profile and session; the newest 500 requests the
+editor answered, each with its method, the scene, node or script path it was about and its
+result, but never its arguments; the server's tools, grouped by what they need and whether that is available now;
 and the bridge methods the add-on serves. **Copy diagnostics** copies the versions, the
 connection, the counts and the last errors for a bug report, without the connection's secret.
+
+<ScreenFigure src="/screens/editor-en-light.webp" dark="/screens/editor-en-dark.webp" width="1600" height="1000" alt="The Godot 4.7.1 editor with the demo project's main scene in the 2D view and the Player node selected. The godot_mcp dock reads godot-mcp connected, and the Godot MCP panel at the bottom lists the requests the editor answered, newest first." caption="The Godot MCP panel on its Activity page, in Godot 4.7.1 with the demo project from examples/site-demo." />
 
 While **Pause agent edits** is on, the editor refuses every change the server asks it to make
 before the change starts: the call answers `unavailable`, nothing changed, and reads still work.

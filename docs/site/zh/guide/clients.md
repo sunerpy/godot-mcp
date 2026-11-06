@@ -1,5 +1,5 @@
 ---
-description: 在 Claude Code 或用 JSON 配置的客户端里注册 godot-mcp，并设置它的环境变量。
+description: 在 Claude Code、Codex、OpenCode、Pi Agent 或用 JSON 配置的客户端里注册 godot-mcp，并设置它的环境变量。
 ---
 
 # MCP 客户端
@@ -28,6 +28,40 @@ godot-mcp serve --project /path/to/my-game --profile core
 ```sh
 claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
 ```
+
+## Codex
+
+```sh
+codex mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+```
+
+这条命令把服务器写进 Codex 的 `config.toml`（位于 `~/.codex`，设置了 `$CODEX_HOME` 时位于该目录）；`codex mcp list` 会列出它。
+
+## OpenCode
+
+OpenCode 从项目里的 `opencode.json` 或它的全局配置文件（`~/.config/opencode/opencode.json`）读取服务器：
+
+```json
+{
+  "mcp": {
+    "godot-mcp": {
+      "type": "local",
+      "command": ["godot-mcp", "serve", "--project", "/path/to/my-game", "--profile", "full"],
+      "enabled": true
+    }
+  }
+}
+```
+
+`opencode mcp list` 会显示它是否已连上。
+
+## Pi Agent
+
+```sh
+pi mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+```
+
+这条命令把服务器写进 `~/.pi/agent/mcp.json`，所有项目都会读取它。加上 `-l` 则写进项目的 `.pi/mcp.json`，Pi Agent 只在你已信任的项目里读取这个文件。`pi mcp list` 会显示服务器是否已连上，以及它列出的工具。
 
 ## 用 JSON 配置的客户端
 

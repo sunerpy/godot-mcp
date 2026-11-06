@@ -27,6 +27,7 @@ keys, links, example hosts and Godot versions follow the same rules as every oth
 | `docs/security/threat-model.md` | `/godot-mcp/reference/threat-model`, English only |
 | `docs/operator/usage-and-verification.md` | `/godot-mcp/zh/reference/usage`, Chinese only |
 | `docs/site/public/godot-mcp-logo.svg` | The site's logo and favicon |
+| `docs/site/public/screens/<name>.webp` | `/godot-mcp/screens/<name>.webp`, the screenshots the pages show |
 
 A reference in one language only gets a short page in the other language that links to it. The
 sync script in FirLab (`godot-mcp/scripts/sync-godot-mcp-docs.sh`) holds the exact mapping;
@@ -41,6 +42,8 @@ The sync stops before it writes anything when:
   `docs/site/zh/<path>.md`, and the reverse;
 - a page sits where a synced reference goes, such as `docs/site/reference/tools.md`;
 - a page uses a component the theme does not register (see below);
+- a file in `public/screens/` is not named `<name>.webp` in lower-case letters, digits and hyphens,
+  or a page refers to a `/screens/` file that does not exist;
 - a page uses a colloquial word (`just`, `simply`, `stuff`; `搞定`, `折腾`, `试试`, `看看` and the
   like) or names the source tree (`crates/godot-mcp-…/`, `src/….rs`) or a plan's task number;
   `developers.md` may name the source tree.
@@ -83,36 +86,76 @@ home page's frontmatter is the exception, because it is data for the theme, not 
 
 ## Components
 
-Pages are GitHub Markdown, plus these components of the site's theme: `HomeIndex`, `HomeSteps`,
-`SplitBlock`, `HomePlatforms`, `HomePrivacy`, `HomeScope`, `StatusTag` and VitePress's `Badge`.
-They render on the site only; on GitHub a page shows them as plain tags, so keep them to the two
-home pages.
+Pages are GitHub Markdown, plus the components of the site's theme. They render on the site only;
+GitHub drops a tag it does not know, so a page shows nothing in its place there.
+
+| Component | Where |
+| --- | --- |
+| `HomeBuilt`, `HomeCapabilities`, `HomeShowcases`, `HomeClients`, `SplitBlock`, `HomeEngine`, `HomePrivacy`, `HomeFaq`, `HomeCloser` | The two home pages, in this order. `SplitBlock proof="profiles"` holds the page's own Markdown beside the profile table; `HomeEngine` holds the install commands. |
+| `ScreenFigure` | Any page: one screenshot from `public/screens/`, with `src`, an optional `dark` for the dark theme, `width`, `height`, `alt` and an optional `caption`. |
+| `HomeIndex`, `HomeSteps`, `HomePlatforms`, `HomeScope`, `StatusTag`, VitePress's `Badge` | The previous home page layout; still registered so an older checkout builds. |
 
 ## The home page
 
 `index.md` and `zh/index.md` carry their content in the `home:` frontmatter, which the theme lays
-out. The build fails when a field is missing, misspelt or of the wrong shape
-(`theme/data/home-schema.ts` in FirLab).
+out, and set `markdownStyles: false`. The build fails when a field is missing, misspelt or of the
+wrong shape (`theme/data/home-schema.ts` in FirLab).
 
 | Field | Holds |
 | --- | --- |
-| `facts` | Two to four `term` and `text` rows under the tagline. |
-| `visual` | The exchange in the hero: a `label` for screen readers, the `transcript` lines (`call`, `argument` for a call's further arguments, `answer`) and an optional `caption`. |
-| `index` | Groups of capabilities, each with `title`, `body`, `status` (`no-engine` or `engine`) and an optional `link`. |
-| `steps` | Four steps, each with `title`, `body` and an optional `command`. |
-| `profiles`, `sessions`, `versions` | The tables beside the three splits: `columns`, `rows` of `cells`, `code` (the indexes of the columns shown as code) and an optional `caption`. |
-| `platforms` | The platform table: `columns`, and `rows` with `name` and one cell per remaining column. |
+| `facts` | Two to four `term` and `text` rows under the hero's buttons, each one short line: in a 1280 × 800 window three one-line facts start the demo under the hero at 558 px, where three of two or three lines started it at 674 px. |
+| `stages` | Under the hero: two `steps` (the titles of the two halves), an `exchange` (a `label` for screen readers and the `transcript` lines: `call`, `argument` for a call's further arguments, `answer`), the `screen` the exchange answered and a `caption`. |
+| `built` | How godot-mcp is built: the `client`, the `server` with its `parts`, the `targets` it reaches (each with `name`, `detail`, `status` and an optional `link`) and a `note`. |
+| `capabilities` | At least six `items`, each with an `icon`, `title`, `status` (`no-engine` or `engine`), `body`, one piece of `evidence`, a `link` and an optional `wide: true` for a cell two columns wide. Evidence is `code` (a `text`, one line of an answer per line), or `chips` (`items`, tool names). The icons are those of the theme's `data/icons.ts`. |
+| `showcases` | At least two, each with `title`, `intro`, a `screen` and its optional `caption`, two to four `points`, and optionally an `exchange` (as in `stages`) and a `guide` line. |
+| `clients` | `items` with `name`, `link`, an optional `mark` (`cursor`, `codex`, `opencode` or `pi`) and either the `command` that registers godot-mcp or, for a client without one, a `note` on where its configuration goes; then a `more` line for the clients the band does not list, and an optional `guide` line. |
+| `profiles` | The table beside the profiles split: `columns`, `rows` of `cells`, `code` (the indexes of the columns shown as code) and an optional `caption`. |
+| `engine` | The locked Godot builds as `versions` (`version`, `detail`), the `platforms` (`name`, `archive`, `detail`), an `install` line under the commands and a `note`. |
 | `privacy` | Where each kind of traffic goes: `sendsLabel` and `modes` with `name`, `sends` and `detail`. |
-| `scope` | What godot-mcp does not do, as `items`. |
+| `faq` | At least four `items`, each a question `q` and its answer `a`. |
+| `closer` | The last band: `title`, `body` and `actions` (`text`, `link`, `theme`: `brand` or `alt`, and an optional `icon`). |
 
-In a YAML flow list such as `cells: [a, b, c]` a comma separates cells, so quote a cell that
-contains one. A code cell after the first column wraps between its words, so a list of tool names
-is written with spaces between them and no commas.
+A `screen` is `src`, an optional `dark`, `width`, `height` and `alt`; each path is
+`/screens/<name>.webp`, a file in `public/screens/`.
 
-The exchange is a real session against a small project: each `call` line is a tool call a client
-sent, and each `answer` line shows fields of the structured answer godot-mcp returned, with every
-value copied unchanged. To record a new one, run the calls against the project the page names and
-copy the values.
+Prose fields may mark code with backticks, strong words with double asterisks, and a link to an
+`https://` address in Markdown's own form. A link to a page of the site goes in a `link` or a
+`guide` field (`text` and `link`), where the build can check it. Quote a value that starts with a
+backtick or contains `: `. In a YAML flow list such as `cells: [a, b, c]` a comma separates cells, so quote a
+cell that contains one. A code cell after the first column wraps between its words, so a list of
+tool names is written with spaces between them and no commas.
+
+The exchanges are a real session against the demo project in `examples/site-demo/`: each `call`
+line is a tool call a client sent, and each `answer` line shows fields of the structured answer
+godot-mcp returned, with every value copied unchanged. The capture script below records them.
+
+## Screenshots
+
+The pictures in `public/screens/` are taken from the demo project by
+`scripts/site/capture_screens.py`, through the server built from this tree:
+
+| Picture | Shows |
+| --- | --- |
+| `editor-en-light`, `editor-en-dark`, `editor-zh-light`, `editor-zh-dark` | The editor with the demo project, in English and Chinese, with the Light and the Default theme, and the Godot MCP panel on its Activity page |
+| `game` | The game after `input.sequence.send` walked the player to two coins |
+| `game-scenario` | The screenshot the last step of a `test.scenario.run` scenario kept |
+
+It needs a virtual display, the MCP Python SDK version the script names and the newest Godot
+editor in `tests/fixtures/godot-releases.lock.json`; it checks all three before it starts:
+
+```sh
+cargo build --release --locked -p godot-mcp-cli --bin godot-mcp
+cargo build --release --locked -p godot-mcp-engine --bin godot-mcp-supervisor
+xvfb-run -a -s "-screen 0 1600x1000x24" python3 -I -B scripts/site/capture_screens.py \
+  --binary target/release/godot-mcp --godot <the Godot editor binary> \
+  --out docs/site/public/screens
+```
+
+Every answer is checked against the shape the server documents and every picture against its
+answer; a failed check stops the run and names the picture. The answers go to
+`target/site-captures/report.json`, where the home page's exchanges are copied from. Look at every
+picture afterwards, one at a time, before you commit it. The demo's art and how it was made are in
+`examples/site-demo/art/README.md`.
 
 ## Preview
 

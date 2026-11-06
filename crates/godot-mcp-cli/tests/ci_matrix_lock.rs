@@ -211,6 +211,8 @@ fn ci_and_harness_sources() -> Vec<PathBuf> {
         "scripts/godot-artifact.sh",
         "scripts/packaged-smoke.sh",
         "scripts/isolation-smoke.sh",
+        "scripts/site/capture_screens.py",
+        "scripts/site/image_tool.gd",
     ] {
         paths.push(root.join(relative));
     }

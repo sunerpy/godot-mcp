@@ -25,7 +25,9 @@ description: 用 godot_mcp 插件把正在运行的 Godot 编辑器连到服务�
 
 ## Godot MCP 面板
 
-插件会在编辑器里放一个小停靠栏，显示连接状态，带有 **Pause agent edits** 开关、**Reconnect now** 按钮和 **Details** 按钮；后者打开底部的 **Godot MCP** 面板。面板显示连接情况，以及服务器的版本、profile 和会话；编辑器答复过的每个请求，包括方法、它涉及的场景、节点或脚本路径和结果，但从不显示请求的参数；服务器的工具，按各自需要的条件分组，并标明这些条件现在是否满足；以及插件提供的桥方法。**Copy diagnostics** 会复制版本、连接情况、计数和最近的错误，方便提交问题报告，其中不含连接用的密钥。
+插件会在编辑器里放一个小停靠栏，显示连接状态，带有 **Pause agent edits** 开关、**Reconnect now** 按钮和 **Details** 按钮；后者打开底部的 **Godot MCP** 面板。面板显示连接情况，以及服务器的版本、profile 和会话；编辑器最近答复过的 500 个请求，每个都有方法、它涉及的场景、节点或脚本路径和结果，但从不显示请求的参数；服务器的工具，按各自需要的条件分组，并标明这些条件现在是否满足；以及插件提供的桥方法。**Copy diagnostics** 会复制版本、连接情况、计数和最近的错误，方便提交问题报告，其中不含连接用的密钥。
+
+<ScreenFigure src="/screens/editor-zh-light.webp" dark="/screens/editor-zh-dark.webp" width="1600" height="1000" alt="Godot 4.7.1 编辑器，2D 视图里是演示项目的主场景，Player 节点处于选中状态。godot_mcp 停靠栏显示 godot-mcp 已连接，底部的 Godot MCP 面板按时间倒序列出编辑器答复过的请求。" caption="Godot MCP 面板的 Activity 页，Godot 4.7.1，打开的是 examples/site-demo 里的演示项目。" />
 
 打开 **Pause agent edits** 后，服务器要求编辑器做的每一项改动都会在开始之前被拒绝：调用答复 `unavailable`，什么都没有改，读取照常进行。关掉开关后，客户端要换一个新的 `idempotencyId` 重试。暂停只管经过编辑器的改动：服务器自己对文件、脚本、资源和素材的写入不受影响。这个开关也不是安全边界，以你的用户身份运行的任何程序都能改项目文件。开关一直有效，直到你关掉它、关闭编辑器或重新加载插件。详细说明见[编辑器桥参考](../../../operator/editor-bridge.md#the-godot-mcp-panel)。
 

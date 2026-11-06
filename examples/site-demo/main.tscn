@@ -1,0 +1,113 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+[ext_resource type="Texture2D" path="res://art/background.png" id="2_background"]
+[ext_resource type="Texture2D" path="res://art/ground.png" id="3_ground"]
+[ext_resource type="Texture2D" path="res://art/crate.png" id="4_crate"]
+[ext_resource type="Script" path="res://player.gd" id="5_player"]
+[ext_resource type="Texture2D" path="res://art/player.png" id="6_player"]
+[ext_resource type="PackedScene" path="res://coin.tscn" id="7_coin"]
+[ext_resource type="Texture2D" path="res://art/coin.png" id="8_coin_icon"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
+size = Vector2(960, 40)
+
+[sub_resource type="WorldBoundaryShape2D" id="WorldBoundaryShape2D_left"]
+normal = Vector2(1, 0)
+
+[sub_resource type="WorldBoundaryShape2D" id="WorldBoundaryShape2D_right"]
+normal = Vector2(-1, 0)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_crate"]
+size = Vector2(64, 60)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_player"]
+size = Vector2(68, 88)
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Background" type="Sprite2D" parent="."]
+texture = ExtResource("2_background")
+centered = false
+
+[node name="Ground" type="StaticBody2D" parent="."]
+position = Vector2(480, 516)
+
+[node name="Sprite" type="Sprite2D" parent="Ground"]
+scale = Vector2(1.0105, 1)
+texture = ExtResource("3_ground")
+
+[node name="Shape" type="CollisionShape2D" parent="Ground"]
+position = Vector2(0, 4)
+shape = SubResource("RectangleShape2D_ground")
+
+[node name="Walls" type="StaticBody2D" parent="."]
+
+[node name="Left" type="CollisionShape2D" parent="Walls"]
+shape = SubResource("WorldBoundaryShape2D_left")
+
+[node name="Right" type="CollisionShape2D" parent="Walls"]
+position = Vector2(960, 0)
+shape = SubResource("WorldBoundaryShape2D_right")
+
+[node name="Crate" type="StaticBody2D" parent="."]
+position = Vector2(560, 470)
+
+[node name="Sprite" type="Sprite2D" parent="Crate"]
+texture = ExtResource("4_crate")
+
+[node name="Shape" type="CollisionShape2D" parent="Crate"]
+shape = SubResource("RectangleShape2D_crate")
+
+[node name="Coins" type="Node2D" parent="."]
+
+[node name="CoinA" parent="Coins" instance=ExtResource("7_coin")]
+position = Vector2(56, 440)
+
+[node name="CoinB" parent="Coins" instance=ExtResource("7_coin")]
+position = Vector2(290, 440)
+
+[node name="CoinC" parent="Coins" instance=ExtResource("7_coin")]
+position = Vector2(400, 440)
+
+[node name="CoinD" parent="Coins" instance=ExtResource("7_coin")]
+position = Vector2(560, 380)
+
+[node name="Player" type="CharacterBody2D" parent="." groups=["player"]]
+position = Vector2(150, 452)
+script = ExtResource("5_player")
+
+[node name="Sprite" type="Sprite2D" parent="Player"]
+texture = ExtResource("6_player")
+
+[node name="Shape" type="CollisionShape2D" parent="Player"]
+position = Vector2(0, 4)
+shape = SubResource("RectangleShape2D_player")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Icon" type="TextureRect" parent="HUD"]
+offset_left = 896.0
+offset_top = 20.0
+offset_right = 936.0
+offset_bottom = 60.0
+texture = ExtResource("8_coin_icon")
+
+[node name="Count" type="Label" parent="HUD"]
+offset_left = 786.0
+offset_top = 14.0
+offset_right = 886.0
+offset_bottom = 66.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.13, 0.11, 0.1, 1)
+theme_override_constants/outline_size = 10
+theme_override_font_sizes/font_size = 36
+text = "0"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[connection signal="collected" from="Coins/CoinA" to="." method="_on_coin_collected"]
+[connection signal="collected" from="Coins/CoinB" to="." method="_on_coin_collected"]
+[connection signal="collected" from="Coins/CoinC" to="." method="_on_coin_collected"]
+[connection signal="collected" from="Coins/CoinD" to="." method="_on_coin_collected"]
