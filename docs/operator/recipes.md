@@ -1,13 +1,13 @@
 # Recipes
 
-Common setups — a 2D or 3D physics body, lights and a sky, particles, navigation, a sound, a
-shader material, a HUD, a grid map, an on-screen joystick and a theme — that
-`scene.recipe.apply` adds to a scene by name. A recipe is a named batch of the typed operations
-every authoring tool takes, with parameters: the call names the recipe and its parameters, the
-server expands them into operations and applies them as one `scene.batch.apply` batch,
-journaled and against the scene's SHA-256, or in the connected editor as one undoable action
-when the scene is open there. The answer names every parameter the recipe used, defaults
-included, and carries the operations it applied.
+Common setups by name: ten that `scene.recipe.apply` adds to a scene — a 2D or 3D physics body,
+lights and a sky, particles, navigation, a sound, a shader material, a HUD, a grid map and an
+on-screen joystick — and a theme, a resource that `resource.create` makes. A recipe is a named
+batch of the typed operations every authoring tool takes, with parameters: the call names the
+recipe and its parameters, the server expands them into operations and applies them as one
+`scene.batch.apply` batch, journaled and against the scene's SHA-256, or in the connected editor
+as one undoable action when the scene is open there. The answer names every parameter the
+recipe used, defaults included, and carries the operations it applied.
 
 Each recipe below shows a call, the operations that call becomes and the recipe's parameters.
 The operations also work on their own:

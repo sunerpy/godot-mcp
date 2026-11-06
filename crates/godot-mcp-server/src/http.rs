@@ -95,7 +95,7 @@ pub use secret::{
 };
 pub use staged::StagedHandler;
 
-/// The single MCP endpoint path both HTTP modes expose.
+/// The single MCP endpoint path every HTTP mode exposes.
 pub const MCP_PATH: &str = "/mcp";
 
 /// The Streamable HTTP session header, in the one spelling this module compares.
@@ -189,7 +189,7 @@ pub enum HttpTransportError {
         detail: String,
     },
     /// The listener could not be bound.
-    #[error("the loopback listener could not be bound: {detail}")]
+    #[error("the HTTP listener could not be bound: {detail}")]
     Listen {
         /// What the OS reported.
         detail: String,

@@ -171,7 +171,7 @@ impl ModePrincipal {
 
 /// The MCP connection/session the request arrived on.
 ///
-/// `stdio` uses its connection session; both HTTP modes use the MCP session.
+/// `stdio` uses its connection session; every HTTP mode uses the MCP session.
 /// Either way a session is required: an identity tuple with no session could be
 /// reused across connections, which is precisely what the tuple exists to stop.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
