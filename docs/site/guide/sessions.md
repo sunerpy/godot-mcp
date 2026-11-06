@@ -125,6 +125,8 @@ step whose outcome cannot be decided ends the run, and `maxDurationMs` bounds th
 The verdict is `passed` only when every step passed, and the report is also kept as a JSON
 artifact. A text assertion reads the control's `text` property; nothing reads the screen as text.
 
+<ScreenFigure src="/screens/game-scenario.webp" width="960" height="540" alt="The demo game after a five-step scenario. The robot is back at the left edge, one coin still floats above a wooden crate, and the coin counter shows 3." caption="The screenshot the last step of a test.scenario.run scenario kept, from the demo project in examples/site-demo." />
+
 ## Debug
 
 `editor.session.start` starts a headless Godot editor on the project with its GDScript language

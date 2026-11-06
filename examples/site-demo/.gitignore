@@ -1,0 +1,3 @@
+# Godot's import cache and godot-mcp's state: both are rebuilt when the project is opened.
+/.godot/
+/.godot-mcp/

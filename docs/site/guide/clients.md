@@ -1,5 +1,5 @@
 ---
-description: Register godot-mcp with Claude Code or a client configured with JSON, and set its environment.
+description: Register godot-mcp with Claude Code, Codex, OpenCode, Pi Agent or a client configured with JSON, and set its environment.
 ---
 
 # MCP clients
@@ -31,6 +31,44 @@ One server serves one project. To work on two projects, register two servers.
 ```sh
 claude mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
 ```
+
+## Codex
+
+```sh
+codex mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+```
+
+The command writes the server into Codex's `config.toml` (in `~/.codex`, or in `$CODEX_HOME` when
+that is set); `codex mcp list` shows it.
+
+## OpenCode
+
+OpenCode reads its servers from an `opencode.json` in the project, or from its global
+configuration file (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "godot-mcp": {
+      "type": "local",
+      "command": ["godot-mcp", "serve", "--project", "/path/to/my-game", "--profile", "full"],
+      "enabled": true
+    }
+  }
+}
+```
+
+`opencode mcp list` shows whether it connected.
+
+## Pi Agent
+
+```sh
+pi mcp add godot-mcp -- godot-mcp serve --project /path/to/my-game --profile full
+```
+
+This writes the server to `~/.pi/agent/mcp.json`, which every project reads. With `-l` it goes to
+the project's `.pi/mcp.json` instead, which Pi Agent reads only in a project you have trusted.
+`pi mcp list` shows whether the server connected and which tools it lists.
 
 ## Clients configured with JSON
 

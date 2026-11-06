@@ -23,7 +23,7 @@ does not matter which editor or IDE you use.
   live scene tree, captures screenshots and recordings, and debugs through the editor's language
   server and debug adapter.
 
-## A Rust server, not an editor plugin
+## A Rust server, not only an editor plugin
 
 godot-mcp is written in Rust and GDScript, each where it does the most good. The server is one
 static Rust binary, with no language runtime to install: it speaks MCP, reads GDScript, scenes and
@@ -36,14 +36,14 @@ engine:
 - the **runtime probe**, which the server passes on the command line to each game it starts: no
   autoload is installed and no project setting changes, so there is nothing to undo when the game
   stops;
-- the **`godot_mcp` add-on**, which you install only to bring the editor you have open into the
-  work.
+- the **`godot_mcp` add-on**, an editor plugin you install only to bring the editor you have open
+  into the work.
 
-An editor plugin lives inside the editor: it works only while the editor runs, and only with what
-the editor holds. godot-mcp works beside the project instead. Analysis and file edits need no
-Godot at all; a Godot executable is enough for checks, imports, tests, exports and games; and the
-add-on adds the editor you are using, with the server keeping its journal, policy and recovery
-rules for the edits made there.
+A tool built only as an editor plugin lives inside the editor: it works only while the editor
+runs, and only with what the editor holds. godot-mcp works beside the project instead. Analysis
+and file edits need no Godot at all; a Godot executable is enough for checks, imports, tests,
+exports and games; and the add-on adds the editor you are using, with the server keeping its
+journal, policy and recovery rules for the edits made there.
 
 ## How it is organised
 

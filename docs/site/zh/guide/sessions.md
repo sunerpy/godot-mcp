@@ -52,6 +52,8 @@ description: 服务器启动并持有的游戏与编辑器：运行游戏、发�
 
 `test.scenario.run` 在一次调用里按顺序执行最多 64 个步骤，并答复一份报告：输入、等待、写属性、按按钮、调整时间缩放、对属性或控件文本的断言、截图、图像比较，以及压力步骤——添加最多 1000 个场景实例，观察帧率和节点数量，并检查结束后每个实例都已释放。每个步骤的结果是 `passed`、`failed`（附带期望值和实际值）、`error`、`skipped` 或 `uncertain` 之一。默认在第一次失败后跳过其余步骤，把 `stopOnFailure` 设为 `false` 可以继续执行；无法判定结果的步骤会结束整个运行；`maxDurationMs` 限制总时长。只有所有步骤都通过，结论才是 `passed`；报告还会另存为一个 JSON 产物。文本断言读取的是控件的 `text` 属性，不会把屏幕内容识别成文字。
 
+<ScreenFigure src="/screens/game-scenario.webp" width="960" height="540" alt="一个五步场景跑完后的演示游戏。机器人回到了最左侧，木箱上方还浮着一枚硬币，硬币计数显示 3。" caption="test.scenario.run 场景最后一步保留的截图，来自 examples/site-demo 里的演示项目。" />
+
 ## 调试
 
 `editor.session.start` 在项目上启动一个无界面的 Godot 编辑器，它的 GDScript 语言服务器和调试适配器监听服务器分配的回环端口；只有当这两个端口都在监听、并且确实由这个编辑器进程持有时，调用才会答复。之后 `debug.command` 通过会话的启动凭据发送一条命令：
