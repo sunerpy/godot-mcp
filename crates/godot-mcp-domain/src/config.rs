@@ -170,6 +170,21 @@ pub enum HttpMode {
     TrustedLocal,
     /// Authenticated proxy hop plus one frozen OIDC principal.
     ProxiedOidc,
+    /// A development-network listener on any address: no credential, or one
+    /// fixed token when `token` is set. See ADR 0014.
+    Open,
+}
+
+impl HttpMode {
+    /// Stable snake_case name, as the configuration spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TrustedLocal => "trusted_local",
+            Self::ProxiedOidc => "proxied_oidc",
+            Self::Open => "open",
+        }
+    }
 }
 
 /// An asymmetric OIDC signing algorithm selectable by deployment configuration.
@@ -246,6 +261,11 @@ pub struct HttpConfig {
     /// `docs/operator/configuration.md`.
     #[serde(default)]
     pub local_secret: Option<SecretRef>,
+    /// The fixed bearer token an `open` listener requires, as an indirection
+    /// resolved once at start. Absent, an `open` listener asks for no
+    /// credential. Forbidden in the other modes.
+    #[serde(default)]
+    pub token: Option<SecretRef>,
     /// Proxied-OIDC proxy-hop identity.
     #[serde(default)]
     pub proxy_hop: Option<ProxyHopCredential>,
@@ -522,6 +542,7 @@ pub struct CliOverrides {
     pub http_host: Option<String>,
     pub http_origin: Option<String>,
     pub http_local_secret: Option<SecretRef>,
+    pub http_token: Option<SecretRef>,
     pub http_proxy_hop: Option<ProxyHopCredential>,
     pub http_principal: Option<OidcPrincipal>,
     pub http_external_resource_url: Option<String>,
@@ -631,6 +652,7 @@ struct HttpPartial {
     host: Option<String>,
     origin: Option<String>,
     local_secret: Option<SecretRef>,
+    token: Option<SecretRef>,
     proxy_hop: Option<ProxyHopCredential>,
     principal: Option<OidcPrincipal>,
     external_resource_url: Option<String>,
@@ -649,6 +671,7 @@ impl From<HttpConfig> for HttpPartial {
             host: value.host,
             origin: value.origin,
             local_secret: value.local_secret,
+            token: value.token,
             proxy_hop: value.proxy_hop,
             principal: value.principal,
             external_resource_url: value.external_resource_url,
@@ -670,11 +693,15 @@ impl HttpPartial {
         if self.mode.is_none() {
             missing.push("http.mode");
         }
-        if self.host.is_none() {
-            missing.push("http.host");
-        }
-        if self.origin.is_none() {
-            missing.push("http.origin");
+        // An open listener accepts any Host and refuses every Origin unless
+        // these are set; the authenticated modes need both.
+        if self.mode != Some(HttpMode::Open) {
+            if self.host.is_none() {
+                missing.push("http.host");
+            }
+            if self.origin.is_none() {
+                missing.push("http.origin");
+            }
         }
         if let Some(mode) = self.mode {
             match mode {
@@ -692,7 +719,7 @@ impl HttpPartial {
                         missing.push("http.external_resource_url");
                     }
                 }
-                HttpMode::TrustedLocal => {}
+                HttpMode::TrustedLocal | HttpMode::Open => {}
             }
         }
         if !missing.is_empty() {
@@ -715,6 +742,7 @@ impl HttpPartial {
             host: self.host,
             origin: self.origin,
             local_secret: self.local_secret,
+            token: self.token,
             proxy_hop: self.proxy_hop,
             principal: self.principal,
             external_resource_url: self.external_resource_url,
@@ -749,11 +777,14 @@ pub fn load_config(
     let env_http = apply_env(&mut config, &mut http, env)?;
     let cli_http = apply_cli(&mut config, &mut http, cli);
     let http_override = env_http || cli_http;
-    let active_secret_env = match http.local_secret.as_ref() {
-        Some(SecretRef::Env { var }) => Some(var.as_str()),
-        _ => None,
-    };
-    reject_unknown_env(env, active_secret_env)?;
+    let secret_envs: Vec<&str> = [http.local_secret.as_ref(), http.token.as_ref()]
+        .into_iter()
+        .filter_map(|secret| match secret {
+            Some(SecretRef::Env { var }) => Some(var.as_str()),
+            _ => None,
+        })
+        .collect();
+    reject_unknown_env(env, &secret_envs)?;
 
     if had_http || http_override {
         config.http = Some(http.finish(http_override)?);
@@ -764,7 +795,7 @@ pub fn load_config(
 
 fn reject_unknown_env(
     env: &BTreeMap<String, String>,
-    active_secret_env: Option<&str>,
+    secret_envs: &[&str],
 ) -> Result<(), ConfigError> {
     const KNOWN: &[&str] = &[
         "GODOT_MCP_PROJECT_ROOT",
@@ -777,6 +808,8 @@ fn reject_unknown_env(
         "GODOT_MCP_HTTP_ORIGIN",
         "GODOT_MCP_HTTP_LOCAL_SECRET_ENV",
         "GODOT_MCP_HTTP_LOCAL_SECRET_FILE",
+        "GODOT_MCP_HTTP_TOKEN_ENV",
+        "GODOT_MCP_HTTP_TOKEN_FILE",
         "GODOT_MCP_HTTP_PROXY_SOCKET_PATH",
         "GODOT_MCP_HTTP_PROXY_CREDENTIAL_FILE",
         "GODOT_MCP_HTTP_PRINCIPAL_ISSUER",
@@ -801,7 +834,7 @@ fn reject_unknown_env(
     for name in env.keys() {
         if name.starts_with(ENV_PREFIX)
             && !KNOWN.contains(&name.as_str())
-            && active_secret_env != Some(name.as_str())
+            && !secret_envs.contains(&name.as_str())
         {
             return Err(ConfigError::UnknownEnvVar { name: name.clone() });
         }
@@ -901,10 +934,11 @@ fn apply_env(
         http.mode = Some(match value.as_str() {
             "trusted_local" => HttpMode::TrustedLocal,
             "proxied_oidc" => HttpMode::ProxiedOidc,
+            "open" => HttpMode::Open,
             _ => {
                 return Err(invalid_env(
                     "GODOT_MCP_HTTP_MODE",
-                    "expected trusted_local or proxied_oidc",
+                    "expected trusted_local, proxied_oidc or open",
                 ));
             }
         });
@@ -923,6 +957,17 @@ fn apply_env(
             "GODOT_MCP_HTTP_LOCAL_SECRET_FILE",
         )?;
         http.local_secret = Some(SecretRef::File {
+            path: value.clone(),
+        });
+        touched = true;
+    }
+    if let Some(value) = env.get("GODOT_MCP_HTTP_TOKEN_ENV") {
+        http.token = Some(SecretRef::Env { var: value.clone() });
+        touched = true;
+    }
+    if let Some(value) = env.get("GODOT_MCP_HTTP_TOKEN_FILE") {
+        ensure_exclusive_env(env, "GODOT_MCP_HTTP_TOKEN_ENV", "GODOT_MCP_HTTP_TOKEN_FILE")?;
+        http.token = Some(SecretRef::File {
             path: value.clone(),
         });
         touched = true;
@@ -1050,6 +1095,7 @@ fn apply_cli(config: &mut ServerConfig, http: &mut HttpPartial, cli: &CliOverrid
     set_clone!(&cli.http_host, http.host);
     set_clone!(&cli.http_origin, http.origin);
     set_clone!(&cli.http_local_secret, http.local_secret);
+    set_clone!(&cli.http_token, http.token);
     set_clone!(&cli.http_proxy_hop, http.proxy_hop);
     set_clone!(&cli.http_principal, http.principal);
     set_clone!(&cli.http_external_resource_url, http.external_resource_url);
@@ -1260,9 +1306,13 @@ fn validate_limits(limits: &Limits) -> Result<(), ConfigError> {
 }
 
 fn validate_http(http: &HttpConfig) -> Result<(), ConfigError> {
+    if http.mode == HttpMode::Open {
+        return validate_open_http(http);
+    }
     if !http.bind.ip().is_loopback() {
         return Err(ConfigError::NonLoopbackBind { addr: http.bind });
     }
+    forbid(http.token.is_some(), "token", http.mode)?;
     let host = http.host.as_deref().ok_or(ConfigError::MissingHost)?;
     require_nonempty("http.host", host)?;
     validate_authority(host).map_err(|reason| ConfigError::InvalidHost { reason })?;
@@ -1304,6 +1354,7 @@ fn validate_http(http: &HttpConfig) -> Result<(), ConfigError> {
                 http.mode,
             )
         }
+        HttpMode::Open => unreachable!("an open listener is validated by validate_open_http"),
         HttpMode::ProxiedOidc => {
             forbid(http.local_secret.is_some(), "local_secret", http.mode)?;
             validate_proxy_hop(
@@ -1329,6 +1380,52 @@ fn validate_http(http: &HttpConfig) -> Result<(), ConfigError> {
             validate_oidc_policy(http)
         }
     }
+}
+
+/// The `open` mode: any bind address, an optional exact Host and Origin, an
+/// optional fixed token, and none of the other modes' fields.
+fn validate_open_http(http: &HttpConfig) -> Result<(), ConfigError> {
+    if let Some(host) = http.host.as_deref() {
+        require_nonempty("http.host", host)?;
+        validate_authority(host).map_err(|reason| ConfigError::InvalidHost { reason })?;
+    }
+    if let Some(origin) = http.origin.as_deref() {
+        require_nonempty("http.origin", origin)?;
+        validate_origin(origin)?;
+    }
+    for (field, value) in [
+        ("http.session_idle_timeout_ms", http.session_idle_timeout_ms),
+        ("http.session_lifetime_ms", http.session_lifetime_ms),
+    ] {
+        if value == Some(0) {
+            return Err(ConfigError::ZeroLimit { field });
+        }
+    }
+    if let Some(token) = http.token.as_ref() {
+        match token {
+            SecretRef::Env { var } => require_nonempty("http.token.env.var", var)?,
+            SecretRef::File { path } => require_nonempty("http.token.file.path", path)?,
+        }
+    }
+    forbid(http.local_secret.is_some(), "local_secret", http.mode)?;
+    forbid(http.proxy_hop.is_some(), "proxy_hop", http.mode)?;
+    forbid(http.principal.is_some(), "principal", http.mode)?;
+    forbid(
+        http.external_resource_url.is_some(),
+        "external_resource_url",
+        http.mode,
+    )?;
+    forbid(
+        http.allowed_algorithms.is_some(),
+        "allowed_algorithms",
+        http.mode,
+    )?;
+    forbid(http.required_scopes.is_some(), "required_scopes", http.mode)?;
+    forbid(
+        http.required_capabilities.is_some(),
+        "required_capabilities",
+        http.mode,
+    )
 }
 
 fn validate_oidc_policy(http: &HttpConfig) -> Result<(), ConfigError> {

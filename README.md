@@ -70,17 +70,51 @@ cannot.
   moves its 3D cameras, answers its dialogs, restarts it once nothing it holds
   can be lost, picks up changed files and runs the game from the editor. A panel
   in the editor shows the connection and the newest 500 requests it answered.
+- **Recipes for common setups.** `scene.recipe.apply` adds one of ten setups to a scene
+  by name — a 2D or 3D physics body, lights with a sky and a camera, particles from six
+  presets (fire, smoke, sparks, rain, snow, explosion), navigation, a positional sound, a
+  shader material, a HUD, a grid map and an on-screen joystick — with its parameters, as one
+  journaled batch, or as one undoable action in the editor. A theme recipe goes to
+  `resource.create`. Each recipe is also an MCP prompt, `godot-mcp.recipe.<name>`, so an
+  agent finds them without a tool slot ([Recipes](docs/operator/recipes.md)).
 - **Refuses rather than guesses.** A binary `.scn` answers `unsupported` with the
   fix ("re-save it as text"); an outcome it cannot prove answers `uncertain`.
 - **Scripts only when you allow them.** Start the server with `--allow-scripts`
   and an agent can run its own GDScript headless, in the open editor or in a
   running game, and see what it returned, printed and changed. It is off by
   default, and nothing confines a script once it is on.
-- **Local-first.** stdio by default, with no port and no credential. Optional
-  loopback HTTP accepts only a per-launch secret or an authenticated proxy hop.
+- **Local-first.** stdio by default, with no port and no credential. Optional HTTP
+  listens on loopback with a per-launch secret or behind an authenticated proxy, or, with
+  `godot-mcp serve --http 0.0.0.0:8765`, on a development network with no credential or one
+  token ([HTTP: `open`](docs/operator/http-open.md)).
 - **Verifiable packages.** Static Linux (musl) and `crt-static` Windows builds,
   a `MANIFEST.json` the binary checks itself against, a CycloneDX SBOM, and
   release archives attested by GitHub.
+
+## What it covers
+
+Which tools reach each part of a Godot project. "Edit" means a `call_method` operation in
+`scene.batch.apply`, `editor.scene.edit` or `resource.batch.apply`, or one in the operations
+of `scene.create` and `resource.create`; "read" means `scene.read`, `resource.read` or
+`editor.scene.read`. The [editor bridge](docs/operator/editor-bridge.md#editing-calls) lists
+every method each class takes.
+
+| Area            | Make and change                                                                                                                                                                                                   | Read back, run and observe                                                                                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Animation       | Edit `AnimationPlayer`, `AnimationLibrary` and `Animation`: `add_animation`, `add_track`, `track_insert_key`, `set_loop_mode`; `SpriteFrames` for frame animations                                                | Read `get_animation_list`, `track_get_key_count`, `track_get_key_value`; in a game, `runtime.signals.get` and `runtime.wait`                                                     |
+| AnimationTree   | Edit `AnimationNodeStateMachine` (`add_node`, `add_transition`), `AnimationNodeBlendTree` (`connect_node`) and the blend spaces (`add_blend_point`)                                                               | Read `get_node_list`, `get_transition_count`, `get_blend_point_count`                                                                                                            |
+| Physics         | `scene.recipe.apply` with `body-2d` or `body-3d`: a character, rigid, static or area body with its shape; `set_subresource` for any shape; `TileSet` physics layers                                               | `scene.tree.get`; in a game, `runtime.nodes.find` near a point, `runtime.properties.get`, `runtime.sample`, `runtime.time_scale.set`                                             |
+| 3D              | `scene.recipe.apply` with `body-3d`, `light-3d` (sun, lamp, sky, camera) or `gridmap-3d`; edit `GridMap` (`set_cell_item`) and `MeshLibrary` (`create_item`)                                                      | Read `get_used_cells`, a mesh's `get_aabb`, a `Skeleton3D`'s bones; `editor.camera.get`, `editor.camera.set`, `editor.screenshot.capture` of a 3D viewport                       |
+| Particles       | `scene.recipe.apply` with `particles-2d` and a preset: fire, smoke, sparks, rain, snow or explosion; `set_subresource` for a `ParticleProcessMaterial`                                                            | In a game, `runtime.screenshot.capture`, `runtime.recording.capture`, `runtime.image.compare`                                                                                    |
+| Navigation      | `scene.recipe.apply` with `navigation-2d`; edit `NavigationPolygon` (`add_outline`) and bake with the regions' `bake_navigation_polygon` and `bake_navigation_mesh`                                               | Read `get_polygon_count`, `get_vertices`; in a game, `runtime.navigation.path.get` and `runtime.node.move` along a path                                                          |
+| Audio           | `asset.put` and `project.import.run` for the sound, `scene.recipe.apply` with `audio-2d`, `project.settings.patch` for the bus layout                                                                             | `asset.status`; in a game, `runtime.properties.get` on the player                                                                                                                |
+| Shaders         | `file.create` for a `.gdshader`; `scene.recipe.apply` with `shader-2d` for a `ShaderMaterial` and its uniforms; edit `VisualShader` (`add_node`, `connect_nodes`)                                                 | `shader.check` for compile errors and uniforms; read `get_shader_uniform_list`                                                                                                   |
+| Themes          | `resource.create` or `resource.batch.apply` editing a `Theme` (`set_color`, `set_font_size`, `set_constant`, `set_stylebox`), as the `theme` recipe does; `scene.recipe.apply` with `hud`; edit `Control` anchors | Read `get_color`, `get_type_list`; in a game, `runtime.ui.get` and `runtime.ui.press`                                                                                            |
+| TileMap         | Edit `TileSet` and `TileSetAtlasSource` (`add_source`, `create_tile`, terrains) and `TileMapLayer` (`set_cell`, `erase_cell`, `set_cells_terrain_connect`)                                                        | Read `get_used_cells`, `get_cell_source_id`, `get_cell_atlas_coords`                                                                                                             |
+| Runtime control | `project.run.start` and `project.run.stop`; `input.action.send`, `input.key.send`, `input.mouse.send`, `input.sequence.send`, `input.replay`                                                                      | `runtime.tree.get`, `runtime.properties.get`, `runtime.properties.set`, `runtime.wait`, `runtime.ui.get`, `runtime.screenshot.capture`; `test.scenario.run` for a whole scenario |
+
+The `full` profile holds 130 tools; the generated
+[tool inventory](docs/protocol/tool-inventory.md) lists each one with its profiles.
 
 ## Install
 
@@ -196,7 +230,8 @@ client as above, then let the agent discover the rest:
 | Every capability, with requests and measured answers  | [Usage and verification](docs/operator/usage-and-verification.md)    |
 | Games and editors it runs, input, captures, debugging | [Managed sessions](docs/operator/managed-sessions.md)                |
 | Driving the editor you have open                      | [Editor bridge](docs/operator/editor-bridge.md)                      |
-| Recipes for common nodes, created and tuned live      | [Recipes](docs/operator/recipes.md)                                  |
+| Recipes for common setups, applied by name            | [Recipes](docs/operator/recipes.md)                                  |
+| Serving another machine of a development network      | [HTTP: `open`](docs/operator/http-open.md)                           |
 | Profiles, outcomes, `unavailable` and `uncertain`     | [Profiles and tool outcomes](docs/operator/profiles-and-outcomes.md) |
 | Crashes, survivors, quarantine and repair             | [Recovery](docs/operator/recovery.md)                                |
 | Trust boundaries and residual risk                    | [Threat model](docs/security/threat-model.md)                        |

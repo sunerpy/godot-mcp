@@ -1,6 +1,6 @@
 # MCP surface
 
-The public surface is Model Context Protocol: tools, resources, and typed outcomes. The
+The public surface is Model Context Protocol: tools, resources, prompts and typed outcomes. The
 same kernel serves every transport, so a tool answers identically wherever the request
 came from.
 
@@ -9,15 +9,18 @@ came from.
 | Transport | Default | Reachability |
 | --- | --- | --- |
 | stdio | Yes | The launching process only |
-| HTTP | No | Loopback, authenticated, optionally behind a same-host proxy |
+| HTTP | No | `trusted_local` and `proxied_oidc`: loopback, authenticated, optionally behind a same-host proxy; `open`: any address, no credential or one fixed token |
 
 Under stdio, framing is newline-delimited JSON-RPC on stdin and stdout. **stdout carries
 protocol frames and nothing else**: diagnostics can only be routed to `stderr` or to a
 bounded rolling file, so a log line cannot corrupt a frame.
 
-Under HTTP the MCP path is `http-protocol:/mcp`, the listener binds loopback, and every
-request is authenticated. See [HTTP: `trusted_local`](../operator/http-trusted-local.md)
-and [HTTP: `proxied_oidc`](../operator/http-proxied-oidc.md).
+Under HTTP the MCP path is `http-protocol:/mcp`. A `trusted_local` or `proxied_oidc`
+listener binds loopback and authenticates every request; an `open` listener binds the
+address the operator gives, for a development network, and asks for no credential or for one
+fixed token. See [HTTP: `trusted_local`](../operator/http-trusted-local.md),
+[HTTP: `proxied_oidc`](../operator/http-proxied-oidc.md) and
+[HTTP: `open`](../operator/http-open.md).
 
 ## Discovery
 
@@ -25,7 +28,11 @@ and [HTTP: `proxied_oidc`](../operator/http-proxied-oidc.md).
 initialization:
 
 * `tools/list` returns exactly the selected profile's tools;
-* `resources/list` returns exactly the selected profile's resources.
+* `resources/list` returns exactly the selected profile's resources;
+* `prompts/list` returns `godot-mcp.profile-guide` in every profile and, in `editor` and
+  `full`, one `godot-mcp.recipe.<name>` prompt per recipe of
+  [Recipes](../operator/recipes.md), whose text is generated from the same registry as
+  `scene.recipe.apply`.
 
 Both reflect **membership**, not current reachability. A tool that belongs to the profile
 is listed even when the plane behind it cannot be reached, and a call then returns

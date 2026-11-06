@@ -678,6 +678,39 @@ pub const SCENE_BATCH_APPLY_IN_EDITOR: ToolDescriptor = ToolDescriptor {
     ..SCENE_BATCH_APPLY
 };
 
+/// `scene.recipe.apply`: a named recipe expanded into the operations of one
+/// `scene.batch.apply` batch, applied the same two ways, which
+/// [`SCENE_RECIPE_APPLY_IN_EDITOR`] describes for the editor.
+const SCENE_RECIPE_APPLY: ToolDescriptor = ToolDescriptor {
+    consult_editor: true,
+    introduced_in: ContractVersion::V0_5_0,
+    ..engine_write(
+        EngineOperation::SceneRecipe.key(),
+        "scene.recipe.apply",
+        "Apply a scene recipe",
+        "Add a named setup — a 2D or 3D physics body with its shape, lights with a sky and a \
+         camera, 2D particles from a preset (fire, smoke, sparks, rain, snow, explosion), a baked \
+         navigation floor with an agent, a positional sound, a shader rectangle, a HUD, a grid \
+         map, an on-screen joystick — below `parent` in the text scene at `path` whose SHA-256 is \
+         `expectedSha256`. `recipe` is an object with one key, the recipe's name, holding its \
+         parameters, such as `{\"body-2d\": {\"shape\": \"circle\"}}`; each recipe's \
+         parameters and defaults are in this schema, and the answer names every value it used. \
+         It expands into the typed operations of one `scene.batch.apply` batch, answered as \
+         `operations`, and applies them the same way: journaled, and in the connected editor as \
+         one undoable action when the scene is open there. The `godot-mcp.recipe.<name>` \
+         prompts show each recipe's parameters and operations.",
+        REWRITE,
+    )
+};
+
+/// `scene.recipe.apply` as executed by the connected live editor. Never listed
+/// on its own.
+pub const SCENE_RECIPE_APPLY_IN_EDITOR: ToolDescriptor = ToolDescriptor {
+    boundary: Some(ToolBoundary::Editor),
+    needs: ToolNeeds::LiveEditor,
+    ..SCENE_RECIPE_APPLY
+};
+
 /// `project.settings.patch`. Its file boundary rewrites project.godot; while a
 /// live editor is connected the editor owns that file and applies the same
 /// request instead, which [`PROJECT_SETTINGS_PATCH_IN_EDITOR`] describes.
@@ -714,6 +747,7 @@ pub const EDITOR_EXCLUSIVE_TOOLS: &[&str] = &["project.import.run", "project.uid
 pub fn in_editor_descriptor(name: &str) -> Option<&'static ToolDescriptor> {
     [
         &SCENE_BATCH_APPLY_IN_EDITOR,
+        &SCENE_RECIPE_APPLY_IN_EDITOR,
         &PROJECT_SETTINGS_PATCH_IN_EDITOR,
     ]
     .into_iter()
@@ -1357,6 +1391,7 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         CREATE,
     ),
     SCENE_BATCH_APPLY,
+    SCENE_RECIPE_APPLY,
     engine_write(
         EngineOperation::ResourceCreate.key(),
         "resource.create",
@@ -2663,11 +2698,14 @@ mod tests {
     }
 
     /// A tool the frozen contract 0.2 lists was introduced by 0.2 or earlier,
-    /// and one the frozen contract 0.3 lists by 0.3 or earlier; every other
-    /// tool was introduced by contract 0.4.
+    /// one the frozen contract 0.3 lists by 0.3 or earlier, and one the frozen
+    /// contract 0.4 lists by 0.4; every other tool was introduced by contract
+    /// 0.5.
     #[test]
     fn every_tool_says_which_contract_introduced_it() {
-        use crate::manifests::{historical_manifest_v0_2, historical_manifest_v0_3};
+        use crate::manifests::{
+            historical_manifest_v0_2, historical_manifest_v0_3, historical_manifest_v0_4,
+        };
 
         let listed = |manifest: crate::manifests::ProfileManifest| -> BTreeSet<String> {
             manifest
@@ -2678,13 +2716,16 @@ mod tests {
         };
         let v0_2 = listed(historical_manifest_v0_2(CapabilityProfile::Full));
         let v0_3 = listed(historical_manifest_v0_3(CapabilityProfile::Full));
+        let v0_4 = listed(historical_manifest_v0_4(CapabilityProfile::Full));
         for tool in TOOL_CATALOG {
             let expected = if v0_2.contains(tool.name) {
                 tool.introduced_in
             } else if v0_3.contains(tool.name) {
                 ContractVersion::V0_3_0
-            } else {
+            } else if v0_4.contains(tool.name) {
                 ContractVersion::V0_4_0
+            } else {
+                ContractVersion::V0_5_0
             };
             assert!(
                 tool.introduced_in <= ContractVersion::V0_2_0 || !v0_2.contains(tool.name),

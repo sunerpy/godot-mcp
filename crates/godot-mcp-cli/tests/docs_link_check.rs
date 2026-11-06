@@ -322,9 +322,22 @@ fn docs_link_check_failure_paths() {
         "a public endpoint reached with no credential",
     );
     assert_reports(
-        &rules_after_appending(page, "\n```toml\nbind = \"0.0.0.0:8765\"\n```\n"),
-        "non-loopback-bind",
-        "an example binding the unspecified address",
+        &rules_after_appending(
+            page,
+            "\n```json\n{ \"url\": \"http://0.0.0.0:8765/mcp\" }\n```\n",
+        ),
+        "unspecified-destination",
+        "an example dialing the unspecified address",
+    );
+    // Binding it is the open mode's supported setting (ADR 0014), not a finding.
+    assert!(
+        !rules_after_appending(
+            page,
+            "\n```sh\ngodot-mcp serve --project . --http 0.0.0.0:8765\n```\n"
+        )
+        .iter()
+        .any(|rule| rule == "unspecified-destination"),
+        "binding the unspecified address is not dialing it"
     );
     assert_reports(
         &rules_after_appending(

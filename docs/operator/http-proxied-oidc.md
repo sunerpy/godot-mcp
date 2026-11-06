@@ -1,9 +1,11 @@
 # HTTP: `proxied_oidc`
 
-`proxied_oidc` is the only supported way to serve a request that originates off this
-host. It does not change where the backend listens: the backend still binds loopback
-only. What changes is who is allowed to hand it a request, and how the end user is
-identified.
+`proxied_oidc` is the authenticated way to serve a request that originates off this
+host: the user is identified, and TLS terminates in a proxy. (On a development network
+whose machines are yours, the [`open`](http-open.md) mode serves another machine
+directly, with no credential or one shared token.) It does not change where the backend
+listens: the backend still binds loopback only. What changes is who is allowed to hand it a
+request, and how the end user is identified.
 
 Two independent facts must both hold before a request is dispatched. Either one
 missing is a refusal, not a downgrade.

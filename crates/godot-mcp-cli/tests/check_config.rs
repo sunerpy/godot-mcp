@@ -1,6 +1,7 @@
 //! Todo 2 CLI gate: `godot-mcp check-config` maps typed-config validation to a
 //! process exit code (0 valid local/proxy fixtures; 2 public-bind, missing
-//! proxy-hop identity and missing principal fixtures).
+//! proxy-hop identity and missing principal fixtures). ADR 0014 adds the open
+//! mode: 0 for a bind on every interface, 2 for another mode's credential in it.
 
 use assert_cmd::Command;
 use assert_fs::prelude::*;
@@ -89,6 +90,31 @@ origin = "http://resource.example:9000"
 [http.local_secret.env]
 var = "GODOT_MCP_LAUNCH_SECRET"
 "#,
+        2,
+    );
+}
+
+/// The open mode may bind every interface, with or without a token, and is the
+/// only mode that may (ADR 0014; `public_bind_exits_two` keeps trusted_local
+/// on loopback).
+#[test]
+fn open_mode_on_every_interface_exits_zero() {
+    check(
+        "transport = \"http\"\n\n[http]\nbind = \"0.0.0.0:8765\"\nmode = \"open\"\n",
+        0,
+    );
+    check(
+        "transport = \"http\"\n\n[http]\nbind = \"[::]:8765\"\nmode = \"open\"\n\
+         host = \"192.168.1.20:8765\"\n\n[http.token.env]\nvar = \"LAN_TOKEN\"\n",
+        0,
+    );
+}
+
+#[test]
+fn open_mode_with_another_modes_credential_exits_two() {
+    check(
+        "transport = \"http\"\n\n[http]\nbind = \"0.0.0.0:8765\"\nmode = \"open\"\n\n\
+         [http.local_secret.env]\nvar = \"GODOT_MCP_LAUNCH_SECRET\"\n",
         2,
     );
 }

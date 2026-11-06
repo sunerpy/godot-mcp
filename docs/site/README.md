@@ -23,7 +23,7 @@ keys, links, example hosts and Godot versions follow the same rules as every oth
 | `docs/protocol/tool-inventory.md` | `/godot-mcp/reference/tools`, English only |
 | `docs/protocol/error-taxonomy.md` | `/godot-mcp/reference/outcomes`, English only |
 | `docs/operator/version-matrix.md` | `/godot-mcp/reference/godot-versions`, English only |
-| `docs/operator/managed-sessions.md`, `exports.md`, `editor-bridge.md`, `artifacts.md`, `process-boundaries.md`, `recovery.md`, `http-trusted-local.md`, `http-proxied-oidc.md` | `/godot-mcp/reference/<name>`, English only |
+| `docs/operator/managed-sessions.md`, `exports.md`, `editor-bridge.md`, `artifacts.md`, `process-boundaries.md`, `recovery.md`, `recipes.md`, `http-trusted-local.md`, `http-proxied-oidc.md`, `http-open.md` | `/godot-mcp/reference/<name>`, English only |
 | `docs/security/threat-model.md` | `/godot-mcp/reference/threat-model`, English only |
 | `docs/operator/usage-and-verification.md` | `/godot-mcp/zh/reference/usage`, Chinese only |
 | `docs/site/public/godot-mcp-logo.svg` | The site's logo and favicon |
@@ -59,7 +59,8 @@ The sync stops before it writes anything when:
 - Leave out how a page was checked: no "validated with", "recorded on" or test notes. That
   evidence belongs in the pull request.
 - Do not name private paths or hosts. Examples use a project under `/path/to/my-game`, loopback
-  addresses and names under `example.invalid`.
+  addresses, names under `example.invalid` and, for another machine of a network, documentation
+  addresses such as `192.0.2.10` (RFC 5737).
 - Chinese pages are written in Chinese, not translated word for word, and keep the English names
   of tools, fields and products. Use standard written Chinese (「无法读取」「未设置」), not
   colloquial words.

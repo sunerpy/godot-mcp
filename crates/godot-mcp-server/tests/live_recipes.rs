@@ -1,8 +1,11 @@
-//! Live acceptance of the recipes page: every recipe of
-//! `docs/operator/recipes.md`, read from the page itself, is created headless
-//! in a real Godot build, read back, then changed by its tuning batch in a live
-//! editor, undone, redone, saved, reloaded from its file and read again,
-//! through the production MCP server.
+//! Live acceptance of the recipes page and of `scene.recipe.apply`: every
+//! call of `docs/operator/recipes.md`, read from the page itself, is applied
+//! headless in a real Godot build to a scene `scene.create` made, and the theme
+//! is made by `resource.create`. Each is read back, then changed by its tuning
+//! batch in a live editor, undone, redone, saved, reloaded from its file and
+//! read again. Further variants of the body and particle recipes are applied
+//! headless, and one recipe is applied to a scene open in the editor, where it
+//! is one undoable action. Everything goes through the production MCP server.
 //!
 //! Like the other live suites it needs real editors, named by
 //! `GODOT_MCP_TEST_EDITORS` or `GODOT_MCP_LOCKED_ARTIFACT`, so every case is
@@ -16,17 +19,19 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Instant;
 
+use godot_mcp_domain::recipes;
 use live::{Editor, Ids, digest_of, editors, ok, wait_connected};
 use serde_json::{Value, json};
-use support::{ProjectTree, Spawn, StdioSession};
+use support::{ProjectTree, Spawn, StdioSession, sha256_hex};
 
 /// What one recipe makes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum Made {
-    /// A scene with a root of this class.
-    Scene { root: String },
-    /// A resource of this class.
+    /// A `scene.recipe.apply` call on a scene whose root has this class.
+    Scene { root: String, call: Value },
+    /// A resource of this class, made by `resource.create`.
     Resource { class: String },
 }
 
@@ -38,6 +43,8 @@ struct Recipe {
     made: Made,
     /// The oldest locked build that has every class the recipe uses.
     since: Option<String>,
+    /// The operations the page shows: what the call becomes, or what
+    /// `resource.create` takes.
     operations: Value,
     tune: Value,
 }
@@ -49,7 +56,7 @@ fn page() -> String {
 }
 
 /// The `key=value` attributes of an annotation such as
-/// `<!-- recipe id=body-2d path=scenes/player.tscn root=Node2D -->`.
+/// `<!-- recipe-call id=body-2d path=scenes/player.tscn root=Node2D -->`.
 fn attributes(line: &str, kind: &str) -> Option<BTreeMap<String, String>> {
     let inner = line
         .trim()
@@ -112,33 +119,62 @@ fn recipe_files() -> Vec<(String, String)> {
     files
 }
 
-/// Every recipe of the page, in page order.
+/// Every recipe of the page, in page order: a scene recipe from its call and
+/// the operations below it, a resource recipe from its operations alone.
 fn recipes() -> Vec<Recipe> {
     let text = page();
     let lines: Vec<&str> = text.lines().collect();
+    let mut calls: BTreeMap<String, (BTreeMap<String, String>, Value)> = BTreeMap::new();
     let mut recipes: Vec<Recipe> = Vec::new();
     let mut tunes: BTreeMap<String, Value> = BTreeMap::new();
     for (index, line) in lines.iter().enumerate() {
-        if let Some(found) = attributes(line, "recipe") {
-            let made = match (found.get("root"), found.get("class")) {
-                (Some(root), None) => Made::Scene { root: root.clone() },
-                (None, Some(class)) => Made::Resource {
-                    class: class.clone(),
-                },
-                _ => panic!("line {}: a recipe names a root or a class", index + 1),
+        if let Some(found) = attributes(line, "recipe-call") {
+            let id = found["id"].clone();
+            let previous = calls.insert(id, (found, block_after(&lines, index)));
+            assert!(
+                previous.is_none(),
+                "line {}: one call per recipe",
+                index + 1
+            );
+        } else if let Some(found) = attributes(line, "recipe") {
+            let id = found["id"].clone();
+            let operations = block_after(&lines, index);
+            let recipe = if let Some(class) = found.get("class") {
+                Recipe {
+                    path: found["path"].clone(),
+                    made: Made::Resource {
+                        class: class.clone(),
+                    },
+                    since: None,
+                    id,
+                    operations,
+                    tune: Value::Null,
+                }
+            } else {
+                let (call_attributes, call) = calls.remove(&id).unwrap_or_else(|| {
+                    panic!(
+                        "line {}: {id} shows its call before its operations",
+                        index + 1
+                    )
+                });
+                Recipe {
+                    path: call_attributes["path"].clone(),
+                    made: Made::Scene {
+                        root: call_attributes["root"].clone(),
+                        call,
+                    },
+                    since: call_attributes.get("since").cloned(),
+                    id,
+                    operations,
+                    tune: Value::Null,
+                }
             };
-            recipes.push(Recipe {
-                id: found["id"].clone(),
-                path: found["path"].clone(),
-                made,
-                since: found.get("since").cloned(),
-                operations: block_after(&lines, index),
-                tune: Value::Null,
-            });
+            recipes.push(recipe);
         } else if let Some(found) = attributes(line, "recipe-tune") {
             tunes.insert(found["id"].clone(), block_after(&lines, index));
         }
     }
+    assert!(calls.is_empty(), "every call has its operations: {calls:?}");
     for recipe in &mut recipes {
         recipe.tune = tunes
             .remove(&recipe.id)
@@ -149,6 +185,25 @@ fn recipes() -> Vec<Recipe> {
         "every tuning batch has its recipe: {tunes:?}"
     );
     recipes
+}
+
+/// Numbers compared as numbers: the registry writes `12.0` where a page may
+/// write `12`, and the server answers what the registry wrote.
+fn normalized(value: &Value) -> Value {
+    match value {
+        Value::Number(number) => number
+            .as_f64()
+            .and_then(serde_json::Number::from_f64)
+            .map_or_else(|| value.clone(), Value::Number),
+        Value::Array(items) => Value::Array(items.iter().map(normalized).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, field)| (key.clone(), normalized(field)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 /// What the saved file of each recipe holds once created.
@@ -242,7 +297,7 @@ fn created_lines(id: &str) -> &'static [&'static str] {
             "corner_radius_top_left = 8",
             "Panel/styles/panel = SubResource(",
         ],
-        "ui" => &[
+        "hud" => &[
             "path=\"res://ui/theme.tres\"",
             "theme = ExtResource(",
             "anchors_preset = 15",
@@ -289,7 +344,7 @@ fn tuned_line(id: &str) -> &'static str {
         "audio-2d" => "volume_db = -3.0",
         "shader-2d" => "shader_parameter/strength = 0.8",
         "theme" => "Label/font_sizes/font_size = 22",
-        "ui" => "theme_override_font_sizes/font_size = 32",
+        "hud" => "theme_override_font_sizes/font_size = 32",
         "joystick" => "deadzone_ratio = 0.3",
         // The cells of a grid map are one packed list; the tuned one is counted.
         "gridmap-3d" => "\"cells\": PackedInt32Array(",
@@ -421,26 +476,153 @@ fn added_nodes(operations: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The classes of the sub-resources a recipe's `set_subresource` operations
+/// embed.
+fn subresource_classes(operations: &Value) -> Vec<String> {
+    operations
+        .as_array()
+        .expect("operations")
+        .iter()
+        .filter(|operation| operation["op"] == "set_subresource")
+        .map(|operation| operation["class"].as_str().expect("class").to_owned())
+        .collect()
+}
+
+/// The operations the registry expands `parameters` of `id` to.
+fn expansion(id: &str, parameters: &Value) -> Value {
+    let expanded = recipes::recipe(id)
+        .unwrap_or_else(|| panic!("a registered recipe: {id}"))
+        .expand(parameters.as_object().expect("parameters"), None)
+        .unwrap_or_else(|error| panic!("{id} takes {parameters}: {}", error.message()));
+    Value::Array(expanded.operations)
+}
+
+/// The variants applied besides the page's calls: every body and shape the
+/// physics recipes take beyond the page's, and every particle preset.
+fn variants() -> Vec<(&'static str, Value)> {
+    let mut variants = vec![
+        ("body-2d", json!({ "body": "rigid", "shape": "circle" })),
+        ("body-2d", json!({ "body": "static", "shape": "rectangle" })),
+        ("body-2d", json!({ "body": "area", "shape": "capsule" })),
+        ("body-3d", json!({ "body": "static", "shape": "sphere" })),
+        (
+            "body-3d",
+            json!({ "body": "character", "shape": "capsule" }),
+        ),
+        ("body-3d", json!({ "body": "area", "shape": "cylinder" })),
+    ];
+    for preset in recipes::PARTICLE_PRESETS {
+        variants.push(("particles-2d", json!({ "preset": preset })));
+    }
+    variants
+}
+
+/// Make an empty scene with a `root` root at `path`, then apply `call` to it
+/// through `scene.recipe.apply`. Answers the tool's answer, or `None` when the
+/// build lacks a class the recipe uses: the call is then refused, naming the
+/// class, and the scene keeps its bytes.
+#[allow(clippy::too_many_arguments)]
+fn apply_to_new_scene(
+    session: &mut StdioSession,
+    ids: &mut Ids,
+    tree: &ProjectTree,
+    label: &str,
+    path: &str,
+    root: &str,
+    mut call: Value,
+    expected: &Value,
+    available: bool,
+    context: &str,
+) -> Option<Value> {
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "scene.create",
+            json!({ "path": path, "rootType": root, "idempotencyId": format!("empty-{label}") }),
+        ),
+        context,
+    );
+    let file = tree.root.join(path);
+    let empty = std::fs::read(&file).expect("the empty scene");
+    call["path"] = json!(path);
+    call["expectedSha256"] = json!(sha256_hex(&empty));
+    call["idempotencyId"] = json!(format!("apply-{label}"));
+    let response = session.call_tool(ids.next(), "scene.recipe.apply", call);
+    if !available {
+        let message = refusal(&response);
+        let class = added_nodes(expected)
+            .into_iter()
+            .map(|(_, class)| class)
+            .find(|class| message.contains(class.as_str()));
+        assert!(
+            class.is_some(),
+            "{context}: the refusal names the missing class: {message}"
+        );
+        assert_eq!(
+            std::fs::read(&file).expect("the scene"),
+            empty,
+            "{context}: a refused recipe writes nothing"
+        );
+        return None;
+    }
+    let applied = ok(&response, context);
+    assert_eq!(
+        applied["conclusion"], "proven_post_state",
+        "{context}: {applied}"
+    );
+    assert_eq!(applied["backend"], "headless", "{context}: {applied}");
+    assert_eq!(
+        normalized(&applied["operations"]),
+        normalized(expected),
+        "{context}: the answer carries the operations the call became: {applied}"
+    );
+    let saved = std::fs::read(&file).expect("the scene");
+    assert_eq!(
+        applied["after_sha256"],
+        json!(sha256_hex(&saved)),
+        "{context}"
+    );
+    Some(applied)
+}
+
+/// Read the scene back: its root has class `root`, and every node the
+/// operations add has the class they name.
+fn assert_tree(
+    session: &mut StdioSession,
+    ids: &mut Ids,
+    path: &str,
+    root: &str,
+    operations: &Value,
+    context: &str,
+) {
+    let read = ok(
+        &session.call_tool(ids.next(), "scene.tree.get", json!({ "scene": path })),
+        context,
+    );
+    let nodes = read["data"]["nodes"].as_array().expect("nodes").clone();
+    let class_of = |path: &str| {
+        nodes
+            .iter()
+            .find(|node| node["path"] == path)
+            .and_then(|node| node["type"].as_str())
+            .map(str::to_owned)
+    };
+    assert_eq!(class_of(".").as_deref(), Some(root), "{context}: {read}");
+    for (path, class) in added_nodes(operations) {
+        assert_eq!(
+            class_of(&path).as_deref(),
+            Some(class.as_str()),
+            "{context}: reads back {path}"
+        );
+    }
+}
+
 #[test]
-fn the_page_holds_a_recipe_and_a_tuning_batch_for_each_setup() {
+fn the_page_holds_a_call_or_operations_and_a_tuning_batch_for_each_recipe() {
     let recipes = recipes();
     let ids: Vec<&str> = recipes.iter().map(|recipe| recipe.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        [
-            "body-2d",
-            "body-3d",
-            "light-3d",
-            "particles-2d",
-            "navigation-2d",
-            "audio-2d",
-            "shader-2d",
-            "theme",
-            "ui",
-            "gridmap-3d",
-            "joystick"
-        ]
-    );
+    let registry: Vec<&str> = recipes::RECIPES.iter().map(|recipe| recipe.id).collect();
+    assert_eq!(ids, registry);
     for recipe in &recipes {
         assert!(!created_lines(&recipe.id).is_empty());
         assert!(!tuned_line(&recipe.id).is_empty());
@@ -453,6 +635,21 @@ fn the_page_holds_a_recipe_and_a_tuning_batch_for_each_setup() {
             recipe.id
         );
         assert!(recipe.tune.as_array().is_some_and(|ops| !ops.is_empty()));
+        let registered = recipes::recipe(&recipe.id).expect("registered");
+        match &recipe.made {
+            Made::Scene { root, call } => {
+                assert_eq!(call["path"], json!(recipe.path), "{}", recipe.id);
+                assert!(call["recipe"].get(&recipe.id).is_some(), "{}", recipe.id);
+                assert_eq!(root, registered.parent_class, "{}", recipe.id);
+                assert_eq!(recipe.since.as_deref(), registered.since, "{}", recipe.id);
+            }
+            Made::Resource { class } => match registered.target {
+                recipes::RecipeTarget::Resource { class: registered } => {
+                    assert_eq!(class, registered, "{}", recipe.id);
+                }
+                recipes::RecipeTarget::Scene => panic!("{} is a scene recipe", recipe.id),
+            },
+        }
     }
     let files = recipe_files();
     assert_eq!(
@@ -466,32 +663,44 @@ fn the_page_holds_a_recipe_and_a_tuning_batch_for_each_setup() {
         files[0].1.starts_with("shader_type canvas_item;\n"),
         "{files:?}"
     );
+    for (id, parameters) in variants() {
+        assert!(
+            !expansion(id, &parameters)
+                .as_array()
+                .expect("ops")
+                .is_empty()
+        );
+    }
 }
 
 #[test]
 #[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
-fn every_recipe_is_created_tuned_undone_redone_saved_and_reloaded() {
+fn every_recipe_is_applied_tuned_undone_redone_saved_and_reloaded() {
     let (binaries, _unpacked) = editors();
     let recipes = recipes();
     for binary in &binaries {
+        let started = Instant::now();
         recipes_in(binary, &recipes);
+        eprintln!(
+            "live_recipes: {} passed in {:.1} s",
+            binary.display(),
+            started.elapsed().as_secs_f64()
+        );
     }
 }
 
 fn recipes_in(binary: &Path, recipes: &[Recipe]) {
     let version = version_of(binary);
     let context = binary.display().to_string();
-    let available: Vec<&Recipe> = recipes
-        .iter()
-        .filter(|recipe| {
-            recipe
-                .since
-                .as_deref()
-                .is_none_or(|since| version_key(&version) >= version_key(since))
-        })
-        .collect();
+    let applies = |recipe: &Recipe| {
+        recipe
+            .since
+            .as_deref()
+            .is_none_or(|since| version_key(&version) >= version_key(since))
+    };
 
-    // Headless: create each recipe, read it back and check the saved file.
+    // Headless: make each recipe as its page says, read it back and check the
+    // saved file.
     let tree = ProjectTree::new("live-recipes");
     prepare(&tree);
     let mut headless = session(&tree, binary);
@@ -505,78 +714,113 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
         ),
         &context,
     );
-    for recipe in recipes {
-        let mut arguments = json!({
-            "path": recipe.path,
-            "operations": recipe.operations,
-            "idempotencyId": format!("create-{}", recipe.id),
-        });
-        let tool = match &recipe.made {
-            Made::Scene { root } => {
-                arguments["rootType"] = json!(root);
-                "scene.create"
-            }
+    // The resources first: the HUD's call names the theme.
+    let mut ordered: Vec<&Recipe> = recipes
+        .iter()
+        .filter(|recipe| matches!(recipe.made, Made::Resource { .. }))
+        .collect();
+    ordered.extend(
+        recipes
+            .iter()
+            .filter(|recipe| matches!(recipe.made, Made::Scene { .. })),
+    );
+    for recipe in ordered {
+        let context = format!("{context}: {}", recipe.id);
+        match &recipe.made {
             Made::Resource { class } => {
-                arguments["class"] = json!(class);
-                "resource.create"
+                ok(
+                    &headless.call_tool(
+                        ids.next(),
+                        "resource.create",
+                        json!({
+                            "path": recipe.path,
+                            "class": class,
+                            "operations": recipe.operations,
+                            "idempotencyId": format!("create-{}", recipe.id),
+                        }),
+                    ),
+                    &context,
+                );
             }
-        };
-        let response = headless.call_tool(ids.next(), tool, arguments);
-        if !available.iter().any(|candidate| candidate.id == recipe.id) {
-            // A class this build lacks refuses the whole batch, naming it.
-            let message = refusal(&response);
-            let class = added_nodes(&recipe.operations)
-                .into_iter()
-                .map(|(_, class)| class)
-                .find(|class| message.contains(class.as_str()));
-            assert!(
-                class.is_some(),
-                "{context}: {} names the missing class: {message}",
-                recipe.id
-            );
-            assert!(
-                !tree.root.join(&recipe.path).exists(),
-                "{context}: a refused recipe writes nothing"
-            );
-            continue;
-        }
-        ok(&response, &format!("{context}: {}", recipe.id));
-        let saved = std::fs::read_to_string(tree.root.join(&recipe.path)).expect("created file");
-        for line in created_lines(&recipe.id) {
-            assert!(
-                saved.contains(line),
-                "{context}: {} holds {line}:\n{saved}",
-                recipe.id
-            );
-        }
-        if let Made::Scene { root } = &recipe.made {
-            let read = ok(
-                &headless.call_tool(
-                    ids.next(),
-                    "scene.tree.get",
-                    json!({ "scene": recipe.path }),
-                ),
-                &context,
-            );
-            let nodes = read["data"]["nodes"].as_array().expect("nodes").clone();
-            let class_of = |path: &str| {
-                nodes
-                    .iter()
-                    .find(|node| node["path"] == path)
-                    .and_then(|node| node["type"].as_str())
-                    .map(str::to_owned)
-            };
-            assert_eq!(class_of(".").as_deref(), Some(root.as_str()), "{context}");
-            for (path, class) in added_nodes(&recipe.operations) {
-                assert_eq!(
-                    class_of(&path).as_deref(),
-                    Some(class.as_str()),
-                    "{context}: {} reads back {path}",
-                    recipe.id
+            Made::Scene { root, call } => {
+                let applied = apply_to_new_scene(
+                    &mut headless,
+                    &mut ids,
+                    &tree,
+                    &recipe.id,
+                    &recipe.path,
+                    root,
+                    call.clone(),
+                    &recipe.operations,
+                    applies(recipe),
+                    &context,
+                );
+                let Some(applied) = applied else {
+                    continue;
+                };
+                assert_eq!(applied["recipe"]["id"], json!(recipe.id), "{context}");
+                assert_tree(
+                    &mut headless,
+                    &mut ids,
+                    &recipe.path,
+                    root,
+                    &recipe.operations,
+                    &context,
                 );
             }
         }
+        let saved = std::fs::read_to_string(tree.root.join(&recipe.path)).expect("made file");
+        for line in created_lines(&recipe.id) {
+            assert!(saved.contains(line), "{context} holds {line}:\n{saved}");
+        }
     }
+    // The other bodies, shapes and particle presets, each with the registry's
+    // defaults, in their own scenes.
+    for (index, (id, parameters)) in variants().into_iter().enumerate() {
+        let registered = recipes::recipe(id).expect("registered");
+        let label = format!("{id}-{index}");
+        let path = format!("variants/{label}.tscn");
+        let context = format!("{context}: {id} {parameters}");
+        let expected = expansion(id, &parameters);
+        apply_to_new_scene(
+            &mut headless,
+            &mut ids,
+            &tree,
+            &label,
+            &path,
+            registered.parent_class,
+            json!({ "recipe": { id: parameters } }),
+            &expected,
+            true,
+            &context,
+        );
+        assert_tree(
+            &mut headless,
+            &mut ids,
+            &path,
+            registered.parent_class,
+            &expected,
+            &context,
+        );
+        let saved = std::fs::read_to_string(tree.root.join(&path)).expect("variant");
+        for class in subresource_classes(&expected) {
+            let embedded = format!("[sub_resource type=\"{class}\"");
+            assert!(
+                saved.contains(&embedded),
+                "{context} embeds {class}:\n{saved}"
+            );
+        }
+    }
+    // The empty scene the editor applies a recipe to.
+    ok(
+        &headless.call_tool(
+            ids.next(),
+            "scene.create",
+            json!({ "path": "scenes/smoke.tscn", "rootType": "Node2D",
+                    "idempotencyId": "empty-editor-smoke" }),
+        ),
+        &context,
+    );
     // The engine reads back what two recipes made: the grid's painted cells
     // and the polygons the navigation bake left in the region.
     let cell =
@@ -626,19 +870,25 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
     );
     let _ = headless.finish();
 
-    // In the editor: tune each scene as one undoable action, undo, redo,
-    // save, reload from the file and read the same scene again.
+    // In the editor: apply one recipe to an open scene as one undoable action,
+    // then tune each recipe's scene, undo, redo, save, reload from the file and
+    // read the same scene again.
     let editing = ProjectTree::new("live-recipes-editor");
     editing.write(
         "project.godot",
         "config_version=5\n\n[application]\n\nconfig/name=\"Recipes\"\n",
     );
     prepare(&editing);
-    for recipe in &available {
-        let bytes = std::fs::read(tree.root.join(&recipe.path)).expect("created file");
-        let target = editing.root.join(&recipe.path);
+    let copied = recipes
+        .iter()
+        .filter(|recipe| applies(recipe))
+        .map(|recipe| recipe.path.as_str())
+        .chain(["scenes/smoke.tscn"]);
+    for path in copied {
+        let bytes = std::fs::read(tree.root.join(path)).expect("made file");
+        let target = editing.root.join(path);
         std::fs::create_dir_all(target.parent().expect("parent")).expect("parent");
-        std::fs::write(target, bytes).expect("copy the created file");
+        std::fs::write(target, bytes).expect("copy the made file");
     }
     let mut session = session(&editing, binary);
     let mut ids = Ids(1);
@@ -661,117 +911,235 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
         &editor.context(),
     );
     let mark = editor.mark();
-    for recipe in &available {
-        let context = format!("{}: {}", editor.context(), recipe.id);
-        let file = editing.root.join(&recipe.path);
-        if let Made::Resource { .. } = recipe.made {
-            // A resource is tuned headless; the editor holds no buffer of it.
-            let before = std::fs::read(&file).expect("resource");
-            ok(
-                &session.call_tool(
-                    ids.next(),
-                    "resource.batch.apply",
-                    json!({
-                        "path": recipe.path,
-                        "expectedSha256": support::sha256_hex(&before),
-                        "operations": recipe.tune,
-                        "idempotencyId": format!("tune-{}", recipe.id),
-                    }),
-                ),
-                &context,
-            );
-            let saved = std::fs::read_to_string(&file).expect("resource");
-            assert!(
-                saved.contains(tuned_line(&recipe.id)),
-                "{context}:\n{saved}"
-            );
-            continue;
-        }
-        ok(
+    apply_in_editor(&mut session, &mut ids, &editing, &editor.context());
+    for recipe in recipes.iter().filter(|recipe| applies(recipe)) {
+        tune_in_editor(&mut session, &mut ids, &editing, recipe, &editor.context());
+    }
+    editor.assert_no_errors_since(
+        mark,
+        "applying a recipe in the editor, then tuning, undoing, redoing, saving and \
+         reloading every recipe",
+    );
+    let _ = session.finish();
+    drop(editor);
+}
+
+/// `scene.recipe.apply` on a scene open in the editor: the editor applies the
+/// operations as one action named after the tool and saves the scene; one
+/// undo reverts all of it and one redo restores it.
+fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectTree, editor: &str) {
+    let path = "scenes/smoke.tscn";
+    let context = format!("{editor}: {path}");
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": path, "idempotencyId": "open-smoke" }),
+        ),
+        &context,
+    );
+    let empty = digest_of(session, ids, &context);
+    let file = editing.root.join(path);
+    let before = std::fs::read(&file).expect("the empty scene");
+    let parameters = json!({ "preset": "smoke" });
+    let expected = expansion("particles-2d", &parameters);
+    let applied = ok(
+        &session.call_tool(
+            ids.next(),
+            "scene.recipe.apply",
+            json!({
+                "path": path,
+                "expectedSha256": sha256_hex(&before),
+                "recipe": { "particles-2d": parameters },
+                "idempotencyId": "editor-smoke",
+            }),
+        ),
+        &context,
+    );
+    assert_eq!(applied["backend"], "editor", "{context}: {applied}");
+    assert_eq!(
+        applied["conclusion"], "proven_post_state",
+        "{context}: {applied}"
+    );
+    assert_eq!(
+        normalized(&applied["operations"]),
+        normalized(&expected),
+        "{context}: {applied}"
+    );
+    let node = "[node name=\"Smoke\" type=\"GPUParticles2D\" parent=\".\"";
+    let saved = std::fs::read(&file).expect("the saved scene");
+    assert_eq!(
+        applied["after_sha256"],
+        json!(sha256_hex(&saved)),
+        "{context}"
+    );
+    assert!(
+        String::from_utf8_lossy(&saved).contains(node),
+        "{context}: the editor saved the recipe:\n{}",
+        String::from_utf8_lossy(&saved)
+    );
+    let status = ok(
+        &session.call_tool(ids.next(), "editor.status.get", json!({})),
+        &context,
+    );
+    assert_eq!(
+        status["editor"]["history"]["current_action"],
+        json!("godot-mcp: scene.recipe.apply"),
+        "{context}: one action named after the tool: {status}"
+    );
+    let made = digest_of(session, ids, &context);
+    assert_ne!(made, empty, "{context}");
+    for (step, (tool, expected)) in [("editor.undo", &empty), ("editor.redo", &made)]
+        .into_iter()
+        .enumerate()
+    {
+        let stepped = ok(
             &session.call_tool(
                 ids.next(),
-                "editor.scene.open",
-                json!({ "path": recipe.path, "idempotencyId": format!("open-{}", recipe.id) }),
+                tool,
+                json!({ "idempotencyId": format!("{tool}-smoke-{step}") }),
             ),
             &context,
         );
-        let original = digest_of(&mut session, &mut ids, &context);
-        let before_cells = grid_cells(&std::fs::read_to_string(&file).expect("scene"));
-        let edited = ok(
+        assert_eq!(stepped["digest"], json!(expected), "{context}: {tool}");
+    }
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.save",
+            json!({ "idempotencyId": "save-smoke" }),
+        ),
+        &context,
+    );
+    let saved = std::fs::read_to_string(&file).expect("the saved scene");
+    assert!(saved.contains(node), "{context}:\n{saved}");
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": path, "reload": true, "idempotencyId": "reload-smoke" }),
+        ),
+        &context,
+    );
+    assert_eq!(
+        digest_of(session, ids, &context),
+        made,
+        "{context}: the reloaded scene is the scene the editor saved"
+    );
+}
+
+/// A recipe's tuning batch: a scene's in the editor, as one undoable action,
+/// undone, redone, saved and reloaded; a resource's headless, since the
+/// editor holds no buffer of it.
+fn tune_in_editor(
+    session: &mut StdioSession,
+    ids: &mut Ids,
+    editing: &ProjectTree,
+    recipe: &Recipe,
+    editor: &str,
+) {
+    let context = format!("{editor}: {}", recipe.id);
+    let file = editing.root.join(&recipe.path);
+    if let Made::Resource { .. } = recipe.made {
+        let before = std::fs::read(&file).expect("resource");
+        ok(
             &session.call_tool(
                 ids.next(),
-                "editor.scene.edit",
+                "resource.batch.apply",
                 json!({
-                    "expectedDigest": original,
+                    "path": recipe.path,
+                    "expectedSha256": sha256_hex(&before),
                     "operations": recipe.tune,
-                    "label": format!("tune {}", recipe.id),
                     "idempotencyId": format!("tune-{}", recipe.id),
                 }),
             ),
             &context,
         );
-        let changed = edited["digest"].as_str().expect("digest").to_owned();
-        assert_ne!(changed, original, "{context}: {edited}");
-        for (step, (tool, expected)) in [("editor.undo", &original), ("editor.redo", &changed)]
-            .into_iter()
-            .enumerate()
-        {
-            let stepped = ok(
-                &session.call_tool(
-                    ids.next(),
-                    tool,
-                    json!({ "idempotencyId": format!("{tool}-{}-{step}", recipe.id) }),
-                ),
-                &context,
-            );
-            assert_eq!(stepped["digest"], json!(expected), "{context}: {tool}");
-        }
-        ok(
+        let saved = std::fs::read_to_string(&file).expect("resource");
+        assert!(
+            saved.contains(tuned_line(&recipe.id)),
+            "{context}:\n{saved}"
+        );
+        return;
+    }
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": recipe.path, "idempotencyId": format!("open-{}", recipe.id) }),
+        ),
+        &context,
+    );
+    let original = digest_of(session, ids, &context);
+    let before_cells = grid_cells(&std::fs::read_to_string(&file).expect("scene"));
+    let edited = ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.edit",
+            json!({
+                "expectedDigest": original,
+                "operations": recipe.tune,
+                "label": format!("tune {}", recipe.id),
+                "idempotencyId": format!("tune-{}", recipe.id),
+            }),
+        ),
+        &context,
+    );
+    let changed = edited["digest"].as_str().expect("digest").to_owned();
+    assert_ne!(changed, original, "{context}: {edited}");
+    for (step, (tool, expected)) in [("editor.undo", &original), ("editor.redo", &changed)]
+        .into_iter()
+        .enumerate()
+    {
+        let stepped = ok(
             &session.call_tool(
                 ids.next(),
-                "editor.scene.save",
-                json!({ "idempotencyId": format!("save-{}", recipe.id) }),
+                tool,
+                json!({ "idempotencyId": format!("{tool}-{}-{step}", recipe.id) }),
             ),
             &context,
         );
-        let saved = std::fs::read_to_string(&file).expect("saved scene");
-        if recipe.id == "gridmap-3d" {
-            assert_eq!(
-                grid_cells(&saved),
-                before_cells + 1,
-                "{context}: one more cell is painted:\n{saved}"
-            );
-        } else {
-            assert!(
-                saved.contains(tuned_line(&recipe.id)),
-                "{context}:\n{saved}"
-            );
-        }
-        for line in created_lines(&recipe.id)
-            .iter()
-            .filter(|line| line.starts_with("[node "))
-        {
-            assert!(saved.contains(line), "{context}: the editor keeps {line}");
-        }
-        ok(
-            &session.call_tool(
-                ids.next(),
-                "editor.scene.open",
-                json!({ "path": recipe.path, "reload": true,
-                        "idempotencyId": format!("reload-{}", recipe.id) }),
-            ),
-            &context,
-        );
+        assert_eq!(stepped["digest"], json!(expected), "{context}: {tool}");
+    }
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.save",
+            json!({ "idempotencyId": format!("save-{}", recipe.id) }),
+        ),
+        &context,
+    );
+    let saved = std::fs::read_to_string(&file).expect("saved scene");
+    if recipe.id == "gridmap-3d" {
         assert_eq!(
-            digest_of(&mut session, &mut ids, &context),
-            changed,
-            "{context}: the reloaded scene is the scene the editor saved"
+            grid_cells(&saved),
+            before_cells + 1,
+            "{context}: one more cell is painted:\n{saved}"
+        );
+    } else {
+        assert!(
+            saved.contains(tuned_line(&recipe.id)),
+            "{context}:\n{saved}"
         );
     }
-    editor.assert_no_errors_since(
-        mark,
-        "tuning, undoing, redoing, saving and reloading every recipe",
+    for line in created_lines(&recipe.id)
+        .iter()
+        .filter(|line| line.starts_with("[node "))
+    {
+        assert!(saved.contains(line), "{context}: the editor keeps {line}");
+    }
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "editor.scene.open",
+            json!({ "path": recipe.path, "reload": true,
+                    "idempotencyId": format!("reload-{}", recipe.id) }),
+        ),
+        &context,
     );
-    let _ = session.finish();
-    drop(editor);
+    assert_eq!(
+        digest_of(session, ids, &context),
+        changed,
+        "{context}: the reloaded scene is the scene the editor saved"
+    );
 }

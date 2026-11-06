@@ -72,6 +72,8 @@ pub(crate) enum TransportMode {
     TrustedLocal,
     /// HTTP behind an authenticated proxy hop with a frozen OIDC principal.
     ProxiedOidc,
+    /// HTTP on a development network (ADR 0014).
+    Open,
 }
 
 /// Operation family the transaction belongs to.

@@ -100,6 +100,7 @@ operations! {
         ResourceRead,
         ShaderCheck,
         ProjectBatch,
+        SceneRecipe,
     }
 }
 

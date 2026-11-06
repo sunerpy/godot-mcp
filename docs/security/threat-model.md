@@ -10,8 +10,10 @@ server at a project you did not write.
 machine, with your access to your files. Its guarantees are about **accountability and
 containment of mutation**: which project it may change, that a change either happened or
 did not, that a process it started can always be accounted for, and that every request
-that crosses a transport is authenticated. It provides no confinement of code execution
-and does not claim to.
+that crosses an authenticated transport is authenticated. The one transport that asks for
+no credential, or for one shared token, is the `open` HTTP mode, which an operator starts by
+name for a development network. It provides no confinement of code execution and does not
+claim to.
 
 <!-- lint:quoted-term --> The engine layer states this in its own shipped words, and no page may describe it in stronger terms: `not a code sandbox`, `mutation containment`.
 
@@ -24,7 +26,7 @@ useful questions are what it may change and what still bounds it.
 
 ## Trust boundaries
 
-Four boundaries. Each is stated with what it enforces, what it does not, and the
+Five boundaries. Each is stated with what it enforces, what it does not, and the
 residual risk you keep.
 
 ### 1. The file boundary
@@ -151,10 +153,10 @@ See [Editor bridge](../operator/editor-bridge.md).
 
 ### 4. The HTTP boundary
 
-**Enforces.** HTTP is off by default. The backend binds loopback only, in every mode,
-with no configuration that changes it. The exact `Host` authority and `Origin` are
-matched exactly rather than normalized, which is what stops a local browser page from
-driving the server. Under `trusted_local`, a per-launch, user-scoped secret authenticates
+**Enforces.** HTTP is off by default. Under `trusted_local` and `proxied_oidc` the backend
+binds loopback only, with no configuration that changes it, and the exact `Host` authority
+and `Origin` are matched exactly rather than normalized, which is what stops a local browser
+page from driving the server. Under `trusted_local`, a per-launch, user-scoped secret authenticates
 each request. Under `proxied_oidc`, two independent facts must both hold: an authenticated
 proxy-hop credential proving the request came through your proxy, and a validated bearer
 token whose issuer and subject equal the one configured principal exactly. Token handling
@@ -166,14 +168,24 @@ claims. No token value is ever authority over which URL, key or algorithm is tru
 Outbound key fetches ignore ambient proxy environment variables while keeping the original
 hostname, SNI and certificate verification.
 
+Under `open` ([ADR 0014](../contributor/adr/0014-open-http-mode.md)) the backend binds the
+address the operator gives, asks for no credential or for the one configured token, compared
+in constant time, and serves every request as one principal named after the launch, so
+sessions and artifacts stay bound to it. It accepts any `Host` unless one is configured, and
+refuses before dispatch every request that carries an `Origin` it was not given, so a web
+page the developer visits cannot drive it, along with forwarded headers and query strings.
+The bridge endpoint and the game probe stay on loopback in this mode too.
+
 **Does not enforce.** TLS. This process terminates none and has no certificate or key
 setting. External reachability, the public name and certificate lifecycle belong to a
-same-host reverse proxy.
+same-host reverse proxy. Under `open`, who can reach the port: without a token anyone who
+can reach it can use every tool of the profile, and a token travels in clear over HTTP.
 
 **Residual risk.** A misconfigured proxy is invisible to this process. Anything able to
 write the proxy-hop credential can impersonate your proxy, so treat it like a private
 key. One principal means one person; sharing that identity destroys the only attribution
-the server has.
+the server has. An `open` listener on a network you do not control serves everyone on it;
+the start-up warning says so when no token is set.
 
 ### 5. The managed-session boundary
 
@@ -252,7 +264,8 @@ execution, and `allow_scripts` is the only key that turns anything on.
 refused with `permission_denied` before anything is written or sent, and the editor add-on and
 the runtime probe are not offered the methods, which they check too. The switch is refused
 together with `http.mode = "proxied_oidc"`, so a script never runs for a caller the server only
-knows through a proxy. Every run is a journaled transaction whose audit record carries digests,
+knows through a proxy. It is accepted with `http.mode = "open"`, whose start-up warning says,
+when no token is set, that anyone who can reach the port can then run code as you. Every run is a journaled transaction whose audit record carries digests,
 never the source; its answer lists every project file that differs from before it; and an
 outcome the server cannot prove stays `uncertain`. An unanswered editor run quarantines the
 project, because the editor may still save files.
@@ -271,15 +284,17 @@ leave it off for a project or a client you do not trust.
 
 Stated separately because it is the mistake most worth avoiding. Any local process, running
 as any user, can connect to a loopback port. Arrival on that socket tells you nothing at
-all about who sent the request. Authentication is what distinguishes your client, and it is
-required in every HTTP mode — there is no mode in which reaching the socket is sufficient.
+all about who sent the request. Authentication is what distinguishes your client, and both
+authenticated modes require it. The `open` mode does not treat reaching the socket as an
+identity either: it asks for no identity, or only for the shared token, and says so when it
+starts.
 
 The same reasoning applies to the bridge endpoint, which is loopback-only *and*
 rendezvous-authenticated through a private file with a constant-time comparison.
 
 ## What is deliberately absent
 
-* **Script execution by default, or for a remote caller.** The script tools run nothing until
+* **Script execution by default, or for a proxied caller.** The script tools run nothing until
   the operator allows them for a launch, never with `proxied_oidc`, and nothing else executes
   caller code; see [Script execution](#script-execution). `unsafe_script` stays a reserved
   identifier with no capability, no handler, no profile membership, no configuration option

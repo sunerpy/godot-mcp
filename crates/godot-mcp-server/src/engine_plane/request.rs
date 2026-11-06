@@ -14,6 +14,7 @@ use super::authored::{self, AuthorKind, AuthorRequest};
 use super::batches::{self, BatchesArguments};
 use super::outcome_error;
 use super::read::{self, ReadKind, ReadRequest, ShaderCheckRequest};
+use super::recipe;
 use crate::arguments::deserialize_non_negative_whole_u64;
 
 /// What each engine operation takes and runs, beside the catalog descriptor
@@ -42,6 +43,7 @@ impl EngineCall for EngineOperation {
             Self::ResourceRead => read::input_schema(ReadKind::Resource),
             Self::ShaderCheck => read::shader_check_schema(),
             Self::ProjectBatch => batches::input_schema(),
+            Self::SceneRecipe => recipe::input_schema(),
         }
     }
 
@@ -456,6 +458,7 @@ impl EngineRequest {
                 read::parse_shader_check(arguments).map(Self::CheckShader)
             }
             EngineOperation::ProjectBatch => batches::parse(arguments).map(Self::Batches),
+            EngineOperation::SceneRecipe => recipe::parse(arguments).map(Self::Author),
         }
     }
 }

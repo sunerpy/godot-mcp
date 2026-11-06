@@ -13,10 +13,10 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverRequestMethod, DiscoverResult,
     ErrorCode, ErrorData, GetPromptRequestParams, GetPromptResponse, GetPromptResult,
     Implementation, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
-    ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, Prompt, PromptMessage,
-    ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
-    RequestMetaObject, Resource, ResourceContents, ResourceTemplate, Role, ServerCapabilities,
-    ServerConfig, Tool, ToolAnnotations,
+    ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, Prompt, PromptArgument,
+    PromptMessage, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, RequestMetaObject, Resource, ResourceContents, ResourceTemplate, Role,
+    ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{Peer, RoleServer, ServerHandler};
@@ -443,7 +443,18 @@ pub(crate) fn parse_range(
 }
 
 fn prompt_to_rmcp(prompt: KernelPrompt) -> Prompt {
-    Prompt::new(prompt.name, Some(prompt.description), None)
+    let arguments = (!prompt.arguments.is_empty()).then(|| {
+        prompt
+            .arguments
+            .into_iter()
+            .map(|argument| {
+                PromptArgument::new(argument.name)
+                    .with_description(argument.description)
+                    .with_required(argument.required)
+            })
+            .collect()
+    });
+    Prompt::new(prompt.name, Some(prompt.description), arguments)
 }
 
 fn protocol_error(code: ErrorCode, error: OutcomeError) -> ErrorData {

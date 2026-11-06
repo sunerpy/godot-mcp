@@ -295,6 +295,7 @@ pub(super) const fn journal_transport(mode: TransportAuthMode) -> TransportMode 
         TransportAuthMode::Stdio => TransportMode::Stdio,
         TransportAuthMode::TrustedLocal => TransportMode::TrustedLocal,
         TransportAuthMode::ProxiedOidc => TransportMode::ProxiedOidc,
+        TransportAuthMode::Open => TransportMode::Open,
     }
 }
 
@@ -303,6 +304,7 @@ pub(super) const fn engine_transport(mode: TransportAuthMode) -> EngineTransport
         TransportAuthMode::Stdio => EngineTransportMode::Stdio,
         TransportAuthMode::TrustedLocal => EngineTransportMode::TrustedLocal,
         TransportAuthMode::ProxiedOidc => EngineTransportMode::ProxiedOidc,
+        TransportAuthMode::Open => EngineTransportMode::Open,
     }
 }
 

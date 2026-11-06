@@ -26,7 +26,9 @@ the sanitized reason and its error code to `stderr`.
 `check-config --config <path>` validates a file without starting the server.
 `serve --config <path>` loads the same strict contract and selects its transport.
 Without `--config`, `serve` preserves the local stdio default, starts no listener
-and creates no HTTP credential. `--project` and `--profile` remain explicit CLI
+and creates no HTTP credential, unless `--http <ADDR>` asks for the `open` HTTP mode
+on that address ([HTTP: `open`](http-open.md)); `--http` cannot be combined with
+`--config`. `--project` and `--profile` remain explicit CLI
 authority and override those two fields from the file. `--workspace <dir>` replaces
 `--project` to start in bootstrap state over a workspace directory; it is
 available with the stdio transport only. See
@@ -128,7 +130,7 @@ has no runtime effect in this release.
 | `project_root` | Candidate project directory. Secure ownership is established separately, at lease acquisition. |
 | `godot_binary` | Godot executable to use for controlled-engine operations. |
 | `profile` | Capability profile to expose. `serve` takes this from `--profile`, not from this key. |
-| `transport` | `stdio` (default) or `http`. `serve --config` starts the selected transport; HTTP remains loopback-only and authenticated. |
+| `transport` | `stdio` (default) or `http`. `serve --config` starts the selected transport. `trusted_local` and `proxied_oidc` listen on loopback and authenticate every request; `open` listens on the address you bind, for a development network. |
 | `disposable` | Reserved server-wide switch. `false` is the only runnable value in this release; `serve` refuses `true` rather than silently loading the original project or claiming that a filtered copy confines untrusted code. |
 | `log_sink` | `stderr` (default) or a rolling file. |
 | `allow_scripts` | `false` (default) or `true`. Whether the script tools run caller-written GDScript; see [Script execution](#script-execution). |
@@ -154,8 +156,10 @@ on; treat the switch like handing the agent a shell in the project directory. Wh
 answers, and what it leaves, is in
 [Profiles and tool outcomes](profiles-and-outcomes.md#script-execution).
 
-A script never runs for a remote principal, so the switch is refused with
-`proxied_oidc`:
+A script never runs for a caller the server only knows through a proxy, so the switch is
+refused with `proxied_oidc`. It is accepted with `open`, whose operator decided who can reach
+the port; the listener then warns at start when anyone who can reach it could run code
+([ADR 0014](../contributor/adr/0014-open-http-mode.md)):
 
 <!-- docs-check:config expect="reject" -->
 ```toml
@@ -180,8 +184,23 @@ subject = "operator@example.invalid"
 ### `[http]`
 
 Present only when the final transport is `http`. See
-[HTTP: `trusted_local`](http-trusted-local.md) and
-[HTTP: `proxied_oidc`](http-proxied-oidc.md).
+[HTTP: `trusted_local`](http-trusted-local.md),
+[HTTP: `proxied_oidc`](http-proxied-oidc.md) and [HTTP: `open`](http-open.md).
+
+The `open` shape needs only a bind address and the mode; `host`, `origin` and `token` are
+optional:
+
+<!-- docs-check:config expect="accept" -->
+```toml
+transport = "http"
+
+[http]
+bind = "0.0.0.0:8765"
+mode = "open"
+
+[http.token.env]
+var = "GODOT_MCP_LAN_TOKEN"
+```
 
 The `proxied_oidc` shape, which the loader also accepts:
 
@@ -209,10 +228,11 @@ subject = "operator@example.invalid"
 
 | Key | Meaning |
 | --- | --- |
-| `http.bind` | Listener address. Must be loopback. |
-| `http.mode` | `trusted_local` or `proxied_oidc`. |
-| `http.host` | The exact expected `Host` authority. |
-| `http.origin` | The exact expected `Origin`. |
+| `http.bind` | Listener address. Loopback under `trusted_local` and `proxied_oidc`; any address under `open`. |
+| `http.mode` | `trusted_local`, `proxied_oidc` or `open`. |
+| `http.host` | The exact expected `Host` authority. Required except under `open`, which accepts any `Host` without it. |
+| `http.origin` | The exact expected `Origin`. Required except under `open`, which without it refuses every request that carries an `Origin`. |
+| `http.token` | `open` only: the indirection to the fixed token every request presents as `Authorization: Bearer <token>`, resolved once at start. Without it an `open` listener asks for no credential. |
 | `http.local_secret` | `trusted_local` only, and **required** there: the secret indirection. Validated but never consumed by the production `serve` path — see [`http.local_secret`](#httplocal_secret) before you set it. |
 | `http.proxy_hop` | `proxied_oidc` only: the authenticated proxy-hop identity. |
 | `http.principal` | `proxied_oidc` only: the one frozen issuer/subject pair. |
@@ -220,8 +240,8 @@ subject = "operator@example.invalid"
 | `http.allowed_algorithms` | `proxied_oidc` only: a nonempty subset of `RS256`, `PS256`, and `ES256`. Omission defaults to `RS256` only. |
 | `http.required_scopes` | `proxied_oidc` only: nonempty RFC 6749 scope tokens required on every bearer token. Omission defaults to `godot.read`. |
 | `http.required_capabilities` | `proxied_oidc` only: nonempty capabilities required by the served profile. Omission defaults to `read`. |
-| `http.session_idle_timeout_ms` | Either mode: how long an MCP session may receive nothing before the server closes it. Omission defaults to 3,600,000 (one hour). |
-| `http.session_lifetime_ms` | Either mode: how long an MCP session is honoured after it opened, however busy it is. Omission derives it from `[limits]` as `deadline_ms` × `max_queue`, 32 minutes with the default limits. |
+| `http.session_idle_timeout_ms` | Every mode: how long an MCP session may receive nothing before the server closes it. Omission defaults to 3,600,000 (one hour). |
+| `http.session_lifetime_ms` | Every mode: how long an MCP session is honoured after it opened, however busy it is. Omission derives it from `[limits]` as `deadline_ms` × `max_queue`, 32 minutes with the default limits. |
 
 The schema also retains the socket-path proxy-hop form for the frozen transport
 contract. The shipped backend currently accepts requests over TCP, so it cannot
@@ -230,8 +250,9 @@ validates the shape, but `serve` refuses it at startup; use the credential-file
 form with mode `0600` for the shipped TCP listener.
 
 The mode-specific keys are mutually exclusive. Supplying a `trusted_local` secret
-under `proxied_oidc`, or a principal under `trusted_local`, is rejected rather than
-ignored — a key that looks configured but has no effect is a security trap.
+under `proxied_oidc` or `open`, a principal under `trusted_local`, or a `token` under
+either authenticated mode is rejected rather than ignored — a key that looks configured
+but has no effect is a security trap.
 
 #### Session timing
 
@@ -487,10 +508,13 @@ comma-separated values in `GODOT_MCP_HTTP_ALLOWED_ALGORITHMS`,
 `GODOT_MCP_HTTP_REQUIRED_SCOPES`, and
 `GODOT_MCP_HTTP_REQUIRED_CAPABILITIES`.
 
-Secret indirections have one variable per form, and naming both is an error rather
-than a silent precedence rule: `GODOT_MCP_HTTP_LOCAL_SECRET_ENV` names the variable
-holding the secret, `GODOT_MCP_HTTP_LOCAL_SECRET_FILE` names a protected file
-holding it.
+`GODOT_MCP_HTTP_MODE` takes `trusted_local`, `proxied_oidc` or `open`. Secret
+indirections have one variable per form, and naming both is an error rather than a
+silent precedence rule: `GODOT_MCP_HTTP_LOCAL_SECRET_ENV` names the variable holding the
+`trusted_local` secret and `GODOT_MCP_HTTP_LOCAL_SECRET_FILE` a protected file holding it;
+`GODOT_MCP_HTTP_TOKEN_ENV` and `GODOT_MCP_HTTP_TOKEN_FILE` do the same for the `open`
+token. The variable an indirection names may carry the `GODOT_MCP_` prefix; it is the one
+name under the prefix that is not rejected as unknown.
 
 An override that only half-configures HTTP is rejected as incomplete, listing what
 is missing. There is no partial HTTP listener.
@@ -499,10 +523,13 @@ is missing. There is no partial HTTP listener.
 
 These are not defaults you can relax; configuration has no key that would let you.
 
-* **The listener is loopback.** A non-loopback `http.bind` is rejected with a
-  permission-denied error. External reachability is a reverse proxy's job, never
-  this process's.
-* **The bridge endpoint is loopback.** Same rule, same reason. Validation is all it
+* **An authenticated listener is loopback.** Under `trusted_local` and `proxied_oidc` a
+  non-loopback `http.bind` is rejected with a permission-denied error, and checked again
+  before the socket is bound: external reachability for those modes is a reverse proxy's
+  job. Only `open`, which the operator chooses by name, binds another address
+  ([HTTP: `open`](http-open.md)).
+* **The bridge endpoint is loopback**, in every HTTP mode, `open` included: the editor
+  add-on and the game's probe connect from this machine only. Validation is all it
   does today: no listener is started from it — see [`[bridge]`](#bridge).
 * **A `trusted_local` secret indirection is mandatory but unconsumed.** The loader
   refuses the mode without one, and the `serve` path never resolves it; the presented
@@ -515,7 +542,7 @@ These are not defaults you can relax; configuration has no key that would let yo
   write to process stderr. A configured file sink must additionally be a regular file
   whose object identity differs from stdout. Non-protocol commands such as
   `check-config` may share terminal descriptors and do not make this comparison.
-* **A script never runs for a remote principal.** `allow_scripts = true` together with
+* **A script never runs for a proxied principal.** `allow_scripts = true` together with
   `http.mode = "proxied_oidc"` is rejected — see [Script execution](#script-execution).
 * **TLS is not configured here.** There is no certificate or key setting, because
   this process does not terminate TLS. See

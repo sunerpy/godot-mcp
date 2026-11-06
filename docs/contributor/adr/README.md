@@ -7,7 +7,7 @@ than only what was decided.
 | Record | Subject |
 | --- | --- |
 | [0001](0001-gdext-reference-only.md) | The native Godot bridge is reference and test only |
-| [0002](0002-loopback-only-http.md) | HTTP binds loopback only, and TLS lives in a proxy |
+| [0002](0002-loopback-only-http.md) | HTTP binds loopback only, and TLS lives in a proxy (superseded in part by 0014) |
 | [0003](0003-no-arbitrary-script-execution.md) | There is no arbitrary-script-execution tool (superseded by 0012) |
 | [0004](0004-editor-plane-cancelled.md) | The editor plane was cancelled for the first release |
 | [0005](0005-exact-godot-versions.md) | Only exact Godot patch versions, from one lock |
@@ -17,5 +17,6 @@ than only what was decided.
 | [0009](0009-aws-lc-rs-jwt-backend.md) | JWT uses aws-lc-rs and removes the vulnerable rsa dependency |
 | [0010](0010-complete-development-bridge-strategy.md) | Complete development restores editor/runtime with a default GDScript bridge and optional gdext backend |
 | [0011](0011-live-editor-operability.md) | The live editor is operated through typed tools and one fixed table of editing calls |
-| [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch |
+| [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch (amended by 0014) |
 | [0013](0013-editor-restart.md) | The editor is restarted only when nothing it holds can be lost |
+| [0014](0014-open-http-mode.md) | An open HTTP mode for development networks |

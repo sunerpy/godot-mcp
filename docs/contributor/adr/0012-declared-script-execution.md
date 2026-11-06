@@ -1,6 +1,7 @@
 # 0012 — Script execution is declared: three tools behind one operator switch
 
-**Status:** accepted for contract 0.4.0. It supersedes
+**Status:** accepted for contract 0.4.0; amended by [ADR 0014](0014-open-http-mode.md),
+which accepts the switch with the `open` HTTP mode. It supersedes
 [ADR 0003](0003-no-arbitrary-script-execution.md), keeps `unsafe_script` a reserved name,
 and leaves the typed tools of [ADR 0011](0011-live-editor-operability.md) as they are.
 
@@ -13,8 +14,8 @@ value, what a script class computes), a bulk change no batch operation spells, p
 content, or an engine API nothing wraps. Each gap ends in a new tool, which is slow, or in a
 hand-off to a person, which is what this project exists to remove.
 
-The editor plugins this was compared with, Godot MCP Pro v1.17.1 among them, run caller
-code in the editor and in the game. The project owner decided on 2026-11-05 to add the same
+The editor plugins this was compared with run caller code in the editor and in the
+game. The project owner decided on 2026-11-05 to add the same
 reach in three places, the headless engine, the editor and a running game, under an explicit
 contract.
 
@@ -44,7 +45,9 @@ are listed either way, so an agent can tell a server that refuses them from one 
 
 The switch is refused for a remote principal. `allow_scripts` together with
 `http.mode = "proxied_oidc"` is a configuration error at startup, so a script never runs for a
-caller the server only knows through a proxy.
+caller the server only knows through a proxy. ADR 0014 accepts it with `http.mode = "open"`:
+the operator who started that listener decided who can reach it, and the listener warns at
+start when anyone who can reach the port could run code.
 
 ### What every run keeps to
 
@@ -151,7 +154,8 @@ that calls it what it is.
   `tests/live_runtime_script.rs`); a server with it sends the editor and the probe the method,
   and shapes their reports (`tests/editor_script.rs`, `src/live_script.rs`).
 - The configuration is off by default, is turned on by the file, the environment or the flag,
-  and is refused with `proxied_oidc` (`crates/godot-mcp-domain/tests/config_layering.rs`).
+  is refused with `proxied_oidc` and accepted with `open`
+  (`crates/godot-mcp-domain/tests/config_layering.rs`).
 - The absence audit proves the declared set and the single switch
   (`crates/godot-mcp-server/src/audit/absence.rs`, `tests/audit_limits.rs`).
 - The live suites run every case above on real Godot builds: a project run with its changes and

@@ -381,6 +381,7 @@ const fn journal_transport(mode: TransportAuthMode) -> TransportMode {
         TransportAuthMode::Stdio => TransportMode::Stdio,
         TransportAuthMode::TrustedLocal => TransportMode::TrustedLocal,
         TransportAuthMode::ProxiedOidc => TransportMode::ProxiedOidc,
+        TransportAuthMode::Open => TransportMode::Open,
     }
 }
 

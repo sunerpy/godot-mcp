@@ -19,7 +19,7 @@ const STDIO_HANDSHAKE: &str = concat!(
     "\n",
 );
 
-const LIVE_TOOLS: [&str; 129] = [
+const LIVE_TOOLS: [&str; 130] = [
     "android.deploy",
     "android.devices.list",
     "asset.delete",
@@ -140,6 +140,7 @@ const LIVE_TOOLS: [&str; 129] = [
     "scene.exports.get",
     "scene.nodes.find",
     "scene.read",
+    "scene.recipe.apply",
     "scene.save",
     "scene.tree.get",
     "script.check",

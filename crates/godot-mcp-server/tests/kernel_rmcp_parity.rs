@@ -238,12 +238,43 @@ async fn in_memory_client_initialize_list_call_read_cancel() -> anyhow::Result<(
             .any(|template| { template.uri_template == "godot-mcp://artifacts/{artifact_id}" })
     );
 
+    // The profile guide, then one prompt per recipe the profile can apply.
     let prompts = client.list_all_prompts().await?;
-    assert_eq!(prompts.len(), 1);
+    let names: Vec<&str> = prompts.iter().map(|prompt| prompt.name.as_str()).collect();
+    let mut expected = vec!["godot-mcp.profile-guide".to_owned()];
+    expected.extend(
+        godot_mcp_domain::recipes::RECIPES
+            .iter()
+            .map(|recipe| format!("godot-mcp.recipe.{}", recipe.id)),
+    );
+    assert_eq!(names, expected);
     let prompt = client
         .get_prompt(GetPromptRequestParams::new(prompts[0].name.clone()))
         .await?;
     assert_eq!(prompt.messages.len(), 1);
+    // A recipe prompt declares its arguments and fills them into its text.
+    let body = prompts
+        .iter()
+        .find(|prompt| prompt.name == "godot-mcp.recipe.body-2d")
+        .expect("the body recipe prompt");
+    let declared: Vec<&str> = body
+        .arguments
+        .as_ref()
+        .expect("declared arguments")
+        .iter()
+        .map(|argument| argument.name.as_str())
+        .collect();
+    assert_eq!(declared, ["path", "parent", "name"]);
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("name".to_owned(), Value::String("Crate".to_owned()));
+    let recipe = client
+        .get_prompt(
+            GetPromptRequestParams::new("godot-mcp.recipe.body-2d").with_arguments(arguments),
+        )
+        .await?;
+    assert_eq!(recipe.messages.len(), 1);
+    let text = serde_json::to_string(&recipe.messages[0]).expect("a prompt message");
+    assert!(text.contains("\\\"name\\\": \\\"Crate\\\""), "{text}");
 
     let manifests = client
         .call_tool(CallToolRequestParams::new("capabilities.get"))

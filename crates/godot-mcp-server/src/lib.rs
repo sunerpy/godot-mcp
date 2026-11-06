@@ -46,6 +46,7 @@ pub mod observability;
 pub mod operator;
 pub(crate) mod policy;
 pub mod project_context;
+pub(crate) mod recipe_prompts;
 pub mod rmcp_adapter;
 pub mod router;
 pub mod scheduler;

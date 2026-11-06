@@ -128,6 +128,31 @@ pub const RESERVED_DOMAIN: &str = "example.invalid";
 /// Hosts an example may name besides the reserved domain.
 pub const ALLOWED_EXAMPLE_HOSTS: &[&str] = &["127.0.0.1", "localhost", "[::1]", "::1"];
 
+/// The unspecified addresses. A listener may bind one (the `open` HTTP mode,
+/// ADR 0014), but no client can connect to one, so an example never dials it.
+pub const UNSPECIFIED_HOSTS: &[&str] = &["0.0.0.0", "[::]", "::"];
+
+/// Whether `host` is an address reserved for documentation: `192.0.2.0/24`,
+/// `198.51.100.0/24` and `203.0.113.0/24` (RFC 5737), or `2001:db8::/32`
+/// (RFC 3849). An example may show one as another machine's address, as it may
+/// a name under [`RESERVED_DOMAIN`]; it is still another machine, so
+/// `unauthenticated-public-example` still applies to a request to it.
+#[must_use]
+pub fn is_documentation_address(host: &str) -> bool {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    match bare.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => matches!(
+            address.octets(),
+            [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+        ),
+        Ok(std::net::IpAddr::V6(address)) => address.segments()[..2] == [0x2001, 0x0db8],
+        Err(_) => false,
+    }
+}
+
 /// Redaction placeholders a credential-shaped example value may use.
 pub const REDACTION_PLACEHOLDERS: &[&str] = &["<redacted>", "[redacted]", "redacted"];
 
@@ -286,17 +311,21 @@ fn check_hosts_in_fence(findings: &mut Vec<Finding>, file: &str, scanned: &Scann
         for (offset, body_line) in fence.body.iter().enumerate() {
             let line_number = fence.body_start_line + offset;
             for host in extract_hosts(body_line) {
+                // `unspecified-destination` reports these with its own reason.
                 let allowed = host == RESERVED_DOMAIN
                     || host.ends_with(&format!(".{RESERVED_DOMAIN}"))
-                    || ALLOWED_EXAMPLE_HOSTS.contains(&host.as_str());
+                    || is_documentation_address(&host)
+                    || ALLOWED_EXAMPLE_HOSTS.contains(&host.as_str())
+                    || UNSPECIFIED_HOSTS.contains(&host.as_str());
                 if !allowed {
                     findings.push(Finding::at(
                         file,
                         line_number,
                         "example-host",
                         format!(
-                            "example host {host:?} is neither loopback nor under the reserved \
-                             domain {RESERVED_DOMAIN}"
+                            "example host {host:?} is neither loopback, a documentation \
+                             address (RFC 5737, RFC 3849) nor under the reserved domain \
+                             {RESERVED_DOMAIN}"
                         ),
                     ));
                 }
@@ -392,26 +421,26 @@ fn check_unauthenticated_public_examples(
                 fence.body_start_line + offset,
                 "unauthenticated-public-example",
                 "an example that reaches a non-loopback endpoint must show the credential it \
-                 presents; every externally reachable request is authenticated",
+                 presents",
             ));
         }
     }
 }
 
-fn check_non_loopback_bind(findings: &mut Vec<Finding>, file: &str, scanned: &Scanned) {
-    const UNSPECIFIED: &[&str] = &["0.0.0.0", "[::]"];
+fn check_unspecified_destination(findings: &mut Vec<Finding>, file: &str, scanned: &Scanned) {
     for fence in &scanned.fences {
         for (offset, body_line) in fence.body.iter().enumerate() {
             let line_number = fence.body_start_line + offset;
-            for marker in UNSPECIFIED {
-                if body_line.contains(marker) {
+            for host in extract_hosts(body_line) {
+                if UNSPECIFIED_HOSTS.contains(&host.as_str()) {
                     findings.push(Finding::at(
                         file,
                         line_number,
-                        "non-loopback-bind",
+                        "unspecified-destination",
                         format!(
-                            "an example must never bind or advertise the unspecified address \
-                             {marker}; the backend binds loopback only"
+                            "an example dials the unspecified address {host}, which no client \
+                             can connect to: a listener may bind it, a client dials 127.0.0.1 \
+                             or the listening host's own name"
                         ),
                     ));
                 }
@@ -550,7 +579,7 @@ pub fn check_page(page: &DocFile) -> Vec<Finding> {
     check_hosts_in_fence(&mut findings, file, &scanned);
     check_unauthenticated_public_examples(&mut findings, file, &scanned);
     check_credential_values(&mut findings, file, &scanned);
-    check_non_loopback_bind(&mut findings, file, &scanned);
+    check_unspecified_destination(&mut findings, file, &scanned);
     check_artifact_paths(&mut findings, file, &scanned);
     findings
 }
@@ -681,6 +710,36 @@ mod tests {
         ));
     }
 
+    /// An address reserved for documentation (RFC 5737, RFC 3849) may stand for
+    /// another host of a network, as a name under the reserved domain does; it
+    /// is still another host, so a request to it shows its credential.
+    #[test]
+    fn documentation_addresses_are_example_hosts_of_another_machine() {
+        for documentation in [
+            "```text\nother hosts: http://192.0.2.10:8765/mcp\n```\n",
+            "```json\n{ \"url\": \"http://198.51.100.7:8765/mcp\" }\n```\n",
+            "```json\n{ \"url\": \"http://203.0.113.200/mcp\" }\n```\n",
+            "```json\n{ \"url\": \"http://[2001:db8::10]:8765/mcp\" }\n```\n",
+        ] {
+            assert!(!triggers(documentation, "example-host"), "{documentation}");
+        }
+        for real in [
+            "```json\n{ \"url\": \"http://192.168.1.20:8765/mcp\" }\n```\n",
+            "```json\n{ \"url\": \"http://192.0.3.10:8765/mcp\" }\n```\n",
+            "```json\n{ \"url\": \"http://[2001:db9::10]:8765/mcp\" }\n```\n",
+        ] {
+            assert!(triggers(real, "example-host"), "{real}");
+        }
+        assert!(triggers(
+            "```sh\ncurl http://192.0.2.10:8765/mcp\n```\n",
+            "unauthenticated-public-example"
+        ));
+        assert!(!triggers(
+            "```sh\ncurl -H 'Authorization: Bearer <redacted>' http://192.0.2.10:8765/mcp\n```\n",
+            "unauthenticated-public-example"
+        ));
+    }
+
     /// `res://`, `user://` and `uid://` name files of a Godot project, not
     /// network hosts; a network scheme on the same line is still checked.
     #[test]
@@ -739,11 +798,23 @@ mod tests {
     }
 
     #[test]
-    fn unspecified_binds_and_unredacted_credentials_are_rejected() {
-        assert!(triggers(
+    fn unspecified_destinations_and_unredacted_credentials_are_rejected() {
+        // An open listener may bind the unspecified address (ADR 0014)...
+        for bind in [
             "```toml\nbind = \"0.0.0.0:8765\"\n```\n",
-            "non-loopback-bind"
-        ));
+            "```sh\ngodot-mcp serve --project . --http [::]:8765\n```\n",
+        ] {
+            assert!(!triggers(bind, "unspecified-destination"), "{bind}");
+            assert!(!triggers(bind, "example-host"), "{bind}");
+        }
+        // ...but no example dials it, and it is reported once, for that reason.
+        for dial in [
+            "```json\n{ \"url\": \"http://0.0.0.0:8765/mcp\" }\n```\n",
+            "```sh\ncurl -H 'Authorization: Bearer <redacted>' http://[::]:8765/mcp\n```\n",
+        ] {
+            assert!(triggers(dial, "unspecified-destination"), "{dial}");
+            assert!(!triggers(dial, "example-host"), "{dial}");
+        }
         assert!(triggers(
             "```sh\nexport GODOT_MCP_TOKEN=abcdef012345\n```\n",
             "unredacted-credential-example"

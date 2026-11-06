@@ -32,12 +32,13 @@ Start here:
 | [Project-wide analysis](operator/project-analysis.md) | Unused files, cycles, signal flow, metrics, search, UIDs, node and export queries |
 | [HTTP: `trusted_local`](operator/http-trusted-local.md) | Launch-secret-authenticated loopback HTTP |
 | [HTTP: `proxied_oidc`](operator/http-proxied-oidc.md) | Reverse proxy hop plus one end-user principal |
+| [HTTP: `open`](operator/http-open.md) | Any address on a development network, with no credential or one token |
 | [Artifacts](operator/artifacts.md) | Opaque artifact resources |
 | [Project leases](operator/project-leases.md) | OS-object identity and exclusion |
 | [Process boundaries](operator/process-boundaries.md) | Weak trusted, strong untrusted |
 | [Recovery](operator/recovery.md) | Restart survivors, quarantine, operator repair |
 | [Editor bridge](operator/editor-bridge.md) | What ships, and what does not |
-| [Recipes](operator/recipes.md) | Common setups as typed operations, applied on every locked build |
+| [Recipes](operator/recipes.md) | Common setups applied by name with `scene.recipe.apply`, and the operations each becomes |
 | [Managed sessions](operator/managed-sessions.md) | Game and editor sessions, input, captures, debugging |
 | [Exports](operator/exports.md) | Presets, exact templates, managed exports and their artifacts |
 | [Godot compatibility matrix](operator/version-matrix.md) | Exact locked versions |

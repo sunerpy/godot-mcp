@@ -1,6 +1,9 @@
 # 0002 — HTTP binds loopback only, and TLS lives in a proxy
 
-**Status:** accepted.
+**Status:** accepted; superseded in part by [ADR 0014](0014-open-http-mode.md). The
+opt-in `open` mode for development networks may bind any address and may ask for no
+credential; `trusted_local` and `proxied_oidc` keep everything below, and TLS still lives in
+a proxy.
 
 ## Decision
 

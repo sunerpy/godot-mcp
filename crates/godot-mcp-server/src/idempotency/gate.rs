@@ -127,6 +127,7 @@ fn journaled_identity(record: &TransactionRecord) -> Option<MutationIdentity> {
         TransportMode::Stdio => TransportAuthMode::Stdio,
         TransportMode::TrustedLocal => TransportAuthMode::TrustedLocal,
         TransportMode::ProxiedOidc => TransportAuthMode::ProxiedOidc,
+        TransportMode::Open => TransportAuthMode::Open,
     };
     let principal = ModePrincipal::from_journal_string(mode, record.principal.as_deref()?).ok()?;
     let transport = TransportBinding::new(

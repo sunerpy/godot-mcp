@@ -60,7 +60,7 @@ godot-mcp serve --stdio --project <项目目录> --profile full
 握手顺序，实测：
 
 1. 发 `initialize`。SDK 1.28.1 协商出的 `protocolVersion` 为 `2025-11-25`。
-2. 服务器回 `serverInfo` 为 `{"name":"godot-mcp-server","version":"0.1.0"}`，并声明 `prompts`、`resources`、`tools` 三组能力。`version` 是这个构建的版本号，与 `godot-mcp version` 输出的第一行相同；`server-contract` 那一行是领域契约的版本，见 [Schema evolution](../protocol/schema-evolution.md)。
+2. 服务器回 `serverInfo`，`name` 为 `godot-mcp-server`，`version` 是这个构建的版本号（0.1.0 上实测为 `"0.1.0"`），与 `godot-mcp version` 输出的第一行相同，并声明 `prompts`、`resources`、`tools` 三组能力；`server-contract` 那一行是领域契约的版本，见 [Schema evolution](../protocol/schema-evolution.md)。
 3. 发 `notifications/initialized` 通知。
 4. 之后才可以发 `tools/list`、`resources/list`、`tools/call`。
 
@@ -80,18 +80,20 @@ godot-mcp serve: startup failed: project ownership could not be established: no 
 
 ## 各 profile 的声明面
 
-| profile | tools | `resources/list` 返回的具体资源 | `resources/templates/list` 返回的模板 |
-| --- | --- | --- | --- |
-| `core` | 15 | 4 | 0 |
-| `editor` | 48 | 4 | 0 |
-| `runtime` | 44 | 4 | 1 |
-| `full` | 73 | 4 | 1 |
+在契约 0.5.0 的构建上（`godot-mcp version` 第二行为 `server-contract 0.5.0`），用一个直接收发 JSON-RPC 帧的 stdio 客户端，对每个 profile 完成握手后各发一遍 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list`，实测：
 
-这张表和下面几节的计数都测自 0.1.0；契约 0.3.0 新增了 17 个工具，并给 `editor` profile 加上 artifact 资源，当前各 profile 的工具与资源以生成的 [工具与资源清单](../protocol/tool-inventory.md) 为准，契约 0.3.0 的新增工具见 [编辑器桥](editor-bridge.md) 与 [托管会话](managed-sessions.md)，尚未用本页的方法重新测量。
+| profile | tools | `resources/list` 返回的具体资源 | `resources/templates/list` 返回的模板 | `prompts/list` 返回的 prompt |
+| --- | --- | --- | --- | --- |
+| `core` | 22 | 4 | 0 | 1 |
+| `editor` | 82 | 4 | 1 | 12 |
+| `runtime` | 74 | 4 | 1 | 1 |
+| `full` | 130 | 4 | 1 | 12 |
 
-在 0.1.0 上，后两列相加，正好等于 [工具与资源清单](../protocol/tool-inventory.md) 里生成的 Resources 列（`core` 与 `editor` 为 4，`runtime` 与 `full` 为 5）：生成清单把资源模板计入总数，而 `resources/list` 不返回模板。那一个模板是 `godot-mcp://artifacts/{artifact_id}`，导出产物与截图都从这里读，见 [Artifacts](artifacts.md)。一个 artifact 只对产生它的那个调用方列出、可读，过期后从列表和读取里一起消失。
+资源的两列相加，等于 [工具与资源清单](../protocol/tool-inventory.md) 里生成的 Resources 列（`core` 为 4，其余三个为 5）：生成清单把资源模板计入总数，而 `resources/list` 不返回模板。那一个模板是 `godot-mcp://artifacts/{artifact_id}`，导出产物与截图都从这里读，见 [Artifacts](artifacts.md)。一个 artifact 只对产生它的那个调用方列出、可读，过期后从列表和读取里一起消失。
 
-**73 个名字，在没有任何参数时分成四档。** 在一台配了真实 Godot 4.7.1、supervisor 就位的主机上，把 `full` 的 73 个工具按名字顺序、逐个只带内核自己拥有的 `idempotencyId` 串行调一遍（`limits.deadline_ms` 为 30000），实测 20 个给出答案，37 个因为缺参数被拒，15 个拒绝执行，1 个撞上执行超时。顺序有影响：排在前面的调用会改变后面调用看到的状态，下面会点出来。
+每个 profile 都有 `godot-mcp.profile-guide` 这一个 prompt；`editor` 与 `full` 另有 11 个配方 prompt，名字是 `godot-mcp.recipe.<配方名>`，正文给出参数表、调用模板和配方展开成的操作，见 [配方](recipes.md)。prompt 不占工具名额。
+
+**下面四节是 0.1.0 上的一次普查。** 那时 `full` 有 73 个工具（0.1.1、0.1.2 不变，`core`、`editor`、`runtime` 分别为 15、48、44），之后的版本新增的 57 个工具没有用这个方法重测，它们的调用方法见 [编辑器桥](editor-bridge.md)、[托管会话](managed-sessions.md)、[配方](recipes.md) 与 [Profiles and tool outcomes](profiles-and-outcomes.md)。在一台配了真实 Godot 4.7.1、supervisor 就位的主机上，把 0.1.0 的 `full` 的 73 个工具按名字顺序、逐个只带内核自己拥有的 `idempotencyId` 串行调一遍（`limits.deadline_ms` 为 30000），实测 20 个给出答案，37 个因为缺参数被拒，15 个拒绝执行，1 个撞上执行超时。顺序有影响：排在前面的调用会改变后面调用看到的状态，下面会点出来。
 
 ## 20 个无需参数就给出答案的调用
 
@@ -307,7 +309,7 @@ tests/fixtures/godot-releases.lock.json
 * `project.test` 只运行项目已经提交的 GUT 或 gdUnit4，不安装测试框架；GUT 的版本要与 Godot 的小版本匹配。没有框架或同时存在两套框架时返回 `unsupported`，零退出但没有可解析汇总时返回 `inconclusive`。
 * `script.validate` 是静态分析而非引擎背书，响应自带 `engine_validation_not_performed`；需要真实编译检查时使用 `script.check`。
 * 引擎版本与能力探测按设计不在健康路径上报：健康路径不启动 Godot，所以 version 为 `null`、capabilities_probed 为 `false`。
-* stdio 通道上 HTTP 就绪状态是 disabled，codes 里对应 `http_disabled`。需要第二个本地进程接同一个服务器时才考虑 [HTTP: `trusted_local`](http-trusted-local.md)。
+* stdio 通道上 HTTP 就绪状态是 disabled，codes 里对应 `http_disabled`。需要第二个本地进程接同一个服务器时考虑 [HTTP: `trusted_local`](http-trusted-local.md)；要从开发网络里的另一台机器连进来，用 [HTTP: `open`](http-open.md)。
 * 可选的 gdext 原生后端不存在：ADR 0010 的 spike 没有满足激活门槛，见 [ADR 0010](../contributor/adr/0010-complete-development-bridge-strategy.md)。
 
 ## 参见

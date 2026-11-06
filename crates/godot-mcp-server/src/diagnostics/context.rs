@@ -38,6 +38,9 @@ pub(crate) enum HttpDiagnosticsSource {
     TrustedLocal {
         secret: Arc<crate::http::LaunchSecret>,
     },
+    Open {
+        token: bool,
+    },
     #[cfg(feature = "auth")]
     ProxiedOidc {
         boundary: Option<Arc<crate::auth::ResourceServer>>,
@@ -398,6 +401,10 @@ impl DiagnosticsContext {
                     secret: local_secret_state(&secret),
                 },
             ),
+            #[cfg(feature = "http")]
+            DiagnosticsTransport::Http(HttpDiagnosticsSource::Open { token }) => {
+                (TransportSurface::Http, HttpReadiness::Open { token })
+            }
             #[cfg(all(feature = "http", feature = "auth"))]
             DiagnosticsTransport::Http(HttpDiagnosticsSource::ProxiedOidc { boundary }) => {
                 let jwks = boundary.map_or(JwksState::Unreachable, |boundary| {

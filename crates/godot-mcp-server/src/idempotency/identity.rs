@@ -43,11 +43,19 @@ pub enum TransportAuthMode {
     TrustedLocal,
     /// Loopback HTTP behind an authenticated proxy hop carrying end-user OIDC.
     ProxiedOidc,
+    /// HTTP on a development network, with no credential or one fixed token
+    /// (ADR 0014).
+    Open,
 }
 
 impl TransportAuthMode {
     /// Every mode, in a stable order.
-    pub const ALL: [Self; 3] = [Self::Stdio, Self::TrustedLocal, Self::ProxiedOidc];
+    pub const ALL: [Self; 4] = [
+        Self::Stdio,
+        Self::TrustedLocal,
+        Self::ProxiedOidc,
+        Self::Open,
+    ];
 
     /// Stable snake_case name.
     #[must_use]
@@ -56,6 +64,7 @@ impl TransportAuthMode {
             Self::Stdio => "stdio",
             Self::TrustedLocal => "trusted_local",
             Self::ProxiedOidc => "proxied_oidc",
+            Self::Open => "open",
         }
     }
 }
@@ -71,6 +80,13 @@ pub enum ModePrincipal {
     },
     /// `trusted_local`: the principal derived from the per-launch secret.
     LaunchSecret {
+        /// Opaque launch-scoped principal identifier.
+        principal: String,
+    },
+    /// `open`: the one principal this launch's open listener serves every
+    /// request as. It names the launch, not a caller: an open listener does
+    /// not tell callers apart.
+    OpenLaunch {
         /// Opaque launch-scoped principal identifier.
         principal: String,
     },
@@ -91,6 +107,7 @@ impl ModePrincipal {
         match self {
             Self::LocalOs { .. } => TransportAuthMode::Stdio,
             Self::LaunchSecret { .. } => TransportAuthMode::TrustedLocal,
+            Self::OpenLaunch { .. } => TransportAuthMode::Open,
             Self::Oidc { .. } => TransportAuthMode::ProxiedOidc,
         }
     }
@@ -104,7 +121,9 @@ impl ModePrincipal {
     #[must_use]
     pub fn to_journal_string(&self) -> String {
         match self {
-            Self::LocalOs { principal } | Self::LaunchSecret { principal } => principal.clone(),
+            Self::LocalOs { principal }
+            | Self::LaunchSecret { principal }
+            | Self::OpenLaunch { principal } => principal.clone(),
             Self::Oidc { issuer, subject } => {
                 format!("{}:{issuer}{subject}", issuer.len())
             }
@@ -125,6 +144,9 @@ impl ModePrincipal {
                 principal: recorded.to_owned(),
             }),
             TransportAuthMode::TrustedLocal => Ok(Self::LaunchSecret {
+                principal: recorded.to_owned(),
+            }),
+            TransportAuthMode::Open => Ok(Self::OpenLaunch {
                 principal: recorded.to_owned(),
             }),
             TransportAuthMode::ProxiedOidc => {
@@ -646,15 +668,18 @@ impl MutationIdentity {
             TupleDimension::TransportAuthMode => {
                 let mode = match self.transport.mode() {
                     TransportAuthMode::Stdio => TransportAuthMode::TrustedLocal,
-                    TransportAuthMode::TrustedLocal | TransportAuthMode::ProxiedOidc => {
-                        TransportAuthMode::Stdio
-                    }
+                    TransportAuthMode::TrustedLocal
+                    | TransportAuthMode::ProxiedOidc
+                    | TransportAuthMode::Open => TransportAuthMode::Stdio,
                 };
                 let principal = match mode {
                     TransportAuthMode::Stdio => ModePrincipal::LocalOs {
                         principal: "principal_0123456789abcdef".to_owned(),
                     },
                     TransportAuthMode::TrustedLocal => ModePrincipal::LaunchSecret {
+                        principal: "principal_0123456789abcdef".to_owned(),
+                    },
+                    TransportAuthMode::Open => ModePrincipal::OpenLaunch {
                         principal: "principal_0123456789abcdef".to_owned(),
                     },
                     TransportAuthMode::ProxiedOidc => ModePrincipal::Oidc {
@@ -672,6 +697,9 @@ impl MutationIdentity {
                         principal: format!("{principal}0"),
                     },
                     ModePrincipal::LaunchSecret { principal } => ModePrincipal::LaunchSecret {
+                        principal: format!("{principal}0"),
+                    },
+                    ModePrincipal::OpenLaunch { principal } => ModePrincipal::OpenLaunch {
                         principal: format!("{principal}0"),
                     },
                     ModePrincipal::Oidc { issuer, subject } => ModePrincipal::Oidc {

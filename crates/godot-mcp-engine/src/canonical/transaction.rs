@@ -559,6 +559,7 @@ fn transport_mode_str(record: &FileRecord) -> &'static str {
         crate::supervision::journal::TransportMode::Stdio => "stdio",
         crate::supervision::journal::TransportMode::TrustedLocal => "trusted_local",
         crate::supervision::journal::TransportMode::ProxiedOidc => "proxied_oidc",
+        crate::supervision::journal::TransportMode::Open => "open",
     }
 }
 

@@ -145,7 +145,7 @@ impl StagedHandler {
     #[must_use]
     pub const fn dispatch_available(&self) -> bool {
         match self.mode {
-            HttpMode::TrustedLocal => true,
+            HttpMode::TrustedLocal | HttpMode::Open => true,
             HttpMode::ProxiedOidc => self.boundary_armed,
         }
     }

@@ -151,6 +151,8 @@ pub enum AuditTransport {
     HttpTrustedLocal,
     /// Streamable HTTP behind an authenticated proxy hop plus OIDC.
     HttpProxiedOidc,
+    /// Streamable HTTP on a development network (ADR 0014).
+    HttpOpen,
 }
 
 impl AuditTransport {
@@ -161,6 +163,7 @@ impl AuditTransport {
             Self::Stdio => "stdio",
             Self::HttpTrustedLocal => "http_trusted_local",
             Self::HttpProxiedOidc => "http_proxied_oidc",
+            Self::HttpOpen => "http_open",
         }
     }
 }
