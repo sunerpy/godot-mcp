@@ -1005,6 +1005,7 @@ fn journal_mode(name: &str) -> TransportMode {
     match name {
         "trusted_local" => TransportMode::TrustedLocal,
         "proxied_oidc" => TransportMode::ProxiedOidc,
+        "open" => TransportMode::Open,
         _ => TransportMode::Stdio,
     }
 }
@@ -1018,6 +1019,9 @@ fn principal_of(
             principal: spec.principal.clone(),
         },
         TransportAuthMode::TrustedLocal => ModePrincipal::LaunchSecret {
+            principal: spec.principal.clone(),
+        },
+        TransportAuthMode::Open => ModePrincipal::OpenLaunch {
             principal: spec.principal.clone(),
         },
         TransportAuthMode::ProxiedOidc => ModePrincipal::Oidc {

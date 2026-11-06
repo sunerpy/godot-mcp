@@ -313,13 +313,14 @@ impl QuarantineHandoff {
 
 fn transport_mode(envelope: &TransactionEnvelope) -> &'static str {
     // The engine's `TransportMode` renders its own canonical spelling through
-    // Todo 6's record assembly; reproduce exactly those three spellings here
-    // rather than inventing a fourth.
+    // Todo 6's record assembly; reproduce exactly those spellings here rather
+    // than inventing another.
     use godot_mcp_engine::supervision::journal::TransportMode;
     match envelope.transport_mode {
         TransportMode::Stdio => "stdio",
         TransportMode::TrustedLocal => "trusted_local",
         TransportMode::ProxiedOidc => "proxied_oidc",
+        TransportMode::Open => "open",
     }
 }
 

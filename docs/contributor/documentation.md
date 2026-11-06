@@ -43,8 +43,8 @@ the code, the schema or the lock.
 | `overstated-containment` | Describing this project's isolation in stronger terms than it provides |
 | `forbidden-affordance` | Naming a bypass that does not exist |
 | `unauthenticated-public-example` | A request example reaching a non-loopback endpoint with no credential shown |
-| `non-loopback-bind` | An example binding the unspecified address |
-| `example-host` | A host that is neither loopback nor under the reserved example domain |
+| `unspecified-destination` | An example dialing the unspecified address (`0.0.0.0`, `[::]`), which a listener may bind but no client can connect to |
+| `example-host` | A host that is neither loopback, a documentation address (RFC 5737, RFC 3849) nor under the reserved example domain |
 | `unredacted-credential-example` | An assignment whose key names a credential and whose value is not redacted |
 | `credential-in-docs` | A credential-shaped value anywhere in the tree |
 | `opaque-artifact-only` | An artifact addressed as a path instead of an opaque resource |

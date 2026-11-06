@@ -66,7 +66,7 @@ home:
     intro: 客户端只和一个 Rust 二进制通信。GDScript 只在任务需要引擎的地方于 Godot 内部运行，所以不打开编辑器、不安装 Godot，也能分析项目、修改文件。
     client:
       name: 你的 MCP 客户端
-      detail: 把 godot-mcp 当作一个进程启动，通过 stdio 与它通信；打开回环 HTTP 后也可以走 HTTP。
+      detail: 把 godot-mcp 当作一个进程启动，通过 stdio 与它通信；打开 HTTP 后，也可以在本机或开发网络里通过 HTTP 通信。
     server:
       name: godot-mcp
       detail: 跑在项目旁边的一个静态 Rust 二进制，不需要安装任何语言运行时。
@@ -303,8 +303,8 @@ home:
         sends: 你的 MCP 客户端
         detail: 走 stdio 时，客户端与服务器通过两条管道通信。答复里只有这次调用要求的项目数据，不会发往别处。
       - name: HTTP（需要你打开）
-        sends: 回环监听
-        detail: "`trusted_local` 只接受带本次启动密钥的请求；`proxied_oidc` 只接受经过认证的代理转发、并携带某一个用户令牌的请求。"
+        sends: 能连到监听器的客户端
+        detail: "`trusted_local` 只监听回环地址，只接受带本次启动密钥的请求；`proxied_oidc` 只接受经过认证的代理转发、并携带某一个用户令牌的请求。`open` 监听你给出的地址，用于机器都属于你的开发网络，不要凭据或只要一个令牌。"
       - name: 引擎
         sends: 你的机器
         detail: Godot 用你配置的版本在本地运行，处在服务器管理的进程边界之内。godot-mcp 从不下载引擎或导出模板。
@@ -320,6 +320,11 @@ home:
         guide:
           text: 它是怎样组织的
           link: /zh/guide/introduction#它是怎样组织的
+      - q: 它能处理 Godot 项目的哪些部分？
+        a: 动画、AnimationTree、物理、3D、粒子、导航、音频、着色器、主题、TileMap 和运行中的游戏，每一项都有 Agent 可以调用的工具。`scene.recipe.apply` 按名字把一种常见设置加进场景，例如物理体或烟雾粒子；每个配方同时也是一个 Agent 能找到的 MCP prompt。
+        guide:
+          text: 覆盖范围
+          link: /zh/guide/capabilities
       - q: 它是编辑器插件吗？
         a: 包含一个，就是可选的 `godot_mcp` 编辑器插件，用来把你正打开的编辑器接进来。服务器本身是项目旁边的一个 Rust 二进制，所以不打开编辑器也能读取、修改、运行、测试和导出项目。
         guide:
@@ -340,6 +345,11 @@ home:
         guide:
           text: 威胁模型
           link: /zh/reference/threat-model
+      - q: 另一台机器上的 Agent 能用它吗？
+        a: 能，前提是在机器都属于你的开发网络里：`godot-mcp serve --http 0.0.0.0:8765` 通过 HTTP 为网络里的其他机器提供 MCP，不要凭据，或者只要一个令牌。在这样的网络之外，请让 HTTP 只监听回环地址，或在前面放一个经过认证的反向代理。
+        guide:
+          text: HTTP
+          link: /zh/operate/http
       - q: 会把项目发到别处吗？
         a: 不会。除了在你配置 OIDC 时去取身份提供方的签名密钥，它自己不发起任何网络请求，也从不下载 Godot 或导出模板。一个服务器只为一个用户服务一个项目，不是共享服务。
         guide:

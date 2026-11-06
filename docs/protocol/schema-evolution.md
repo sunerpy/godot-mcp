@@ -136,6 +136,32 @@ player's `bus` naming a bus the project's layout lacks, which Godot replaces wit
 refused as `value_not_kept` and changes nothing, where a 0.3.0 server answered success for a
 file that held the other value.
 
+### Contract 0.5.0
+
+Contract 0.5.0 adds one tool, recipe prompts and an HTTP mode. The 0.4.0 manifests stay frozen
+in `schemas/domain/profiles/v0.4/`.
+
+* `scene.recipe.apply`, in the `editor` and `full` profiles, applies a recipe by name: its
+  `recipe` is an object with one key, the recipe's name, holding the recipe's parameters, and
+  the server expands it into the operations of one `scene.batch.apply` batch, journaled and
+  replayed under the recipe tool's own name, or, for a scene open in the connected editor, one
+  undoable action named `godot-mcp: scene.recipe.apply`. Its schema lists every recipe's
+  parameters, and its answer adds `recipe`, the name and every parameter value used, and
+  `operations`. The theme recipe makes a resource rather than nodes, and the tool refuses it
+  and names `resource.create`. See [Recipes](../operator/recipes.md).
+* `prompts/list` adds one prompt per recipe in the `editor` and `full` profiles,
+  `godot-mcp.recipe.<name>`, generated from the same registry; `godot-mcp.profile-guide` stays
+  in every profile. Prompts are not part of the profile manifests.
+* `http.mode` takes `open` ([ADR 0014](../contributor/adr/0014-open-http-mode.md)), with the
+  optional key `http.token` and the variables `GODOT_MCP_HTTP_TOKEN_ENV` and
+  `GODOT_MCP_HTTP_TOKEN_FILE`; under it `http.host` and `http.origin` are optional, and any
+  `http.bind` is accepted. A journal record's `transport_mode` takes `open`, and `health.get`
+  reports `http.mode` as `open` for such a listener.
+
+All of them are additions: a 0.4.0 client loses nothing, and a request it could send means what
+it meant. A 0.4.0 server refuses a configuration file with `mode = "open"`, as it refuses every
+unknown value.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an

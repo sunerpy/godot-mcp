@@ -99,3 +99,9 @@ stops it from starting. `GODOT_MCP_PROFILE` and `GODOT_MCP_LOG_SINK` are two it 
 
 When another local process has to reach the same running server, turn on loopback HTTP instead
 of starting a second server: see [HTTP](../operate/http.md).
+
+## A client on another machine
+
+When the agent runs on another machine of your development network, start the server with
+`--http 0.0.0.0:8765` and give the client the URL the server prints: see
+[HTTP](../operate/http.md#open).

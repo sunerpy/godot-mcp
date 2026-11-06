@@ -460,6 +460,12 @@ pub enum HttpReadiness {
         /// The key set's state.
         jwks: JwksState,
     },
+    /// Enabled for a development network (ADR 0014): no credential, or one
+    /// fixed token.
+    Open {
+        /// Whether requests must present the configured token.
+        token: bool,
+    },
 }
 
 impl HttpReadiness {
@@ -470,6 +476,7 @@ impl HttpReadiness {
             Self::Disabled => "disabled",
             Self::TrustedLocal { .. } => "trusted_local",
             Self::ProxiedOidc { .. } => "proxied_oidc",
+            Self::Open { .. } => "open",
         }
     }
 

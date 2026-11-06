@@ -4,7 +4,8 @@
 //! handler) and F-10 (tool name, schema, policy and description maintained in
 //! independent registries) are reproduced over the wire: every tool a profile
 //! lists must have a strict schema, a specific description, MCP annotations and
-//! a production handler, and the contract must be version 0.3.0.
+//! a production handler, and the capability report must carry the current
+//! contract version.
 
 mod support;
 
@@ -51,6 +52,8 @@ const AUTHORING_READS: [&str; 4] = [
     "project.files.list",
     "project.settings.get",
 ];
+/// Contract 0.5 scene recipes: the write-capable profiles.
+const RECIPES: [&str; 1] = ["scene.recipe.apply"];
 /// Contract 0.2 authoring mutations: the write-capable profiles.
 const AUTHORING_WRITES: [&str; 13] = [
     "asset.delete",
@@ -189,6 +192,7 @@ fn expected(profile: &str) -> BTreeSet<String> {
         tools.extend(EDITOR_PLANE.iter().map(|tool| (*tool).to_owned()));
         tools.extend(EDITOR_MORE.iter().map(|tool| (*tool).to_owned()));
         tools.extend(SCRIPT_EXECUTION.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(RECIPES.iter().map(|tool| (*tool).to_owned()));
     }
     if matches!(profile, "runtime" | "full") {
         tools.extend(RUNTIME_ONLY.iter().map(|tool| (*tool).to_owned()));
@@ -277,10 +281,10 @@ fn discovery_lists_only_implemented_tools_with_strict_descriptions() {
     }
 }
 
-/// The capability report carries the 0.4.0 contract and the same tool sets
+/// The capability report carries the 0.5.0 contract and the same tool sets
 /// discovery lists.
 #[test]
-fn the_capability_report_is_contract_0_4_0_and_matches_discovery() {
+fn the_capability_report_is_contract_0_5_0_and_matches_discovery() {
     let tree = ProjectTree::new("m1-capabilities");
     let mut session = StdioSession::initialized(&Spawn {
         project: &tree.root,
@@ -294,7 +298,7 @@ fn the_capability_report_is_contract_0_4_0_and_matches_discovery() {
         let manifest = &manifests[profile];
         assert_eq!(
             manifest["schema_version"],
-            json!("0.4.0"),
+            json!("0.5.0"),
             "{profile} manifest version: {manifest}"
         );
         let tools: BTreeSet<String> = manifest["tools"]
@@ -312,46 +316,134 @@ fn the_capability_report_is_contract_0_4_0_and_matches_discovery() {
 /// does not declare: a nested operation item or value is as strict as the top
 /// level (plan section 16, "every discovered schema rejects unknown fields").
 /// A map of caller-chosen keys says what each value must be instead.
+///
+/// A member of `allOf`, `anyOf`, `oneOf` or `not` describes the same instance
+/// as the object it belongs to. Such a member without a type of its own that
+/// names only fields the closed object declares, like the recipe parameters'
+/// "`mass` only when `body` is `rigid`", is a condition on that object: the
+/// object's `additionalProperties: false` still refuses any other field, so the
+/// condition is not an open object. A member naming an undeclared field, or
+/// declaring an object of its own, is checked like any other.
 #[test]
 fn every_object_in_every_discovered_schema_rejects_unknown_fields() {
-    fn open_objects(schema: &Value, pointer: &str, found: &mut Vec<String>) {
+    /// `closed` holds the fields of the closed object whose instance `schema`
+    /// still describes, when it describes one.
+    fn open_objects(
+        schema: &Value,
+        pointer: &str,
+        closed: Option<&BTreeSet<String>>,
+        found: &mut Vec<String>,
+    ) {
         let Value::Object(map) = schema else {
             return;
         };
-        if map.get("type") == Some(&json!("object")) || map.contains_key("properties") {
+        let declared = map.get("properties").and_then(Value::as_object);
+        let condition = closed.filter(|closed| {
+            !map.contains_key("type")
+                && !map.contains_key("additionalProperties")
+                && declared.is_none_or(|declared| declared.keys().all(|key| closed.contains(key)))
+        });
+        if condition.is_none()
+            && (map.get("type") == Some(&json!("object")) || map.contains_key("properties"))
+        {
             match map.get("additionalProperties") {
                 Some(Value::Bool(false) | Value::Object(_)) => {}
                 _ => found.push(pointer.to_owned()),
             }
         }
+        let own: Option<BTreeSet<String>> =
+            (map.get("additionalProperties") == Some(&json!(false))).then(|| {
+                declared
+                    .map(|declared| declared.keys().cloned().collect())
+                    .unwrap_or_default()
+            });
+        let same_instance = own.as_ref().or(condition);
         for keyword in ["properties", "patternProperties", "$defs", "definitions"] {
             if let Some(Value::Object(named)) = map.get(keyword) {
                 for (name, child) in named {
-                    open_objects(child, &format!("{pointer}/{keyword}/{name}"), found);
+                    open_objects(child, &format!("{pointer}/{keyword}/{name}"), None, found);
                 }
             }
         }
         for keyword in [
             "items",
             "additionalProperties",
-            "not",
             "if",
             "then",
             "else",
             "contains",
         ] {
             if let Some(child @ Value::Object(_)) = map.get(keyword) {
-                open_objects(child, &format!("{pointer}/{keyword}"), found);
+                open_objects(child, &format!("{pointer}/{keyword}"), None, found);
             }
         }
-        for keyword in ["oneOf", "anyOf", "allOf", "prefixItems"] {
+        if let Some(child @ Value::Object(_)) = map.get("not") {
+            open_objects(child, &format!("{pointer}/not"), same_instance, found);
+        }
+        for keyword in ["oneOf", "anyOf", "allOf"] {
             if let Some(Value::Array(children)) = map.get(keyword) {
                 for (index, child) in children.iter().enumerate() {
-                    open_objects(child, &format!("{pointer}/{keyword}/{index}"), found);
+                    open_objects(
+                        child,
+                        &format!("{pointer}/{keyword}/{index}"),
+                        same_instance,
+                        found,
+                    );
                 }
             }
         }
+        if let Some(Value::Array(children)) = map.get("prefixItems") {
+            for (index, child) in children.iter().enumerate() {
+                open_objects(
+                    child,
+                    &format!("{pointer}/prefixItems/{index}"),
+                    None,
+                    found,
+                );
+            }
+        }
     }
+    // The walker tells a condition on a closed object from an open object.
+    let fixture = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "a": { "type": "string" }, "b": { "type": "integer" } },
+        "anyOf": [
+            { "required": ["a"], "properties": { "a": { "const": "x" } } },
+            { "properties": { "c": { "type": "string" } } },
+            { "type": "object", "properties": { "a": { "type": "string" } } },
+            { "not": { "properties": { "b": { "const": 1 } }, "required": ["b"] } },
+            { "allOf": [{ "properties": { "d": { "type": "string" } } }] },
+        ],
+    });
+    let mut fixture_found = Vec::new();
+    open_objects(&fixture, "fixture", None, &mut fixture_found);
+    assert_eq!(
+        fixture_found,
+        [
+            "fixture/anyOf/1",
+            "fixture/anyOf/2",
+            "fixture/anyOf/4/allOf/0"
+        ],
+        "only the members naming an undeclared field or declaring their own object are open"
+    );
+    let mut open_parent = Vec::new();
+    open_objects(
+        &json!({
+            "type": "object",
+            "properties": { "a": { "type": "string" } },
+            "anyOf": [{ "properties": { "a": { "const": "x" } } }],
+        }),
+        "open",
+        None,
+        &mut open_parent,
+    );
+    assert_eq!(
+        open_parent,
+        ["open", "open/anyOf/0"],
+        "an open object opens its members"
+    );
+
     let tree = ProjectTree::new("m1-strict-schemas");
     let mut session = StdioSession::initialized(&Spawn {
         project: &tree.root,
@@ -362,7 +454,7 @@ fn every_object_in_every_discovered_schema_rejects_unknown_fields() {
     let mut found = Vec::new();
     for tool in listed(&mut session, 2) {
         let name = tool["name"].as_str().expect("tool name").to_owned();
-        open_objects(&tool["inputSchema"], &name, &mut found);
+        open_objects(&tool["inputSchema"], &name, None, &mut found);
     }
     let _ = session.finish();
     assert!(

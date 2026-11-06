@@ -1,7 +1,7 @@
 # HTTP: `trusted_local`
 
-`trusted_local` is the simpler of the two HTTP modes. Use it when a second process
-on the same machine has to reach a server that is already running, and stdio cannot
+`trusted_local` is the simpler of the two authenticated HTTP modes. Use it when a second
+process on the same machine has to reach a server that is already running, and stdio cannot
 be shared between them.
 
 It is not the default and not a step up from stdio. If one client is talking to the
@@ -11,8 +11,9 @@ socket.
 ## What it is
 
 * The listener binds a loopback address. A non-loopback bind is rejected by
-  `check-config`, so there is no configuration in which this process is reachable
-  from another host.
+  `check-config`, so no `trusted_local` configuration is reachable from another host.
+  To serve another machine of a development network, the [`open`](http-open.md) mode
+  binds any address.
 * Every request carries a **per-launch secret** scoped to the user who started the
   server. A new launch means a new secret; a secret from a previous launch is not
   accepted.
@@ -135,5 +136,6 @@ either way. See [Artifacts](artifacts.md).
 
 If the client cannot run on this host, do not widen this mode. Put a same-host
 reverse proxy in front and switch to
-[`proxied_oidc`](http-proxied-oidc.md), which is the only supported way to serve a
-request that originates off-host.
+[`proxied_oidc`](http-proxied-oidc.md), which is the authenticated way to serve a
+request that originates off-host. On a development network whose machines are yours,
+[`open`](http-open.md) serves the other machine directly instead.

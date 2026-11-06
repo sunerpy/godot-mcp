@@ -62,10 +62,13 @@ another file of the same batch sees the new content only once both are written. 
 the connected editor is refused; change an open scene with `scene.batch.apply`, which goes
 through the editor. `dryRun` answers every file's diff and tree and writes nothing.
 
-Common setups — a character body, lights and a sky, particles, navigation, a sound, a shader
-material, a theme, a HUD, a grid map, an on-screen joystick — are written out as batches in the
-[recipes reference](../../operator/recipes.md), each one checked on every Godot version the
-server supports.
+Common setups — a 2D or 3D physics body, lights with a sky and a camera, particles from six
+presets, navigation, a sound, a shader material, a HUD, a grid map, an on-screen joystick — go
+into a scene by name with `scene.recipe.apply`, with their parameters: the server turns the
+recipe into one batch like the ones above, or, for a scene your editor holds, into one undoable
+action, and answers every value it used. A theme recipe goes to `resource.create`. The
+[recipes reference](../../operator/recipes.md) shows each recipe's call and the operations it
+becomes, and [What it covers](capabilities.md) lists the tools for each part of a project.
 
 ## Settings and assets
 

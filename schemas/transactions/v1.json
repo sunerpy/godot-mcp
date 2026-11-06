@@ -60,7 +60,7 @@
     "project_generation": { "type": "integer", "minimum": 0 },
     "transport_mode": {
       "type": "string",
-      "enum": ["stdio", "trusted_local", "proxied_oidc"]
+      "enum": ["stdio", "trusted_local", "proxied_oidc", "open"]
     },
     "principal": { "type": ["string", "null"], "minLength": 1 },
     "session": { "type": ["string", "null"], "minLength": 1 },

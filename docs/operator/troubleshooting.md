@@ -23,9 +23,26 @@ is live would be ambiguous, so it is refused. Remove the section, or set
 
 ### `check-config: rejected [permission_denied]: http bind address ... is not loopback`
 
-The listener may only bind loopback. This is not adjustable. If a client cannot reach
-the host, put a reverse proxy in front and use
-[`proxied_oidc`](http-proxied-oidc.md).
+A `trusted_local` or `proxied_oidc` listener may only bind loopback; this is not
+adjustable. For a client on another machine of a development network whose machines are
+yours, use the `open` mode, which binds any address: `mode = "open"` in the file, or
+`godot-mcp serve --http <ADDR>` without one ([HTTP: `open`](http-open.md)). Beyond such a
+network, put a reverse proxy in front and use [`proxied_oidc`](http-proxied-oidc.md).
+
+### `godot-mcp serve: configuration rejected [invalid_input]: cannot resolve environment variable ...`
+
+`serve --http <ADDR> --http-token-env <VAR>`, or an `open` configuration with
+`[http.token.env]`, names a token variable that is unset or holds only spaces. The token
+is read once, at start, so the launch is refused before anything listens. Export the
+variable in the shell that starts the server, or leave the flag out to ask for no token.
+
+### A client on another machine cannot connect to an `open` listener
+
+Dial the `other hosts` URL that `serve` prints, not `0.0.0.0`, which no client can
+connect to. A client in a browser sends an `Origin`, which an `open` listener answers
+HTTP 403 until `origin` in `[http]` names it; a configured `host` answers HTTP 403 to any
+other `Host`. A firewall on the server's machine can also drop the port before the server
+sees anything.
 
 ### `check-config: rejected [invalid_input]: http override is incomplete; missing: [...]`
 

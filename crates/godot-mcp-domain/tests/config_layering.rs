@@ -1258,3 +1258,218 @@ fn session_timing_survives_an_http_environment_override() {
     assert_eq!(http.session_idle_timeout_ms, Some(120_000));
     assert_eq!(http.session_lifetime_ms, Some(7_200_000));
 }
+
+// ---------------------------------------------------------------------------
+// The open mode for development networks (ADR 0014)
+// ---------------------------------------------------------------------------
+
+/// The smallest open listener: every interface, no Host or Origin, no token.
+const OPEN_FILE: &str = r#"
+transport = "http"
+
+[http]
+bind = "0.0.0.0:8765"
+mode = "open"
+"#;
+
+#[test]
+fn an_open_listener_may_bind_any_address_without_a_credential() {
+    for bind in [
+        "0.0.0.0:8765",
+        "[::]:8765",
+        "192.168.1.20:8765",
+        "127.0.0.1:8765",
+    ] {
+        let file = OPEN_FILE.replace("0.0.0.0:8765", bind);
+        let config = load_config(Some(&file), &no_env(), &CliOverrides::default())
+            .unwrap_or_else(|error| panic!("{bind}: {error}"));
+        let http = config.http.as_ref().expect("http");
+        assert_eq!(config.transport, Transport::Http);
+        assert_eq!(http.mode, HttpMode::Open);
+        assert_eq!(http.bind.to_string(), bind);
+        assert!(http.token.is_none() && http.host.is_none() && http.origin.is_none());
+    }
+    // The other modes still refuse a bind beyond loopback.
+    let file = TRUSTED_LOCAL_FILE.replace("127.0.0.1:9000", "0.0.0.0:9000");
+    let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+        .expect_err("trusted_local stays on loopback");
+    assert!(
+        matches!(error, ConfigError::NonLoopbackBind { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn an_open_listener_takes_an_optional_token_host_and_origin() {
+    let file = format!(
+        "{OPEN_FILE}host = \"build-box.example.invalid:8765\"\n\
+         origin = \"http://build-box.example.invalid:8765\"\n\n\
+         [http.token.env]\nvar = \"GODOT_MCP_LAN_TOKEN\"\n"
+    );
+    // The token's variable is namespaced, and allowed because it is the active
+    // indirection.
+    let config = load_config(
+        Some(&file),
+        &env(&[("GODOT_MCP_LAN_TOKEN", "lan-token")]),
+        &CliOverrides::default(),
+    )
+    .expect("valid");
+    let http = config.http.as_ref().expect("http");
+    assert_eq!(
+        http.token,
+        Some(SecretRef::Env {
+            var: "GODOT_MCP_LAN_TOKEN".to_string()
+        })
+    );
+    assert_eq!(http.host.as_deref(), Some("build-box.example.invalid:8765"));
+    assert!(!format!("{config:?}").contains("lan-token"));
+
+    for (field, value, expected) in [
+        ("host", "build-box.example.invalid/path", "host"),
+        ("origin", "ftp://build-box.example.invalid", "origin"),
+    ] {
+        let file = format!("{OPEN_FILE}{field} = \"{value}\"\n");
+        let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+            .expect_err("a malformed optional value is still refused");
+        match (expected, &error) {
+            ("host", ConfigError::InvalidHost { .. })
+            | ("origin", ConfigError::InvalidOrigin { .. }) => {}
+            _ => panic!("{field}: got {error:?}"),
+        }
+    }
+    let file = format!("{OPEN_FILE}\n[http.token.env]\nvar = \"\"\n");
+    let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+        .expect_err("an empty token variable name is refused");
+    assert!(
+        matches!(error, ConfigError::EmptyValue { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn an_open_listener_refuses_the_other_modes_credentials() {
+    for (field, extra) in [
+        ("local_secret", "[http.local_secret.env]\nvar = \"S\"\n"),
+        (
+            "proxy_hop",
+            "[http.proxy_hop.socket_path]\npath = \"/run/p.sock\"\n",
+        ),
+        (
+            "principal",
+            "[http.principal]\nissuer = \"https://i.example\"\nsubject = \"s\"\n",
+        ),
+    ] {
+        let file = format!("{OPEN_FILE}\n{extra}");
+        let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+            .expect_err("a credential of another mode is refused");
+        match error {
+            ConfigError::ForbiddenFieldForMode {
+                field: found,
+                mode: HttpMode::Open,
+            } => assert_eq!(found, field),
+            other => panic!("{field}: got {other:?}"),
+        }
+    }
+    for (field, line) in [
+        (
+            "external_resource_url",
+            "external_resource_url = \"https://resource.example/mcp\"\n",
+        ),
+        ("allowed_algorithms", "allowed_algorithms = [\"RS256\"]\n"),
+        ("required_scopes", "required_scopes = [\"mcp:read\"]\n"),
+    ] {
+        let file = format!("{OPEN_FILE}{line}");
+        let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+            .expect_err("an OIDC policy field is refused");
+        match error {
+            ConfigError::ForbiddenFieldForMode { field: found, .. } => assert_eq!(found, field),
+            other => panic!("{field}: got {other:?}"),
+        }
+    }
+    // And the other modes refuse the open mode's token.
+    let file = format!("{TRUSTED_LOCAL_FILE}\n[http.token.env]\nvar = \"T\"\n");
+    let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+        .expect_err("trusted_local has no token field");
+    match error {
+        ConfigError::ForbiddenFieldForMode { field, .. } => assert_eq!(field, "token"),
+        other => panic!("got {other:?}"),
+    }
+}
+
+#[test]
+fn an_open_listener_can_be_configured_from_env_or_cli_alone() {
+    let from_env = load_config(
+        None,
+        &env(&[
+            ("GODOT_MCP_TRANSPORT", "http"),
+            ("GODOT_MCP_HTTP_BIND", "0.0.0.0:8765"),
+            ("GODOT_MCP_HTTP_MODE", "open"),
+            ("GODOT_MCP_HTTP_TOKEN_ENV", "LAN_TOKEN"),
+        ]),
+        &CliOverrides::default(),
+    )
+    .expect("env-only open listener validates");
+    let http = from_env.http.as_ref().expect("http");
+    assert_eq!(http.mode, HttpMode::Open);
+    assert_eq!(
+        http.token,
+        Some(SecretRef::Env {
+            var: "LAN_TOKEN".to_string()
+        })
+    );
+
+    let error = load_config(
+        None,
+        &env(&[
+            ("GODOT_MCP_TRANSPORT", "http"),
+            ("GODOT_MCP_HTTP_BIND", "0.0.0.0:8765"),
+            ("GODOT_MCP_HTTP_MODE", "open"),
+            ("GODOT_MCP_HTTP_TOKEN_ENV", "LAN_TOKEN"),
+            ("GODOT_MCP_HTTP_TOKEN_FILE", "/run/lan-token"),
+        ]),
+        &CliOverrides::default(),
+    )
+    .expect_err("one token indirection, not two");
+    assert!(
+        matches!(error, ConfigError::InvalidEnvValue { .. }),
+        "got {error:?}"
+    );
+
+    // What `serve --http` builds.
+    let from_cli = load_config(
+        None,
+        &no_env(),
+        &CliOverrides {
+            transport: Some(Transport::Http),
+            http_bind: Some("0.0.0.0:0".parse().expect("address")),
+            http_mode: Some(HttpMode::Open),
+            ..CliOverrides::default()
+        },
+    )
+    .expect("the CLI's open listener validates");
+    assert_eq!(from_cli.http.as_ref().expect("http").mode, HttpMode::Open);
+}
+
+#[test]
+fn an_open_listener_accepts_script_execution_and_keeps_the_bridge_on_loopback() {
+    let file = format!("allow_scripts = true\n{OPEN_FILE}");
+    let config =
+        load_config(Some(&file), &no_env(), &CliOverrides::default()).expect("scripts allowed");
+    assert!(config.allow_scripts);
+
+    let file = format!("{OPEN_FILE}session_idle_timeout_ms = 0\n");
+    let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+        .expect_err("a zero timeout is refused in every mode");
+    assert!(
+        matches!(error, ConfigError::ZeroLimit { .. }),
+        "got {error:?}"
+    );
+
+    let file = format!("{OPEN_FILE}\n[bridge]\nendpoint = \"0.0.0.0:6009\"\n");
+    let error = load_config(Some(&file), &no_env(), &CliOverrides::default())
+        .expect_err("the editor bridge stays on loopback");
+    assert!(
+        matches!(error, ConfigError::NonLoopbackBridge { .. }),
+        "got {error:?}"
+    );
+}

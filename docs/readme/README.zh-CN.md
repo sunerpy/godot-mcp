@@ -28,10 +28,31 @@ MCP 客户端只和一个本地 `godot-mcp` 进程对话，从不直接连 Godot
 - **真实引擎，版本钉死。** 校验、导入、测试与导出在你配置的 Godot 上执行，只有引擎知道的事实也由它来读：已绘制的图块格子、动画关键帧、烘焙好的导航多边形、着色器的 uniform 与编译错误。导出覆盖资源包、补丁和 Android APK；`android.deploy` 通过 adb 把 APK 安装到设备上并启动，目前只对替身 adb 测过。CI 让每次发布都跑过锁文件里从 4.4.1 到 4.7.1 的每个确切版本。
 - **它自己管理的游戏与编辑器。** 启动游戏或编辑器，发送键盘、鼠标、动作与序列输入并录制、回放，读取运行中的场景树、属性、信号与 UI，写入运行时属性、等待条件成立、查找和移动节点，改变游戏速度，截图与录制并与参考图比对，并通过编辑器的语言服务器和调试适配器单步调试。由输入、等待、对节点属性和 Control 文本的断言、图像比对和压力窗口组成的测试场景，最后汇总成一份报告。
 - **你已经打开的编辑器。** 启用内置的 `godot_mcp` 插件后，Agent 可以查看并修改编辑器持有的场景，作为可撤销的编辑器操作，并保存、关闭它们；通过一张固定的编辑调用表画图块、给动画打关键帧，并读回只有引擎知道的值；截取编辑器画面，读取它的日志，修改编辑器的设置和快捷键，移动它的 3D 相机，回答它的对话框，在不会丢失任何内容时重启它，接收变化的文件，并从编辑器运行游戏。编辑器里的面板显示连接状态和它最近答复过的 500 个请求。
+- **常见设置的配方。** `scene.recipe.apply` 按名字把十种常见设置之一加进场景——2D 或 3D 物理体、带天空和相机的灯光、六种预设的粒子（火焰、烟雾、火花、雨、雪、爆炸）、导航、位置音效、着色器材质、HUD、网格地图和屏幕摇杆——带上参数，作为一个写入日志的批量改动，或者在编辑器里作为一个可撤销的操作。主题配方交给 `resource.create`。每个配方同时也是一个 MCP prompt，名为 `godot-mcp.recipe.<名字>`，Agent 不占用工具名额就能找到它们（见[配方](../operator/recipes.md)）。
 - **宁可拒绝，也不猜。** 二进制 `.scn` 返回 `unsupported` 并附上补救办法（另存为文本格式）；无法证实的结果返回 `uncertain`。
 - **脚本只在你允许时运行。** 用 `--allow-scripts` 启动服务器后，Agent 可以在无头引擎、打开的编辑器或运行中的游戏里执行自己写的 GDScript，并看到它返回了什么、打印了什么、改了哪些文件。默认关闭；一旦打开，脚本不受任何限制。
-- **本地优先。** 默认走 stdio，没有端口，也没有凭据。可选的回环 HTTP 只接受每次启动生成的密钥，或经过认证的代理转发。
+- **本地优先。** 默认走 stdio，没有端口，也没有凭据。可选的 HTTP 可以只监听回环地址，凭每次启动生成的密钥访问，或放在经过认证的代理后面；也可以用 `godot-mcp serve --http 0.0.0.0:8765` 在开发网络里提供服务，不要凭据或只要一个令牌（见 [HTTP：`open`](../operator/http-open.md)）。
 - **可以自证的发布包。** Linux 用 musl 静态链接，Windows 用 `crt-static`；包里的 `MANIFEST.json` 供二进制自检，附 CycloneDX SBOM；发布归档带 GitHub 签发的构建证明。
+
+## 覆盖范围
+
+下表列出 Godot 项目的各个部分分别用哪些工具。“编辑”指 `scene.batch.apply`、`editor.scene.edit` 或 `resource.batch.apply` 里的 `call_method` 操作，或者 `scene.create`、`resource.create` 的操作里的同类操作；“读取”指 `scene.read`、`resource.read` 或 `editor.scene.read`。每个类能调用哪些方法，见[编辑器桥](../operator/editor-bridge.md#editing-calls)。
+
+| 领域 | 创建与修改 | 读回、运行与观察 |
+| --- | --- | --- |
+| 动画 | 编辑 `AnimationPlayer`、`AnimationLibrary` 与 `Animation`：`add_animation`、`add_track`、`track_insert_key`、`set_loop_mode`；逐帧动画用 `SpriteFrames` | 读取 `get_animation_list`、`track_get_key_count`、`track_get_key_value`；游戏运行时用 `runtime.signals.get` 与 `runtime.wait` |
+| AnimationTree | 编辑 `AnimationNodeStateMachine`（`add_node`、`add_transition`）、`AnimationNodeBlendTree`（`connect_node`）和两种混合空间（`add_blend_point`） | 读取 `get_node_list`、`get_transition_count`、`get_blend_point_count` |
+| 物理 | `scene.recipe.apply` 配合 `body-2d` 或 `body-3d`：带碰撞形状的角色体、刚体、静态体或区域；任意形状用 `set_subresource`；`TileSet` 的物理层 | `scene.tree.get`；游戏运行时用 `runtime.nodes.find` 查找某点附近的节点，以及 `runtime.properties.get`、`runtime.sample`、`runtime.time_scale.set` |
+| 3D | `scene.recipe.apply` 配合 `body-3d`、`light-3d`（太阳光、点光源、天空、相机）或 `gridmap-3d`；编辑 `GridMap`（`set_cell_item`）与 `MeshLibrary`（`create_item`） | 读取 `get_used_cells`、网格的 `get_aabb`、`Skeleton3D` 的骨骼；`editor.camera.get`、`editor.camera.set`，以及对 3D 视口的 `editor.screenshot.capture` |
+| 粒子 | `scene.recipe.apply` 配合 `particles-2d` 和一种预设：fire、smoke、sparks、rain、snow 或 explosion；`ParticleProcessMaterial` 用 `set_subresource` | 游戏运行时用 `runtime.screenshot.capture`、`runtime.recording.capture`、`runtime.image.compare` |
+| 导航 | `scene.recipe.apply` 配合 `navigation-2d`；编辑 `NavigationPolygon`（`add_outline`），并用导航区域的 `bake_navigation_polygon` 与 `bake_navigation_mesh` 烘焙 | 读取 `get_polygon_count`、`get_vertices`；游戏运行时用 `runtime.navigation.path.get`，并用 `runtime.node.move` 沿路径移动 |
+| 音频 | 音频文件用 `asset.put` 与 `project.import.run`，`scene.recipe.apply` 配合 `audio-2d`，总线用 `resource.batch.apply` 修改总线布局（`default_bus_layout.tres`）；换用另一个布局文件用 `project.settings.patch` | `asset.status`，对总线布局用 `resource.tree.get`；游戏运行时对播放器用 `runtime.properties.get` |
+| 着色器 | `.gdshader` 用 `file.create`；`scene.recipe.apply` 配合 `shader-2d` 生成 `ShaderMaterial` 及其 uniform；编辑 `VisualShader`（`add_node`、`connect_nodes`） | `shader.check` 给出编译错误与 uniform；读取 `get_shader_uniform_list` |
+| 主题 | 用 `resource.create` 或 `resource.batch.apply` 编辑 `Theme`（`set_color`、`set_font_size`、`set_constant`、`set_stylebox`），`theme` 配方就是这样做的；`scene.recipe.apply` 配合 `hud`；编辑 `Control` 的锚点 | 读取 `get_color`、`get_type_list`；游戏运行时用 `runtime.ui.get` 与 `runtime.ui.press` |
+| TileMap | 编辑 `TileSet` 与 `TileSetAtlasSource`（`add_source`、`create_tile`、地形）以及 `TileMapLayer`（`set_cell`、`erase_cell`、`set_cells_terrain_connect`） | 读取 `get_used_cells`、`get_cell_source_id`、`get_cell_atlas_coords` |
+| 运行时控制 | `project.run.start` 与 `project.run.stop`；`input.action.send`、`input.key.send`、`input.mouse.send`、`input.sequence.send`、`input.replay` | `runtime.tree.get`、`runtime.properties.get`、`runtime.properties.set`、`runtime.wait`、`runtime.ui.get`、`runtime.screenshot.capture`；完整的测试场景用 `test.scenario.run` |
+
+`full` profile 共有 130 个工具；生成的[工具清单](../protocol/tool-inventory.md)逐个列出它们所属的 profile。
 
 ## 安装
 
@@ -125,7 +146,8 @@ make dist        # 输出 target/release-dist/godot-mcp-<版本>-<目标>.<扩�
 | 每个能力的请求与实测答复 | [能力实操与验证复现](../operator/usage-and-verification.md) |
 | 它运行的游戏与编辑器、输入、截取、调试 | [托管会话](../operator/managed-sessions.md) |
 | 操作你已经打开的编辑器 | [编辑器桥](../operator/editor-bridge.md) |
-| 常见节点的配方，创建后在编辑器里实时调整 | [配方](../operator/recipes.md) |
+| 常见设置的配方，按名字套用 | [配方](../operator/recipes.md) |
+| 从开发网络里的另一台机器连接 | [HTTP：`open`](../operator/http-open.md) |
 | profile、答复、`unavailable` 与 `uncertain` | [Profile 与工具答复](../operator/profiles-and-outcomes.md) |
 | 崩溃、遗留进程、隔离与修复 | [恢复](../operator/recovery.md) |
 | 信任边界与残余风险 | [威胁模型](../security/threat-model.md) |

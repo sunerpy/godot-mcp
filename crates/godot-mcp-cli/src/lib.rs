@@ -13,10 +13,12 @@
 //!
 //! Three distinctions are load-bearing, because each is easy to overstate:
 //!
-//! * **`serve` defaults to stdio and enables HTTP only through explicit
-//!   configuration.** Omitting `--config` starts stdio and creates no listener or
-//!   credential. A validated `--config` file may select authenticated loopback
-//!   Streamable HTTP. Omitting `--stdio`, or passing it bare, affirms startup; an
+//! * **`serve` defaults to stdio and starts HTTP only when asked.** Omitting
+//!   `--config` and `--http` starts stdio and creates no listener or credential.
+//!   A validated `--config` file may select authenticated loopback Streamable
+//!   HTTP or the `open` mode; `--http <ADDR>` starts the `open` mode for a
+//!   development network without a file (ADR 0014, [`serve_banner`]).
+//!   Omitting `--stdio`, or passing it bare, affirms startup; an
 //!   explicit `--stdio=false` is accepted by the parser and refused by `serve`,
 //!   which exits 2 rather than selecting another transport implicitly.
 //! * **`assets install` installs project assets, not an editor plug-in.** The
@@ -54,4 +56,5 @@ pub mod host_package;
 pub mod package;
 pub mod release_gates;
 pub mod repair;
+pub mod serve_banner;
 pub mod tooling_lock;

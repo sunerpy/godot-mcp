@@ -116,7 +116,7 @@ fn operation_contracts() -> [(
     EngineOperation,
     &'static [&'static str],
     &'static [&'static str],
-); 16] {
+); 17] {
     [
         (
             EngineOperation::ImportProject,
@@ -213,6 +213,18 @@ fn operation_contracts() -> [(
             &["files", "expectedRevision", "dryRun"],
             &["files", "idempotencyId"],
         ),
+        (
+            EngineOperation::SceneRecipe,
+            &[
+                "path",
+                "expectedSha256",
+                "recipe",
+                "parent",
+                "expectedRevision",
+                "dryRun",
+            ],
+            &["path", "idempotencyId", "expectedSha256", "recipe"],
+        ),
     ]
 }
 
@@ -271,6 +283,11 @@ fn valid_arguments(operation: EngineOperation) -> Map<String, Value> {
                 "operations".to_owned(),
                 json!([{ "op": "clear_property", "property": "resource_name" }]),
             ),
+        ]),
+        EngineOperation::SceneRecipe => Map::from_iter([
+            ("path".to_owned(), json!("scenes/main.tscn")),
+            ("expectedSha256".to_owned(), json!("0".repeat(64))),
+            ("recipe".to_owned(), json!({ "body-2d": {} })),
         ]),
         EngineOperation::ImportProject
         | EngineOperation::RunProject
@@ -730,6 +747,7 @@ fn engine_arguments_reject_wrong_declared_types_and_array_element_types() {
                 "integer" => json!("not an integer"),
                 "boolean" => json!("not a boolean"),
                 "array" => json!("not an array"),
+                "object" => json!("not an object"),
                 other => panic!(
                     "{}.{} uses unsupported type {other}",
                     operation.tool_name(),
@@ -805,7 +823,8 @@ fn engine_deadlines_follow_json_schema_integer_semantics_and_bounds() {
             | EngineOperation::SceneRead
             | EngineOperation::ResourceRead
             | EngineOperation::ShaderCheck
-            | EngineOperation::ProjectBatch => assert!(
+            | EngineOperation::ProjectBatch
+            | EngineOperation::SceneRecipe => assert!(
                 !operation.input_schema()["properties"]
                     .as_object()
                     .expect("properties object")
@@ -844,7 +863,8 @@ fn advertised_defaults_equal_runtime_defaults_for_all_engine_operations() {
             EngineOperation::SceneCreate
             | EngineOperation::SceneBatch
             | EngineOperation::ResourceCreate
-            | EngineOperation::ResourceBatch => {
+            | EngineOperation::ResourceBatch
+            | EngineOperation::SceneRecipe => {
                 assert!(
                     schema["properties"]["dryRun"].get("default").is_none(),
                     "an absent dryRun means a real write"
@@ -1029,5 +1049,523 @@ fn the_script_run_schema_and_the_parser_agree() {
             "the parser's verdict on {}",
             case.to_string().chars().take(120).collect::<String>()
         );
+    }
+}
+
+/// A request the recipe tool's schema and parser judge, beside the fields
+/// every valid request carries.
+fn recipe_request(extra: Value) -> Value {
+    let mut request = json!({
+        "path": "scenes/main.tscn",
+        "expectedSha256": "0".repeat(64),
+    });
+    for (key, value) in extra.as_object().expect("extra fields") {
+        request[key] = value.clone();
+    }
+    request
+}
+
+/// The `scene.recipe.apply` schema and the parser give the same verdict on
+/// every case, and it is the intended one: one scene recipe keyed by its name,
+/// parameters of the right shape, range and variant, and a node path parent.
+#[test]
+fn the_scene_recipe_schema_and_the_parser_agree() {
+    let long_name = "名".repeat(godot_mcp_domain::recipes::MAX_NAME_CHARS);
+    let longer_name = format!("{long_name}x");
+    let long_parent = "a".repeat(godot_mcp_domain::recipes::MAX_PARENT_CHARS);
+    let cells: Vec<Value> = (0..4096)
+        .map(|index| json!({ "x": index % 100, "y": 0, "z": index / 100 }))
+        .collect();
+    let too_many_cells: Vec<Value> = (0..4097)
+        .map(|index| json!({ "x": index % 100, "y": 0, "z": index / 100 }))
+        .collect();
+    let cases = [
+        // The recipe object.
+        (json!({ "recipe": { "body-2d": {} } }), true),
+        (json!({ "recipe": {} }), false),
+        (json!({ "recipe": { "body-2d": {}, "body-3d": {} } }), false),
+        (json!({ "recipe": { "theme": {} } }), false),
+        (json!({ "recipe": { "bodies": {} } }), false),
+        (json!({ "recipe": "body-2d" }), false),
+        (json!({ "recipe": { "body-2d": [] } }), false),
+        (json!({}), false),
+        (
+            json!({ "recipe": { "body-2d": {} }, "operations": [] }),
+            false,
+        ),
+        // Variants and their parameters.
+        (json!({ "recipe": { "body-2d": { "height": 5 } } }), true),
+        (
+            json!({ "recipe": { "body-2d": { "shape": "capsule", "height": 5 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "shape": "circle", "height": 5 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "shape": "circle", "radius": 5 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "size": { "x": 4, "y": 4 } } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "shape": "rectangle", "size": { "x": 4, "y": 4 } } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "shape": "rectangle", "size": { "x": 0, "y": 4 } } } }),
+            false,
+        ),
+        (json!({ "recipe": { "body-2d": { "mass": 2 } } }), false),
+        (
+            json!({ "recipe": { "body-2d": { "body": "rigid", "mass": 2 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "body": "rigid", "mass": 0 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "ray_length": 8 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "ground_ray": true, "ray_length": 8 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "ground_ray": false, "ray_mask": 1 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "collision_layer": 4_294_967_295_u64 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "collision_layer": 4_294_967_296_u64 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "collision_layer": 2.0 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "collision_layer": 2.5 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "collision_layer": -1 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "body": "kinematic" } } }),
+            false,
+        ),
+        (json!({ "recipe": { "body-2d": { "colour": 1 } } }), false),
+        (
+            json!({ "recipe": { "body-2d": { "radius": null } } }),
+            false,
+        ),
+        (json!({ "recipe": { "body-3d": { "mesh": false } } }), true),
+        (
+            json!({ "recipe": { "body-3d": { "mesh": false, "roughness": 0.5 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "roughness": 0.5 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "roughness": 1.5 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "body": "area", "friction": 0.5 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "body": "static", "friction": 0.5 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "color": { "red": 1, "green": 1, "blue": 1 } } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "color": { "red": 1, "green": 1, "blue": 1, "alpha": 17 } } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "shape": "sphere", "height": 2 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-3d": { "shape": "cylinder", "height": 2 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "light-3d": { "sun": false, "lamp": false, "sky": false } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "light-3d": { "sun": false, "lamp": false, "sky": false, "camera": false } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "light-3d": { "sun": false, "shadows": true } } }),
+            false,
+        ),
+        (json!({ "recipe": { "light-3d": { "fov": 0.5 } } }), false),
+        (
+            json!({ "recipe": { "light-3d": { "name": "Stage" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "preset": "snow", "width": 300 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "width": 300 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "preset": "smoke", "width": 300 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "preset": "hail" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "amount": 0 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "texture": "res://fx/dot.png" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "texture": "fx/dot.png" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "texture": "res://fx//dot.png" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "texture": "res://fx/../dot.png" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "texture": "res://fx\\dot.png" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "navigation-2d": { "walker": false } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "navigation-2d": { "walker": false, "avoidance": true } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "navigation-2d": { "navigation_layers": 0 } } }),
+            false,
+        ),
+        (json!({ "recipe": { "audio-2d": {} } }), false),
+        (
+            json!({ "recipe": { "audio-2d": { "stream": "res://audio/step.wav" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "audio-2d": { "stream": "res://audio/step.wav", "bus": "" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "audio-2d": { "stream": "res://audio/step.wav", "volume_db": 30 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://shaders/tint.gdshader" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://shaders/tint.GDSHADER" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://shaders/tint.txt" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://shaders/a\nb.gdshader" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://..gdshader" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://shaders/.gdshader" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://shaders//t.gdshader" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://../t.gdshader" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://t.gdshader/x" } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-2d": { "texture": "res://fx/a\nb.png" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "hud": { "score_text": "line one\nline two" } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": {
+                "shader": "res://s.gdshader",
+                "uniforms": {
+                    "strength": { "type": "float", "value": 0.5 },
+                    "count": { "type": "integer", "value": 3 },
+                    "on": { "type": "bool", "value": true },
+                    "tint": { "type": "color", "value": { "red": 1, "green": 0.5, "blue": 0.2, "alpha": 1 } },
+                    "offset": { "type": "vector2", "value": { "x": 1, "y": 2 } },
+                    "noise": { "type": "resource", "value": { "resource": "res://n.png", "resource_type": "Texture2D" } }
+                }
+            } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": {
+                "shader": "res://s.gdshader",
+                "uniforms": { "count": { "type": "integer", "value": 3.5 } }
+            } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": {
+                "shader": "res://s.gdshader",
+                "uniforms": { "1x": { "type": "float", "value": 1 } }
+            } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": {
+                "shader": "res://s.gdshader",
+                "uniforms": { "x": { "type": "string", "value": "a" } }
+            } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": { "shader": "res://s.gdshader", "uniforms": {} } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "shader-2d": {
+                "shader": "res://s.gdshader",
+                "uniforms": { "noise": { "type": "resource", "value": { "resource": "res://n.png", "resource_type": "Texture 2D" } } }
+            } } }),
+            false,
+        ),
+        (json!({ "recipe": { "hud": { "score_text": "" } } }), true),
+        (
+            json!({ "recipe": { "hud": { "score_font_size": 0 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "gridmap-3d": { "cells": cells } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "gridmap-3d": { "cells": too_many_cells } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "gridmap-3d": { "cells": [] } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "gridmap-3d": { "cells": [{ "x": 0, "y": 0, "z": 32768 }] } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "gridmap-3d": { "cells": [{ "x": 0, "y": 0 }] } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "joystick": { "actions": {} } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "joystick": { "actions": { "left": "move_left" } } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "joystick": { "actions": { "jump": "jump" } } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "joystick": { "mode": "free" } } }),
+            false,
+        ),
+        // Names and parents.
+        (json!({ "recipe": { "body-2d": { "name": "Ball" } } }), true),
+        (
+            json!({ "recipe": { "body-2d": { "name": long_name } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": { "name": longer_name } } }),
+            false,
+        ),
+        (json!({ "recipe": { "body-2d": { "name": "" } } }), false),
+        (json!({ "recipe": { "body-2d": { "name": "a.b" } } }), false),
+        (
+            json!({ "recipe": { "body-2d": { "name": "a\u{1}b" } } }),
+            false,
+        ),
+        (json!({ "recipe": { "body-2d": {} }, "parent": "." }), true),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "Level/Room" }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": long_parent }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": format!("{long_parent}a") }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "Level/..x" }),
+            true,
+        ),
+        (json!({ "recipe": { "body-2d": {} }, "parent": "" }), false),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "/Level" }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "Level//Room" }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "Level/.." }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "Level/." }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "body-2d": {} }, "parent": "nh1:0123" }),
+            false,
+        ),
+        (json!({ "recipe": { "body-2d": {} }, "parent": 3 }), false),
+        (json!({ "recipe": { "body-2d": {} }, "dryRun": true }), true),
+        (
+            json!({ "recipe": { "body-2d": {} }, "dryRun": "yes" }),
+            false,
+        ),
+    ];
+    let mut schema = advertised_schema(EngineOperation::SceneRecipe);
+    // The kernel takes the idempotency identifier off before the handler
+    // parses; the schema is checked on what the handler sees.
+    schema["required"] = json!(["path", "expectedSha256", "recipe"]);
+    let schema = Value::Object(schema);
+    for (extra, expected) in &cases {
+        let case =
+            if extra.get("recipe").is_some() || extra.as_object().is_some_and(|o| o.is_empty()) {
+                recipe_request(extra.clone())
+            } else {
+                extra.clone()
+            };
+        let shown = case.to_string().chars().take(160).collect::<String>();
+        assert_eq!(
+            crate::schema::conformance::conforms(&schema, &case),
+            *expected,
+            "the schema's verdict on {shown}"
+        );
+        assert_eq!(
+            EngineRequest::parse(
+                EngineOperation::SceneRecipe,
+                case.as_object().expect("arguments").clone()
+            )
+            .is_ok(),
+            *expected,
+            "the parser's verdict on {shown}"
+        );
+    }
+}
+
+/// A recipe request becomes the scene batch its recipe expands to, under the
+/// recipe tool's own name, and carries its recipe into the answer.
+#[test]
+fn a_recipe_request_is_the_scene_batch_its_recipe_expands_to() {
+    let arguments = recipe_request(json!({
+        "recipe": { "particles-2d": { "preset": "smoke", "amount": 12 } },
+        "parent": "Level",
+        "dryRun": true,
+    }));
+    let EngineRequest::Author(author) = EngineRequest::parse(
+        EngineOperation::SceneRecipe,
+        arguments.as_object().expect("arguments").clone(),
+    )
+    .expect("a recipe request parses") else {
+        panic!("scene.recipe.apply must parse into an authored request");
+    };
+    assert_eq!(author.tool(), "scene.recipe.apply");
+    assert_eq!(author.kind, super::authored::AuthorKind::SceneBatch);
+    assert!(author.dry_run);
+    let expansion = godot_mcp_domain::recipes::recipe("particles-2d")
+        .expect("the particles recipe")
+        .expand(
+            json!({ "preset": "smoke", "amount": 12 })
+                .as_object()
+                .expect("parameters"),
+            Some("Level"),
+        )
+        .expect("the parameters are accepted");
+    assert_eq!(
+        serde_json::from_str::<Value>(&author.batch).expect("the batch is JSON"),
+        Value::Array(expansion.operations.clone())
+    );
+    let mut answer = Map::new();
+    author.annotate(&mut answer);
+    assert_eq!(answer["recipe"], expansion.describe());
+    assert_eq!(answer["recipe"]["parameters"]["name"], json!("Smoke"));
+    assert_eq!(answer["recipe"]["parameters"]["lifetime"], json!(2.5));
+    assert_eq!(answer["operations"], Value::Array(expansion.operations));
+
+    for (recipe, needle) in [
+        (json!({ "theme": {} }), "resource.create"),
+        (json!({ "fog": {} }), "there is no recipe \"fog\""),
+        (
+            json!({ "body-2d": { "shape": "circle", "height": 3 } }),
+            "applies only when",
+        ),
+    ] {
+        let error = EngineRequest::parse(
+            EngineOperation::SceneRecipe,
+            recipe_request(json!({ "recipe": recipe }))
+                .as_object()
+                .expect("arguments")
+                .clone(),
+        )
+        .expect_err("the request is refused");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+        assert!(error.to_string().contains(needle), "{error}");
     }
 }

@@ -44,8 +44,8 @@ rejection:
 ## HTTP on loopback
 
 Use HTTP only when a second local process genuinely has to reach the same running
-server. It is off by default. The listener is always loopback, and every request is
-authenticated — reaching the socket proves nothing about who is calling.
+server. It is off by default. A `trusted_local` listener is always loopback, and every
+request is authenticated — reaching the socket proves nothing about who is calling.
 
 With `trusted_local`, the client presents the per-launch secret:
 
@@ -60,12 +60,41 @@ curl --silent --show-error \
 The path is `http-protocol:/mcp`. See [HTTP: `trusted_local`](http-trusted-local.md)
 for how the secret is produced and scoped.
 
+## HTTP on a development network
+
+When the client runs on another machine of a network whose machines are yours — the agent
+on one computer, the Godot project on another — start the `open` mode instead. It binds the
+address you give and asks for no credential, or for one fixed token:
+
+```sh
+godot-mcp serve --project /srv/projects/my-game --profile full --http 0.0.0.0:8765
+```
+
+The server prints the URL another host dials. A client that takes a URL needs nothing else
+when no token is set:
+
+```json
+{
+  "mcpServers": {
+    "godot-mcp": {
+      "type": "http",
+      "url": "http://192.0.2.10:8765/mcp"
+    }
+  }
+}
+```
+
+Anyone who can reach the port can use every tool of the profile. With
+`--http-token-env <VAR>` every request must present `Authorization: Bearer <token>`. See
+[HTTP: `open`](http-open.md) for the token, the `Host` and `Origin` checks and what the mode
+gives up.
+
 ## Through a same-host reverse proxy
 
-When a client cannot share the host, put a reverse proxy in front. The proxy
-terminates TLS, authenticates the end user, and forwards to the loopback backend
-with its own proxy-hop credential. The backend still binds loopback only; nothing
-about this arrangement exposes the listener.
+When a client beyond a network you trust has to reach the server, put a reverse proxy
+in front. The proxy terminates TLS, authenticates the end user, and forwards to the
+loopback backend with its own proxy-hop credential. The backend still binds loopback
+only; nothing about this arrangement exposes the listener.
 
 The configuration below is illustrative and uses reserved example names throughout.
 Every credential value is redacted; substitute your own out-of-band.
@@ -128,6 +157,9 @@ what the backend does when either half of that pair is missing.
 * `tools/list` and `resources/list` reflect the selected profile exactly. A tool is
   listed because it is in the profile, not because it happens to be reachable right
   now.
+* `prompts/list` holds `godot-mcp.profile-guide` in every profile and, in `editor` and
+  `full`, one `godot-mcp.recipe.<name>` prompt per recipe, each with the recipe's
+  parameters, a call template and the operations it becomes ([Recipes](recipes.md)).
 * A failure is a typed outcome, not free text. The vocabulary is in
   [Outcome taxonomy](../protocol/error-taxonomy.md).
 * A long operation reports progress and honours cancellation; a cancelled request

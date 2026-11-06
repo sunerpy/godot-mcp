@@ -256,6 +256,16 @@ pub struct KernelResourceTemplate {
 pub struct KernelPrompt {
     pub name: String,
     pub description: String,
+    /// The arguments the prompt takes, in order.
+    pub arguments: Vec<KernelPromptArgument>,
+}
+
+/// One argument a prompt takes. Prompt arguments are strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KernelPromptArgument {
+    pub name: String,
+    pub description: String,
+    pub required: bool,
 }
 
 /// Protocol-neutral prompt response.
@@ -614,13 +624,17 @@ impl ServiceKernel {
     }
 
     /// Prompt discovery remains independent from sampling, roots and protocol
-    /// logging; none is required for kernel correctness.
+    /// logging; none is required for kernel correctness. The profile guide
+    /// comes first, then a prompt per recipe the profile can apply.
     #[must_use]
     pub fn prompts(&self) -> Vec<KernelPrompt> {
-        vec![KernelPrompt {
+        let mut prompts = vec![KernelPrompt {
             name: PROFILE_GUIDE_PROMPT.to_owned(),
             description: "Explain the active Godot MCP capability profile".to_owned(),
-        }]
+            arguments: Vec::new(),
+        }];
+        prompts.extend(crate::recipe_prompts::list(self.profile));
+        prompts
     }
 
     /// Resolve one protocol-neutral prompt.
@@ -629,6 +643,9 @@ impl ServiceKernel {
         name: &str,
         arguments: Option<&Map<String, Value>>,
     ) -> Result<KernelPromptResult, OutcomeError> {
+        if let Some(result) = crate::recipe_prompts::get(self.profile, name, arguments) {
+            return result;
+        }
         if name != PROFILE_GUIDE_PROMPT {
             return Err(outcome_error(ErrorKind::NotFound, "prompt was not found"));
         }
@@ -1172,6 +1189,7 @@ const fn audit_transport(mode: TransportAuthMode) -> AuditTransport {
         TransportAuthMode::Stdio => AuditTransport::Stdio,
         TransportAuthMode::TrustedLocal => AuditTransport::HttpTrustedLocal,
         TransportAuthMode::ProxiedOidc => AuditTransport::HttpProxiedOidc,
+        TransportAuthMode::Open => AuditTransport::HttpOpen,
     }
 }
 

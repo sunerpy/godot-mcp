@@ -66,7 +66,7 @@ home:
     intro: Your client talks to one Rust binary. GDScript runs inside Godot only where a task needs the engine, so analysis and file edits work with no editor open and no Godot installed.
     client:
       name: Your MCP client
-      detail: Starts godot-mcp as a process and talks to it over stdio, or over loopback HTTP when you turn that on.
+      detail: Starts godot-mcp as a process and talks to it over stdio, or over HTTP when you turn that on, on this machine or across your development network.
     server:
       name: godot-mcp
       detail: One static Rust binary beside the project, with no language runtime to install.
@@ -303,8 +303,8 @@ home:
         sends: Your MCP client
         detail: Over stdio the client and the server talk through two pipes. An answer carries the project data the call asked for, and nothing goes anywhere else.
       - name: HTTP, when you turn it on
-        sends: A loopback listener
-        detail: "`trusted_local` accepts only requests that carry the per-launch secret; `proxied_oidc` only an authenticated proxy hop carrying one user's token."
+        sends: The clients that reach the listener
+        detail: "`trusted_local` listens on loopback and accepts only requests that carry the per-launch secret, and `proxied_oidc` only an authenticated proxy hop carrying one user's token. `open` listens on the address you give it, for a development network whose machines are yours, with no credential or one token."
       - name: The engine
         sends: Your machine
         detail: Godot runs locally from the build you configure, inside a process boundary the server owns. godot-mcp never downloads an engine or export templates.
@@ -320,6 +320,11 @@ home:
         guide:
           text: How it is organised
           link: /guide/introduction#how-it-is-organised
+      - q: Which parts of a Godot project can it work on?
+        a: Animation, AnimationTree, physics, 3D, particles, navigation, audio, shaders, themes, TileMap and the running game, each through tools the agent calls. `scene.recipe.apply` adds a common setup, such as a physics body or smoke particles, to a scene by name, and every recipe is also an MCP prompt the agent can find.
+        guide:
+          text: What it covers
+          link: /guide/capabilities
       - q: Is it an editor plugin?
         a: It includes one, the optional `godot_mcp` add-on, which brings the editor you have open into the work. The server itself is one Rust binary beside the project, so with no editor open it still reads, edits, runs, tests and exports the project.
         guide:
@@ -340,6 +345,11 @@ home:
         guide:
           text: Threat model
           link: /reference/threat-model
+      - q: Can an agent on another machine use it?
+        a: "Yes, on a development network whose machines are yours: `godot-mcp serve --http 0.0.0.0:8765` serves MCP over HTTP to the other machines, with no credential or with one token. Beyond such a network, keep HTTP on loopback or put an authenticated reverse proxy in front."
+        guide:
+          text: HTTP
+          link: /operate/http
       - q: Does it send my project anywhere?
         a: No. It makes no network request of its own, apart from fetching your identity provider's signing keys when you configure OIDC, and it never downloads Godot or export templates. One server serves one project for one user; it is not a shared service.
         guide:

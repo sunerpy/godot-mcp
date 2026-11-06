@@ -22,6 +22,10 @@ does not matter which editor or IDE you use.
 - **Games and editors it owns.** It starts the game or a headless editor, sends input, reads the
   live scene tree, captures screenshots and recordings, and debugs through the editor's language
   server and debug adapter.
+- **Recipes for common setups.** `scene.recipe.apply` adds a physics body, lights, particles,
+  navigation, a sound, a shader material, a HUD, a grid map or a joystick to a scene by name, as
+  one journaled change. [What it covers](capabilities.md) lists the tools for each part of a Godot
+  project.
 
 ## A Rust server, not only an editor plugin
 
@@ -69,7 +73,7 @@ which, so a client can rely on the tool list and learn about the machine from th
 An agent's own GDScript runs only after you start the server with `--allow-scripts`, and no typed
 tool calls an engine method outside its fixed set. godot-mcp never downloads Godot or export
 templates. It serves one project for one user;
-it is not a shared or remote service. And loading a Godot project runs that project's code, so
+it is not a shared service. And loading a Godot project runs that project's code, so
 the server's process boundaries contain and stop what it starts without making an untrusted
 project safe to open — the [threat model](../../security/threat-model.md) says exactly where the
 lines are.
@@ -78,3 +82,5 @@ lines are.
 
 - [Install](install.md) the binary.
 - [Quick start](quick-start.md): register it with a client and make the first calls.
+- [What it covers](capabilities.md): the tools for animation, physics, 3D, particles, navigation
+  and the other parts of a project.

@@ -79,12 +79,13 @@ const PROFILES: [CapabilityProfile; 4] = [
 /// implemented catalog, so a planned method cannot inflate a profile,
 /// contract 0.3 adds the live editor's tools to it, and contract 0.4 adds
 /// the script runners, the engine reads, the Android device tools, game
-/// speed, image comparison, test scenarios and the other 0.4 tools.
+/// speed, image comparison, test scenarios and the other 0.4 tools, and
+/// contract 0.5 adds `scene.recipe.apply` to the write-capable profiles.
 const PROFILE_TOOL_COUNTS: [(CapabilityProfile, usize); 4] = [
     (CapabilityProfile::Core, 22),
-    (CapabilityProfile::Editor, 81),
+    (CapabilityProfile::Editor, 82),
     (CapabilityProfile::Runtime, 74),
-    (CapabilityProfile::Full, 129),
+    (CapabilityProfile::Full, 130),
 ];
 
 /// Every shape that would denote a code-execution outcome. The enumeration

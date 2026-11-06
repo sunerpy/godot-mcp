@@ -4,7 +4,8 @@ godot-mcp is a local-first, single-user Model Context Protocol server for Godot
 projects. One static Rust process runs beside a project: it analyses GDScript,
 scenes and resources without an engine, changes text resources through journaled
 transactions, and starts, drives, captures and debugs Godot games and editors it
-owns. Clients talk to it over stdio, or over authenticated loopback HTTP.
+owns. Clients talk to it over stdio, over authenticated loopback HTTP, or over
+HTTP in the opt-in `open` mode for a development network (ADR 0014).
 
 This file is the canonical instruction source for coding agents. `CLAUDE.md`
 imports it; do not create a second agent guide. Behaviour that changes with the
@@ -35,9 +36,12 @@ says so.
    whose outcome is unknown.
 2. **Protocol purity.** On stdio, stdout carries MCP frames and nothing else.
    Logs and diagnostics go to stderr.
-3. **No unauthenticated listener.** HTTP serves only `trusted_local` (a launch
-   secret on loopback) or `proxied_oidc` (a proxy hop plus one end-user
-   principal). Do not add a network surface without authentication.
+3. **No unauthenticated listener, except the declared open mode.** HTTP serves
+   `trusted_local` (a launch secret on loopback), `proxied_oidc` (a proxy hop
+   plus one end-user principal), or `open` (ADR 0014): any bind, no credential
+   or one fixed token, chosen explicitly by the operator, warned about at start,
+   and still refusing `Origin`, forwarded headers and query strings. Do not add
+   another network surface without authentication, and do not widen `open`.
 4. **Authority comes from held handles, not path text.** Project files are read
    and written through the descriptor-relative filesystem layer in
    `godot-mcp-domain`; symlink components, retargeted junctions and paths outside

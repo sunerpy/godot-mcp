@@ -14,7 +14,9 @@
 //!
 //! `serve` defaults to stdio. Supplying a validated `--config` may opt into the
 //! authenticated loopback Streamable HTTP transport compiled into release
-//! archives. Without that file no listener or credential is created. `--stdio`
+//! archives, or into its `open` mode; `--http <ADDR>` starts the `open` mode
+//! for a development network without a file (ADR 0014). Without either no
+//! listener or credential is created. `--stdio`
 //! takes an optional value: omitted or bare it affirms startup, and an explicit
 //! `--stdio=false` parses and then reaches [`serve`], whose own refusal exits 2.
 //! No `init`, `locate` or `configure` subcommand exists.
@@ -33,6 +35,7 @@
 //! argument and produces a `clap` parse error.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -40,7 +43,9 @@ use clap::{Args, Parser, Subcommand};
 use godot_mcp_cli::package;
 use godot_mcp_cli::repair::{RepairRequest, run as run_repair};
 use godot_mcp_domain::CapabilityProfile;
-use godot_mcp_domain::config::{CliOverrides, ServerConfig, Transport, load_config};
+use godot_mcp_domain::config::{
+    CliOverrides, HttpMode, SecretRef, ServerConfig, Transport, load_config,
+};
 use godot_mcp_domain::contracts::PrincipalId;
 use godot_mcp_server::bootstrap::{BootstrapOptions, ServerSlot, serve_bootstrap_stdio};
 #[cfg(feature = "http")]
@@ -74,7 +79,8 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Serve MCP over stdio (default) or configured authenticated loopback HTTP.
+    /// Serve MCP over stdio (default), configured authenticated loopback HTTP,
+    /// or HTTP in the open mode for a development network (`--http`).
     ///
     /// Startup acquires the project lease, opens the durable transaction journal
     /// and reconciles every transaction a previous process left open before the
@@ -129,6 +135,20 @@ enum Command {
         /// `java_home` in the `[android]` section of `--config`.
         #[arg(long, value_name = "DIR")]
         android_java_home: Option<PathBuf>,
+        /// Serve MCP over HTTP at ADDR in the open mode, for a development
+        /// network: `0.0.0.0:8765` listens on every interface, `127.0.0.1:8765`
+        /// on this host only. No credential is asked for unless
+        /// `--http-token-env` names one. Not with `--config` or `--workspace`.
+        #[arg(
+            long,
+            value_name = "ADDR",
+            conflicts_with_all = ["config", "workspace"]
+        )]
+        http: Option<SocketAddr>,
+        /// The environment variable holding the token every request must then
+        /// present as `Authorization: Bearer <token>`. Needs `--http`.
+        #[arg(long, value_name = "VAR", requires = "http")]
+        http_token_env: Option<String>,
     },
     /// Durable-transaction operator commands. Local owner only.
     Transaction {
@@ -418,6 +438,37 @@ fn assets(command: &AssetsCommand) -> ExitCode {
     }
 }
 
+/// The configuration `serve --http` starts from: the open mode at `bind`,
+/// requiring the token in the environment variable `token_env` when one is
+/// named, and the defaults a configuration file would leave for the rest. The
+/// token is resolved here first, so a variable that is unset or empty refuses
+/// the launch before anything opens.
+fn open_http_config(bind: SocketAddr, token_env: Option<String>) -> Result<ServerConfig, String> {
+    let token = token_env.map(|var| SecretRef::Env { var });
+    if let Some(token) = token.as_ref() {
+        let environment = std::env::vars().collect::<BTreeMap<_, _>>();
+        token.resolve(&environment).map_err(|error| {
+            format!(
+                "configuration rejected [{}]: {error}",
+                error.error_kind().code()
+            )
+        })?;
+    }
+    let overrides = CliOverrides {
+        transport: Some(Transport::Http),
+        http_bind: Some(bind),
+        http_mode: Some(HttpMode::Open),
+        http_token: token,
+        ..CliOverrides::default()
+    };
+    load_config(None, &BTreeMap::new(), &overrides).map_err(|error| {
+        format!(
+            "configuration rejected [{}]: {error}",
+            error.error_kind().code()
+        )
+    })
+}
+
 fn load_serve_config(path: Option<&std::path::Path>) -> Result<ServerConfig, String> {
     let Some(path) = path else {
         return Ok(ServerConfig::default());
@@ -440,10 +491,24 @@ async fn serve_http(
     profile: CapabilityProfile,
 ) -> Result<(), String> {
     let transport = bind_configured_transport(project_runtime, config, profile).await?;
-    eprintln!(
-        "godot-mcp serve: HTTP listening at {}",
-        transport.endpoint()
-    );
+    if config.http.as_ref().map(|http| http.mode) == Some(HttpMode::Open) {
+        let listener = godot_mcp_cli::serve_banner::OpenListener {
+            bound: transport.local_addr(),
+            token: transport.requires_open_token(),
+            profile: profile.manifest_name(),
+            allow_scripts: config.allow_scripts,
+        };
+        for line in
+            godot_mcp_cli::serve_banner::lines(&listener, godot_mcp_cli::serve_banner::route_probe)
+        {
+            eprintln!("{line}");
+        }
+    } else {
+        eprintln!(
+            "godot-mcp serve: HTTP listening at {}",
+            transport.endpoint()
+        );
+    }
     if let Some(path) = transport.secret_path() {
         eprintln!(
             "godot-mcp serve: launch secret published at {}",
@@ -482,6 +547,12 @@ struct AndroidFlags {
     java_home: Option<PathBuf>,
 }
 
+/// The open HTTP listener `serve` was asked for on its command line.
+struct HttpFlags {
+    bind: Option<SocketAddr>,
+    token_env: Option<String>,
+}
+
 fn serve(
     stdio: bool,
     config_path: Option<&std::path::Path>,
@@ -489,6 +560,7 @@ fn serve(
     profile: &str,
     allow_scripts: bool,
     android: AndroidFlags,
+    http: HttpFlags,
 ) -> ExitCode {
     if !stdio {
         eprintln!("godot-mcp serve: only --stdio is available in this build");
@@ -506,7 +578,11 @@ fn serve(
             return ExitCode::from(2);
         }
     };
-    let mut config = match load_serve_config(config_path) {
+    let loaded = match http.bind {
+        Some(bind) => open_http_config(bind, http.token_env),
+        None => load_serve_config(config_path),
+    };
+    let mut config = match loaded {
         Ok(config) => config,
         Err(error) => {
             eprintln!("godot-mcp serve: {error}");
@@ -729,6 +805,8 @@ fn main() -> ExitCode {
             allow_scripts,
             android_sdk,
             android_java_home,
+            http,
+            http_token_env,
         }) => {
             let target = match (project, workspace) {
                 (Some(project), None) => ServeTarget::Project(project),
@@ -747,6 +825,10 @@ fn main() -> ExitCode {
                 AndroidFlags {
                     sdk: android_sdk,
                     java_home: android_java_home,
+                },
+                HttpFlags {
+                    bind: http,
+                    token_env: http_token_env,
                 },
             )
         }

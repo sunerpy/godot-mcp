@@ -101,6 +101,39 @@ pub(super) struct AuthorRequest {
     /// Every node handle the operations use, resolved before any engine runs.
     pub(super) handles: BTreeSet<String>,
     pub(super) dry_run: bool,
+    /// The recipe a `scene.recipe.apply` request expanded into this batch.
+    pub(super) recipe: Option<RecipeApplied>,
+}
+
+/// What a `scene.recipe.apply` request adds to its batch's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RecipeApplied {
+    /// The answer's `recipe`: the recipe, its parent and its resolved
+    /// parameters.
+    pub(super) described: Value,
+    /// The answer's `operations`: the batch the recipe expanded into.
+    pub(super) operations: Value,
+}
+
+impl AuthorRequest {
+    /// The public tool this request came through: the authoring tool of its
+    /// kind, or `scene.recipe.apply` for a recipe. The journal, the idempotency
+    /// record, the transaction id and the editor's undo label all name it.
+    pub(super) fn tool(&self) -> &'static str {
+        if self.recipe.is_some() {
+            godot_mcp_domain::recipes::RECIPE_TOOL
+        } else {
+            self.kind.tool_name()
+        }
+    }
+
+    /// Add what the request's recipe contributes to its answer.
+    pub(super) fn annotate(&self, result: &mut Map<String, Value>) {
+        if let Some(recipe) = &self.recipe {
+            result.insert("recipe".to_owned(), recipe.described.clone());
+            result.insert("operations".to_owned(), recipe.operations.clone());
+        }
+    }
 }
 
 fn invalid(message: impl Into<String>) -> OutcomeError {
@@ -1081,6 +1114,7 @@ pub(super) fn parse_as(
         batch,
         handles,
         dry_run,
+        recipe: None,
     })
 }
 

@@ -16,12 +16,14 @@
 //! selected [`Transport::Http`] *and* supplied an `[http]` section. No listener
 //! is created on the default path, so a default launch opens no TCP socket.
 //!
-//! # Loopback only, and no direct TLS
+//! # Loopback for the authenticated modes, and no direct TLS
 //!
-//! [`bind_http_transport`] refuses a non-loopback bind before it creates a
-//! socket, and there is no TLS code path here at all: exposure beyond the host is
-//! a same-host HTTPS reverse proxy's job. `proxied_oidc` may *advertise* an
-//! external HTTPS URL, and only an HTTPS one, but it still binds loopback.
+//! [`bind_http_transport`] refuses a non-loopback bind for `trusted_local` and
+//! `proxied_oidc` before it creates a socket, and there is no TLS code path here
+//! at all: exposing those modes beyond the host is a same-host HTTPS reverse
+//! proxy's job. `proxied_oidc` may *advertise* an external HTTPS URL, and only an
+//! HTTPS one, but it still binds loopback. The `open` mode (ADR 0014) is the one
+//! that may bind any address, for a development network.
 //!
 //! # Staged authentication
 //!
@@ -29,6 +31,8 @@
 //!   [`secret`]), validated in constant time. Missing, stale and wrong
 //!   credentials produce byte-identical refusals so the endpoint is not an
 //!   oracle.
+//! * `open` — no credential, or the one fixed token the operator configured (see
+//!   [`open`]); every request is served as this launch's open principal.
 //! * `proxied_oidc` — an armed listener authenticates both the same-host proxy hop
 //!   and the end-user OIDC token before protected dispatch. A listener constructed
 //!   without that boundary answers `unavailable`, so partial configuration fails
@@ -46,6 +50,7 @@
 //! any handler runs. `kernel_dispatches` counts only real kernel entries, which is
 //! how the acceptance suite proves refusals never reached it.
 
+pub mod open;
 pub mod secret;
 mod staged;
 
@@ -64,7 +69,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt as _;
 use godot_mcp_domain::config::{
-    DEFAULT_SESSION_IDLE_TIMEOUT_MS, HttpMode, Limits, ServerConfig, Transport,
+    DEFAULT_SESSION_IDLE_TIMEOUT_MS, HttpMode, Limits, Secret, ServerConfig, Transport,
 };
 use godot_mcp_domain::contracts::Capability;
 use rmcp::model::ProtocolVersion;
@@ -83,13 +88,14 @@ use crate::idempotency::{ModePrincipal, TransportAuthMode};
 use crate::kernel::{AccessContext, ServiceKernel};
 use crate::rmcp_adapter::RmcpAdapter;
 
+pub use open::{OpenAccess, OpenAccessError};
 pub use secret::{
     LAUNCH_SECRET_BYTES, LAUNCH_SECRET_FILE_MODE, LAUNCH_SECRET_FILE_NAME, LaunchSecret,
     LaunchSecretError,
 };
 pub use staged::StagedHandler;
 
-/// The single MCP endpoint path both HTTP modes expose.
+/// The single MCP endpoint path every HTTP mode exposes.
 pub const MCP_PATH: &str = "/mcp";
 
 /// The Streamable HTTP session header, in the one spelling this module compares.
@@ -145,6 +151,7 @@ pub const fn auth_mode_of(mode: HttpMode) -> TransportAuthMode {
     match mode {
         HttpMode::TrustedLocal => TransportAuthMode::TrustedLocal,
         HttpMode::ProxiedOidc => TransportAuthMode::ProxiedOidc,
+        HttpMode::Open => TransportAuthMode::Open,
     }
 }
 
@@ -172,8 +179,17 @@ pub enum HttpTransportError {
     /// The launch secret could not be established.
     #[error("the per-launch secret could not be established: {0}")]
     Secret(#[from] LaunchSecretError),
+    /// The open listener could not be prepared.
+    #[error("the open listener could not be prepared: {0}")]
+    Open(#[from] OpenAccessError),
+    /// The open listener's configured token could not be resolved.
+    #[error("the open listener's token could not be resolved: {detail}")]
+    Token {
+        /// What the resolution reported, without the token.
+        detail: String,
+    },
     /// The listener could not be bound.
-    #[error("the loopback listener could not be bound: {detail}")]
+    #[error("the HTTP listener could not be bound: {detail}")]
     Listen {
         /// What the OS reported.
         detail: String,
@@ -208,11 +224,46 @@ pub struct HttpTransportOptions {
     binding_policy_error: Option<String>,
     session_idle_timeout: Duration,
     session_lifetime_ms: Option<u64>,
+    token: Option<Secret>,
     #[cfg(feature = "auth")]
     boundary: Option<Arc<crate::auth::ResourceServer>>,
 }
 
 impl HttpTransportOptions {
+    /// An `open` listener on `bind`, any address (ADR 0014). It asks for no
+    /// credential unless [`with_token`](Self::with_token) sets one, accepts any
+    /// `Host` unless [`with_allowed_hosts`](Self::with_allowed_hosts) narrows
+    /// it, and refuses every request carrying an `Origin` not allowed by
+    /// [`with_allowed_origins`](Self::with_allowed_origins).
+    #[must_use]
+    pub fn open(bind: SocketAddr) -> Self {
+        Self {
+            bind,
+            mode: HttpMode::Open,
+            state_dir: None,
+            external_resource_url: None,
+            allowed_hosts: Vec::new(),
+            allowed_origins: Vec::new(),
+            limits: Limits::default(),
+            binding: None,
+            required_scopes: Vec::new(),
+            required_capabilities: Vec::new(),
+            binding_policy_error: None,
+            session_idle_timeout: Duration::from_millis(DEFAULT_SESSION_IDLE_TIMEOUT_MS),
+            session_lifetime_ms: None,
+            token: None,
+            #[cfg(feature = "auth")]
+            boundary: None,
+        }
+    }
+
+    /// Require `token` as `Authorization: Bearer <token>` on every request of an
+    /// `open` listener. The other modes ignore it.
+    #[must_use]
+    pub fn with_token(mut self, token: Secret) -> Self {
+        self.token = Some(token);
+        self
+    }
     /// A `trusted_local` listener publishing its per-launch secret in `state_dir`.
     #[must_use]
     pub fn trusted_local(bind: SocketAddr, state_dir: &Path) -> Self {
@@ -230,6 +281,7 @@ impl HttpTransportOptions {
             binding_policy_error: None,
             session_idle_timeout: Duration::from_millis(DEFAULT_SESSION_IDLE_TIMEOUT_MS),
             session_lifetime_ms: None,
+            token: None,
             #[cfg(feature = "auth")]
             boundary: None,
         }
@@ -256,6 +308,7 @@ impl HttpTransportOptions {
             binding_policy_error: None,
             session_idle_timeout: Duration::from_millis(DEFAULT_SESSION_IDLE_TIMEOUT_MS),
             session_lifetime_ms: None,
+            token: None,
             #[cfg(feature = "auth")]
             boundary: None,
         }
@@ -393,6 +446,22 @@ impl HttpTransportOptions {
                     .as_deref()
                     .ok_or(HttpTransportError::MissingResourceUrl)?,
             ),
+            HttpMode::Open => {
+                let mut open = Self::open(http.bind);
+                if let Some(token) = http.token.as_ref() {
+                    // Resolved once, at start: a token the environment or the
+                    // file no longer holds refuses the launch, not a request.
+                    let env: std::collections::BTreeMap<String, String> =
+                        std::env::vars().collect();
+                    let token = token
+                        .resolve(&env)
+                        .map_err(|error| HttpTransportError::Token {
+                            detail: error.to_string(),
+                        })?;
+                    open = open.with_token(token);
+                }
+                open
+            }
         };
         options = options
             .with_limits(config.limits.clone())
@@ -501,6 +570,7 @@ pub struct RequestGuard {
     allowed_hosts: Vec<String>,
     allowed_origins: Vec<String>,
     secret: Option<Arc<LaunchSecret>>,
+    open: Option<Arc<OpenAccess>>,
     #[cfg(feature = "auth")]
     boundary: Option<Arc<crate::auth::ResourceServer>>,
 }
@@ -539,6 +609,9 @@ impl RequestGuard {
         let (mode, principal, scopes) = match self.resolve_credential(headers)? {
             CredentialFacts::LaunchSecret(principal) => {
                 (TransportAuthMode::TrustedLocal, principal, BTreeSet::new())
+            }
+            CredentialFacts::Open(principal) => {
+                (TransportAuthMode::Open, principal, BTreeSet::new())
             }
             CredentialFacts::Oidc { principal, scopes } => {
                 (TransportAuthMode::ProxiedOidc, principal, scopes)
@@ -615,6 +688,9 @@ impl RequestGuard {
             .or_else(|| uri.authority().map(ToString::to_string))
             .ok_or(GuardRejection::HostNotAllowed)?;
         let authority = normalize_authority(&authority);
+        if self.allowed_hosts.is_empty() && self.mode == HttpMode::Open {
+            return Ok(());
+        }
         if self
             .allowed_hosts
             .iter()
@@ -678,27 +754,35 @@ impl RequestGuard {
     /// header, and nowhere else: never from a URL, and never inferred from who
     /// connected.
     fn resolve_credential(&self, headers: &HeaderMap) -> Result<CredentialFacts, GuardRejection> {
-        let Some(secret) = self.secret.as_ref() else {
-            return match self.mode {
-                // `proxied_oidc` presents no launch secret. When its boundary is
-                // attached, both authentication layers must pass here; when none
-                // is attached the staged handler still refuses every protected
-                // dispatch, so the mode stays closed either way.
-                HttpMode::ProxiedOidc => self.resolve_proxied(headers),
-                HttpMode::TrustedLocal => Err(GuardRejection::Unauthorized),
-            };
-        };
         let candidate = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
             .unwrap_or("")
             .trim();
-        if secret.matches_bearer(candidate) {
-            Ok(CredentialFacts::LaunchSecret(secret.mode_principal()))
-        } else {
-            Err(GuardRejection::Unauthorized)
+        match self.mode {
+            // `proxied_oidc` presents no launch secret. When its boundary is
+            // attached, both authentication layers must pass here; when none
+            // is attached the staged handler still refuses every protected
+            // dispatch, so the mode stays closed either way.
+            HttpMode::ProxiedOidc => return self.resolve_proxied(headers),
+            HttpMode::TrustedLocal => {
+                if let Some(secret) = self.secret.as_ref()
+                    && secret.matches_bearer(candidate)
+                {
+                    return Ok(CredentialFacts::LaunchSecret(secret.mode_principal()));
+                }
+            }
+            // ADR 0014: no credential, or the one configured token.
+            HttpMode::Open => {
+                if let Some(open) = self.open.as_ref()
+                    && open.admits(candidate)
+                {
+                    return Ok(CredentialFacts::Open(open.mode_principal()));
+                }
+            }
         }
+        Err(GuardRejection::Unauthorized)
     }
 
     /// Run both `proxied_oidc` layers, when a boundary is attached.
@@ -747,6 +831,8 @@ impl RequestGuard {
 enum CredentialFacts {
     /// The launch secret matched, authenticating this launch's local principal.
     LaunchSecret(ModePrincipal),
+    /// An `open` listener admitted the request, as this launch's open principal.
+    Open(ModePrincipal),
     /// Both `proxied_oidc` layers passed for the one configured principal.
     #[cfg_attr(
         not(feature = "auth"),
@@ -789,6 +875,7 @@ fn loopback_authorities(addr: SocketAddr) -> Vec<String> {
 pub struct RunningHttpTransport {
     local_addr: SocketAddr,
     mode: HttpMode,
+    open_token: bool,
     external_resource_url: Option<String>,
     secret_path: Option<PathBuf>,
     dispatches: Arc<std::sync::atomic::AtomicUsize>,
@@ -814,6 +901,13 @@ impl RunningHttpTransport {
     #[must_use]
     pub const fn auth_mode(&self) -> TransportAuthMode {
         auth_mode_of(self.mode)
+    }
+
+    /// Whether this `open` listener requires its configured token; `false` in
+    /// the other modes, which authenticate with their own credentials.
+    #[must_use]
+    pub const fn requires_open_token(&self) -> bool {
+        self.open_token
     }
 
     /// The externally advertised HTTPS URL, when one is configured.
@@ -908,6 +1002,7 @@ pub async fn bind_configured_transport(
             .external_resource_url
             .clone()
             .ok_or_else(|| "proxied_oidc requires an external resource URL".to_string())?,
+        HttpMode::Open => format!("http://{}{MCP_PATH}", http.bind),
     };
     let policy = SessionBindingPolicy::new(
         profile,
@@ -946,7 +1041,10 @@ pub async fn bind_http_transport(
     kernel: Arc<ServiceKernel>,
     access: AccessContext,
 ) -> Result<RunningHttpTransport, HttpTransportError> {
-    if !options.bind.ip().is_loopback() {
+    // ADR 0014: the open mode is the one mode that may bind beyond loopback;
+    // trusted_local and proxied_oidc stay on it.
+    let loopback_only = options.mode != HttpMode::Open;
+    if loopback_only && !options.bind.ip().is_loopback() {
         return Err(HttpTransportError::NonLoopbackBind { addr: options.bind });
     }
     if let Some(url) = options.external_resource_url.as_deref()
@@ -970,9 +1068,13 @@ pub async fn bind_http_transport(
                 .ok_or(HttpTransportError::MissingStateDir)?;
             Some(Arc::new(LaunchSecret::create(state_dir)?))
         }
-        HttpMode::ProxiedOidc => None,
+        HttpMode::ProxiedOidc | HttpMode::Open => None,
     };
     let secret_path = secret.as_ref().map(|secret| secret.path().to_path_buf());
+    let open = match options.mode {
+        HttpMode::Open => Some(Arc::new(OpenAccess::new(options.token.clone())?)),
+        HttpMode::TrustedLocal | HttpMode::ProxiedOidc => None,
+    };
 
     let listener = tokio::net::TcpListener::bind(options.bind)
         .await
@@ -984,12 +1086,15 @@ pub async fn bind_http_transport(
         .map_err(|error| HttpTransportError::Listen {
             detail: error.to_string(),
         })?;
-    if !local_addr.ip().is_loopback() {
+    if loopback_only && !local_addr.ip().is_loopback() {
         return Err(HttpTransportError::NonLoopbackBind { addr: local_addr });
     }
 
+    // An open listener with no configured Host accepts any: it is reached by
+    // whatever name or address the network gives this machine, and both this
+    // guard and the SDK's own check treat an empty list as "any".
     let mut allowed_hosts = options.allowed_hosts.clone();
-    if allowed_hosts.is_empty() {
+    if allowed_hosts.is_empty() && loopback_only {
         allowed_hosts = loopback_authorities(local_addr);
     }
     #[cfg(feature = "auth")]
@@ -999,11 +1104,15 @@ pub async fn bind_http_transport(
         allowed_hosts: allowed_hosts.clone(),
         allowed_origins: options.allowed_origins.clone(),
         secret: secret.clone(),
+        open: open.clone(),
         #[cfg(feature = "auth")]
         boundary: boundary.clone(),
     });
 
     let diagnostics = match options.mode {
+        HttpMode::Open => HttpDiagnosticsSource::Open {
+            token: open.as_ref().is_some_and(|open| open.requires_token()),
+        },
         HttpMode::TrustedLocal => HttpDiagnosticsSource::TrustedLocal {
             secret: Arc::clone(
                 secret
@@ -1050,15 +1159,23 @@ pub async fn bind_http_transport(
         Some(bindings) => handler.with_bindings(Arc::clone(bindings)),
         None => handler,
     };
+    let sdk_config = StreamableHttpServerConfig::default()
+        .with_sse_keep_alive(Some(SSE_KEEP_ALIVE))
+        .with_allowed_hosts(allowed_hosts)
+        .with_allowed_origins(options.allowed_origins.clone())
+        .with_cancellation_token(shutdown.child_token());
+    // The SDK reads an empty Origin list as "any Origin". An open listener
+    // refuses every Origin it was not given, in the guard and here alike.
+    let sdk_config = if options.mode == HttpMode::Open {
+        sdk_config.enforce_origin_validation()
+    } else {
+        sdk_config
+    };
     let service: StreamableHttpService<StagedHandler, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(handler.clone()),
             Arc::new(session_manager(options.session_idle_timeout)),
-            StreamableHttpServerConfig::default()
-                .with_sse_keep_alive(Some(SSE_KEEP_ALIVE))
-                .with_allowed_hosts(allowed_hosts)
-                .with_allowed_origins(options.allowed_origins.clone())
-                .with_cancellation_token(shutdown.child_token()),
+            sdk_config,
         );
 
     let bounded = ServiceBuilder::new()
@@ -1130,6 +1247,7 @@ pub async fn bind_http_transport(
     Ok(RunningHttpTransport {
         local_addr,
         mode: options.mode,
+        open_token: open.as_ref().is_some_and(|open| open.requires_token()),
         external_resource_url: options.external_resource_url,
         secret_path,
         dispatches,
@@ -1404,17 +1522,30 @@ mod self_audit {
         let bind = production
             .find("TcpListener::bind")
             .expect("the listener is bound here");
+        // ADR 0014: the open mode is the only exemption, and the authenticated
+        // modes are still checked before the one bind and again after it.
+        let exemption = production
+            .find("let loopback_only = options.mode != HttpMode::Open;")
+            .expect("only the open mode is exempt from the loopback check");
+        assert_eq!(
+            production.matches("let loopback_only").count(),
+            1,
+            "the exemption is decided once"
+        );
         let check = production
-            .find("if !options.bind.ip().is_loopback()")
+            .find("if loopback_only && !options.bind.ip().is_loopback()")
             .expect("the requested bind is checked");
-        assert!(check < bind, "the loopback check must precede the bind");
+        assert!(
+            exemption < check && check < bind,
+            "the loopback check must precede the bind"
+        );
         assert_eq!(
             production.matches("TcpListener::bind").count(),
             1,
             "there must be exactly one bind site"
         );
         assert!(
-            production.contains("if !local_addr.ip().is_loopback()"),
+            production.contains("if loopback_only && !local_addr.ip().is_loopback()"),
             "the bound address must be re-checked independently"
         );
     }
@@ -1598,6 +1729,7 @@ mod self_audit {
             allowed_hosts: vec!["127.0.0.1:9".to_owned()],
             allowed_origins: Vec::new(),
             secret: None,
+            open: None,
             #[cfg(feature = "auth")]
             boundary: None,
         };
@@ -1654,6 +1786,7 @@ mod self_audit {
             allowed_hosts: vec!["127.0.0.1:9".to_owned()],
             allowed_origins: Vec::new(),
             secret: None,
+            open: None,
             #[cfg(feature = "auth")]
             boundary: None,
         };

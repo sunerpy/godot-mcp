@@ -344,6 +344,8 @@ pub enum TransportMode {
     TrustedLocal,
     /// HTTP behind an authenticated proxy hop with a frozen OIDC principal.
     ProxiedOidc,
+    /// HTTP on a development network (ADR 0014).
+    Open,
 }
 
 impl TransportMode {
@@ -352,6 +354,7 @@ impl TransportMode {
             Self::Stdio => "stdio",
             Self::TrustedLocal => "trusted_local",
             Self::ProxiedOidc => "proxied_oidc",
+            Self::Open => "open",
         }
     }
 
@@ -362,6 +365,7 @@ impl TransportMode {
             "stdio" => Some(Self::Stdio),
             "trusted_local" => Some(Self::TrustedLocal),
             "proxied_oidc" => Some(Self::ProxiedOidc),
+            "open" => Some(Self::Open),
             _ => None,
         }
     }

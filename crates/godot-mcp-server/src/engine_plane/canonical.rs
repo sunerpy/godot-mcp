@@ -232,7 +232,7 @@ impl EngineRuntime {
         use godot_mcp_domain::ErrorKind;
         use godot_mcp_engine::canonical::request::CanonicalOperation;
 
-        let tool = author.kind.tool_name();
+        let tool = author.tool();
         let idempotency_id = idempotency_id.ok_or_else(|| {
             outcome_error(
                 ErrorKind::InvalidInput,
@@ -432,6 +432,7 @@ impl EngineRuntime {
         );
         result.insert("results".to_owned(), Value::Array(staged.results.clone()));
         result.insert("backend".to_owned(), Value::String("headless".to_owned()));
+        author.annotate(&mut result);
 
         if author.dry_run {
             let cleanup = stage::discard_scratch(&scratch_root, &staged)
@@ -602,7 +603,7 @@ impl EngineRuntime {
         use crate::effect::gateway::EditorEffectIntent;
         use godot_mcp_domain::ErrorKind;
 
-        let tool = author.kind.tool_name();
+        let tool = author.tool();
         let expected = hex_sha256(before);
         let operations: Value = serde_json::from_str(&author.batch)
             .map_err(|error| outcome_error(ErrorKind::Internal, error.to_string()))?;
@@ -703,6 +704,7 @@ impl EngineRuntime {
                 .unwrap_or_else(|| Value::Array(Vec::new())),
         );
         result.insert("backend".to_owned(), Value::String("editor".to_owned()));
+        author.annotate(&mut result);
         for key in ["transaction_id", "workspace", "mutation_status"] {
             if let Some(value) = answer.get(key) {
                 result.insert(key.to_owned(), value.clone());

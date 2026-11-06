@@ -43,6 +43,7 @@ mod process;
 pub(crate) mod providers;
 mod public;
 pub(crate) mod read;
+mod recipe;
 mod request;
 mod runtime;
 mod script_run;

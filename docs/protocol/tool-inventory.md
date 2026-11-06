@@ -26,9 +26,9 @@ unreachable answers `unavailable` and names the plane. See
 | Profile | Capabilities | Tools | Resources |
 | --- | --- | --- | --- |
 | `core` | 1 | 22 | 4 |
-| `editor` | 3 | 81 | 5 |
+| `editor` | 3 | 82 | 5 |
 | `runtime` | 3 | 74 | 5 |
-| `full` | 5 | 129 | 5 |
+| `full` | 5 | 130 | 5 |
 
 ## Methods
 
@@ -156,6 +156,7 @@ unreachable answers `unavailable` and names the plane. See
 | `scene.exports.get` | `read` | `project_files` | yes | no | yes | no |
 | `scene.nodes.find` | `read` | `project_files` | yes | no | yes | no |
 | `scene.read` | `runtime_execute` | `headless_engine` | no | no | yes | no |
+| `scene.recipe.apply` | `project_write` | `headless_engine` | no | yes | yes | no |
 | `scene.save` | `project_write` | `live_editor` | no | yes | yes | no |
 | `scene.tree.get` | `read` | `project_files` | yes | no | yes | no |
 | `script.check` | `runtime_execute` | `headless_engine` | no | no | yes | no |
@@ -655,6 +656,10 @@ Find nodes across the project's text scenes by `type` (an engine class exactly, 
 
 Make up to 64 `calls` of read-only engine methods from the reading table on nodes of the text scene at `path`, or on resources they hold: painted TileMapLayer cells, animation tracks and keys, state machine states, navigation polygons, shader uniforms. Each call answers its value as a tagged value, or why it was not made, with the engine errors it raised. A supervised headless Godot process makes the calls and saves nothing; it starts the project's autoloads, and instancing the scene runs its scripts' `_init`.
 
+### `scene.recipe.apply`
+
+Add a named setup — a 2D or 3D physics body with its shape, lights with a sky and a camera, 2D particles from a preset (fire, smoke, sparks, rain, snow, explosion), a baked navigation floor with an agent, a positional sound, a shader rectangle, a HUD, a grid map, an on-screen joystick — below `parent` in the text scene at `path` whose SHA-256 is `expectedSha256`. `recipe` is an object with one key, the recipe's name, holding its parameters, such as `{"body-2d": {"shape": "circle"}}`; each recipe's parameters and defaults are in this schema, and the answer names every value it used. It expands into the typed operations of one `scene.batch.apply` batch, answered as `operations`, and applies them the same way: journaled, and in the connected editor as one undoable action when the scene is open there. The `godot-mcp.recipe.<name>` prompts show each recipe's parameters and operations.
+
 ### `scene.save`
 
 Canonicalize one existing text scene `target` through a supervised headless Godot re-save. A live editor may hold the authoritative buffer, so the editor plane must be consulted first; without a connected editor the call is refused as unavailable rather than risking an unsaved edit.
@@ -825,6 +830,7 @@ Tools:
 * `scene.dependencies.get`
 * `scene.exports.get`
 * `scene.nodes.find`
+* `scene.recipe.apply`
 * `scene.save`
 * `scene.tree.get`
 * `script.create`
@@ -1080,6 +1086,7 @@ Tools:
 * `scene.exports.get`
 * `scene.nodes.find`
 * `scene.read`
+* `scene.recipe.apply`
 * `scene.save`
 * `scene.tree.get`
 * `script.check`

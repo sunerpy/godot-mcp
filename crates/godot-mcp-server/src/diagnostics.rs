@@ -678,6 +678,9 @@ fn collect_authorization(inputs: &HealthInputs<'_>, findings: &mut Vec<Finding>)
                 Some(u64::from(mode)),
             ),
         },
+        // An open listener has nothing to go stale: it was started with or
+        // without its token, and says which at startup.
+        HttpReadiness::Open { .. } => (None, None),
         HttpReadiness::ProxiedOidc { jwks } => match jwks {
             JwksState::Ready { .. } => (None, None),
             JwksState::Empty => (Some(DiagnosticCode::JwksEmpty), None),

@@ -5,7 +5,7 @@ description: Everything godot-mcp keeps on your machine and every place it sends
 # Data and network
 
 This page lists everything godot-mcp keeps and every place it sends data. It runs on your machine,
-serves the one client that started it, and reports to no one.
+answers only the clients you connect to it, and reports to no one.
 
 ## What it keeps
 
@@ -21,7 +21,8 @@ Delete `.godot-mcp/` while no server runs to remove all of it.
 | Destination | When | What goes there |
 | --- | --- | --- |
 | The MCP client that started it, over stdio | Every request | The answer: the project data the request asked for |
-| A loopback HTTP client | Only with HTTP configured, and only with the secret or the proxy hop's credential | The same answers as over stdio |
+| A loopback HTTP client | Only with `trusted_local` or `proxied_oidc` configured, and only with the secret or the proxy hop's credential | The same answers as over stdio |
+| An HTTP client on your network | Only when you start the `open` mode, and only with the token when you set one | The same answers as over stdio |
 | Your identity provider | Only with `proxied_oidc`, to fetch its signing keys | A request for the published keys, from the issuer you configured |
 | The Godot processes it starts | Every engine run, game and editor session | The project, as Godot reads it; the probe and the bridge talk over loopback |
 | The editor add-on, over loopback | Only with the add-on connected | Editor requests and their answers |
