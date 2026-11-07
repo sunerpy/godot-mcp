@@ -421,6 +421,58 @@ pub(super) fn operations_schema(scene: bool) -> Value {
     operations_schema_for(scene, false)
 }
 
+/// The `$defs` name a tool shares the schema of `field` of `op` under, when
+/// it repeats it. A `value` is a reference already, and a `call_method`'s
+/// `resource` is a different schema in a scene's operations and in a
+/// resource's, so neither is shared.
+fn shared_name(op: &str, field: &str) -> Option<&'static str> {
+    Some(match field {
+        "parent" | "node" | "from" | "to" => "NodeReference",
+        "property" => "PropertyPath",
+        "scene" => "ScenePath",
+        "script" => "ScriptPath",
+        "index" => "ChildIndex",
+        "properties" => "PropertyValues",
+        "method" if op == "call_method" => "EditingMethod",
+        "method" => "SignalMethod",
+        "arguments" => "CallArguments",
+        "repeat" => "RepeatedCalls",
+        "value" | "resource" => return None,
+        _ => "Name",
+    })
+}
+
+/// The operation field schemas a tool advertising operations of `shapes`,
+/// each a (`scene`, `paths_only`) pair as [`operations_schema_for`] takes
+/// it, shares when it repeats them, each under its [`shared_name`].
+pub(super) fn shared_fields(shapes: &[(bool, bool)]) -> Vec<(&'static str, Value)> {
+    let mut shared: Vec<(&'static str, Value)> = Vec::new();
+    for &(scene, paths_only) in shapes {
+        for (op, fields, _) in operations(scene) {
+            for field in *fields {
+                let Some(name) = shared_name(op, field) else {
+                    continue;
+                };
+                let schema = operation_field_schema(op, field, scene, paths_only);
+                match shared.iter().find(|(known, _)| *known == name) {
+                    Some((_, known)) => assert_eq!(
+                        known, &schema,
+                        "every field shared as {name} has one schema in a tool"
+                    ),
+                    None => shared.push((name, schema)),
+                }
+            }
+        }
+    }
+    shared
+}
+
+/// The operation field schemas `editor.scene.edit` shares: those of the
+/// scene batch model, with every node named by its path.
+pub(crate) fn live_shared_fields() -> Vec<(&'static str, Value)> {
+    shared_fields(&[(true, true)])
+}
+
 /// The operations an `editor.scene.edit` applies to the scene the editor
 /// holds: the scene batch model, with every node named by its path.
 pub(crate) fn live_operations_schema() -> Value {
@@ -588,13 +640,16 @@ pub(super) fn input_schema(kind: AuthorKind) -> Map<String, Value> {
             "description": "Run the engine and return the diff and tree without publishing."
         }),
     );
-    let schema = json!({
+    let mut schema = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": properties,
         "required": required,
-        "$defs": crate::schema::value_definitions(),
     });
+    // The shape of the operations above, as `operations_schema_for` takes
+    // it: of the four, only a new scene names its nodes by path alone.
+    let shape = (kind.is_scene(), kind == AuthorKind::SceneCreate);
+    crate::schema::define_shared(&mut schema, &shared_fields(&[shape]));
     schema
         .as_object()
         .cloned()
@@ -2177,6 +2232,91 @@ mod tests {
                 expected,
                 &format!("{field} {path:?}"),
             );
+        }
+    }
+
+    /// Sharing changes how a tool writes its operations, not what they take:
+    /// every tool that takes operations defines each field schema it shares
+    /// once and refers to it more than once, and with those definitions put
+    /// back, every field of every operation it advertises is that field's own
+    /// schema.
+    #[test]
+    fn a_shared_definition_stands_for_exactly_the_fields_it_replaces() {
+        /// Where a tool advertises an operation list, and the (`scene`,
+        /// `paths_only`) shape the list has.
+        type List = (&'static str, (bool, bool));
+        let operations = "/properties/operations";
+        let tools: [(&str, &[List]); 6] = [
+            ("scene.create", &[(operations, (true, true))]),
+            ("scene.batch.apply", &[(operations, (true, false))]),
+            ("resource.create", &[(operations, (false, false))]),
+            ("resource.batch.apply", &[(operations, (false, false))]),
+            ("editor.scene.edit", &[(operations, (true, true))]),
+            (
+                "project.batch.apply",
+                &[
+                    (
+                        "/properties/files/items/oneOf/0/properties/operations",
+                        (true, false),
+                    ),
+                    (
+                        "/properties/files/items/oneOf/1/properties/operations",
+                        (false, false),
+                    ),
+                ],
+            ),
+        ];
+        let values = crate::schema::value_definitions();
+        for (tool, lists) in tools {
+            let schema = Value::Object(crate::kernel::tool_schema(
+                tool,
+                crate::core::CoreLimits::default(),
+            ));
+            let shared: Vec<&str> = schema["$defs"]
+                .as_object()
+                .expect("an authoring tool carries definitions")
+                .keys()
+                .map(String::as_str)
+                .filter(|name| !values.contains_key(*name))
+                .collect();
+            assert!(!shared.is_empty(), "{tool} shares what it repeats");
+            let mut body = schema.clone();
+            if let Some(object) = body.as_object_mut() {
+                object.remove("$defs");
+            }
+            let written = body.to_string();
+            for name in &shared {
+                let uses = written
+                    .matches(&format!("{{\"$ref\":\"#/$defs/{name}\"}}"))
+                    .count();
+                assert!(uses > 1, "{tool} refers to {name} {uses} times");
+            }
+            let inlined = crate::schema::conformance::inline_definitions(&schema, &shared);
+            for &(pointer, (in_scene, paths_only)) in lists {
+                let list = inlined
+                    .pointer(pointer)
+                    .unwrap_or_else(|| panic!("{tool} advertises operations at {pointer}"));
+                for variant in list["items"]["oneOf"]
+                    .as_array()
+                    .expect("operation variants")
+                {
+                    let op = variant["properties"]["op"]["const"]
+                        .as_str()
+                        .expect("an operation name");
+                    for (field, advertised) in
+                        variant["properties"].as_object().expect("operation fields")
+                    {
+                        if field == "op" {
+                            continue;
+                        }
+                        assert_eq!(
+                            advertised,
+                            &operation_field_schema(op, field, in_scene, paths_only),
+                            "{tool} {op}.{field}"
+                        );
+                    }
+                }
+            }
         }
     }
 

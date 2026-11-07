@@ -1538,7 +1538,7 @@ pub(super) fn patch_schema() -> Value {
         &["expectedSha256", "operations"],
         true,
     );
-    schema["$defs"] = Value::Object(crate::schema::value_definitions());
+    crate::schema::define_values(&mut schema);
     schema
 }
 
