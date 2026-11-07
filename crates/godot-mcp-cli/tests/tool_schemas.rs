@@ -419,3 +419,63 @@ fn shipped_binary_rejects_invalid_main_scene_before_engine_discovery() {
         );
     }
 }
+
+/// The size of each profile's `tools/list`, as the compact JSON of its
+/// `tools` in bytes, measured with the shipped binary when the budget was
+/// last set: contract 0.5.0 after its schemas carry only the definitions
+/// they refer to and share what one tool repeats.
+const MEASURED_TOOLS_BYTES: [(&str, usize); 4] = [
+    ("core", 28_044),
+    ("editor", 312_424),
+    ("runtime", 193_983),
+    ("full", 474_161),
+];
+
+/// Every profile's `tools/list` stays within 2% of its measured size. A client
+/// reads the whole list, often into a model's context, so growth is a choice:
+/// a change that needs more room raises the measured size here and the sizes
+/// `docs/operator/profiles-and-outcomes.md` publishes, together.
+#[test]
+fn every_profile_lists_its_tools_within_its_size_budget() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let project = empty_project(temp.path());
+    let mut over = Vec::new();
+    for (profile, measured) in MEASURED_TOOLS_BYTES {
+        let output = cli()
+            .args(["serve", "--stdio", "--project"])
+            .arg(&project)
+            .args(["--profile", profile])
+            .write_stdin(TOOLS_LIST_EXCHANGE)
+            .output()
+            .expect("run the shipped CLI");
+        assert!(
+            output.status.success(),
+            "CLI failed: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|frame| frame["id"] == json!(2))
+            .unwrap_or_else(|| panic!("{profile}: tools/list response was absent from stdout"));
+        assert!(
+            response["result"].get("nextCursor").is_none(),
+            "{profile}: the list arrives in one page"
+        );
+        let tools = &response["result"]["tools"];
+        assert!(tools.is_array(), "{profile}: tools/list lists tools");
+        let bytes = serde_json::to_vec(tools).expect("tools serialize").len();
+        let budget = measured + measured / 50;
+        if bytes > budget {
+            over.push(format!(
+                "{profile}: {bytes} bytes, over its budget of {budget} (measured {measured})"
+            ));
+        }
+    }
+    assert!(
+        over.is_empty(),
+        "these profiles grew past their budgets:\n{}",
+        over.join("\n")
+    );
+}

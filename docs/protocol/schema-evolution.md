@@ -162,6 +162,57 @@ All of them are additions: a 0.4.0 client loses nothing, and a request it could 
 it meant. A 0.4.0 server refuses a configuration file with `mode = "open"`, as it refuses every
 unknown value.
 
+#### 0.5.1 correction
+
+Release 0.5.1 corrects places where a tool's advertised schema and its own check disagreed.
+The contract stays 0.5.0: no data-transfer object, error variant or capability manifest changes
+shape.
+
+* In `scene.batch.apply`, `scene.create`, `editor.scene.edit` and `project.batch.apply`, the
+  `method` of `connect_signal` and `disconnect_signal` was advertised as `call_method`'s list of
+  editing methods, so a client that checks its arguments against `tools/list` could not send a
+  callback such as `_on_body_entered`, which the server takes. It is now a name like any other;
+  `call_method` keeps the list.
+* The length limit on a name, a node path or a property path counts characters, as Unicode
+  scalar values, the unit `maxLength` counts in, in `scene.batch.apply`, `scene.create`,
+  `resource.batch.apply`, `resource.create`, `project.batch.apply`, `editor.scene.edit`,
+  `scene.read`, `resource.read`, `editor.scene.read`, `editor.node.get`,
+  `editor.selection.set`, `project.settings.patch` and `project.create`. Their checks counted
+  UTF-8 bytes and refused a value of multi-byte characters that fit its limit in characters;
+  such a value is now taken. The limits themselves are unchanged.
+* Their schemas state the rules those checks already applied: the length limits they lacked,
+  no control character (U+0000 to U+001F and U+007F to U+009F) where the check refuses one, the
+  shape of a relative node path and of a node handle, the extension a scene or script path
+  needs, the characters an input action's name cannot hold, and that a project's name is not
+  white space alone.
+
+No request a 0.5.0 server took is refused.
+
+#### 0.6.0 schema writing
+
+Release 0.6.0 changes how the tool schemas are written and nothing they decide. The contract
+stays 0.5.0: every request a 0.5.1 server takes it takes, and every one it refuses it refuses.
+
+* A tool's `$defs` holds only the definitions its schema refers to, directly or through another
+  definition. A tool that takes only plain values no longer carries the definitions of a
+  written value, a resource reference or a `call_method` argument, and one that writes values
+  no longer carries the plain value's.
+* A tool that takes operations, `scene.batch.apply`, `scene.create`, `resource.batch.apply`,
+  `resource.create`, `project.batch.apply` and `editor.scene.edit`, defines in its own `$defs`
+  each operation field schema it repeats: the node path of `node`, `parent`, `from` and `to`,
+  the property path of `property`, the scene path of `scene`, the name of `name`, `type`,
+  `signal`, `group` and `class`, a signal's callback `method`, `call_method`'s editing `method`,
+  `arguments` and `repeat`, and a sub-resource's `properties`. Every field that held the schema
+  holds a `$ref` to it with nothing beside it, so a client reads the same field either way; a
+  field schema a tool holds once stays where it is.
+
+A tool that took no tagged value still carries no `$defs`, and every reference resolves in the
+tool's own schema. Measured as
+[How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
+describes, `tools/list` shrinks from 406,072 to 312,424 bytes in the `editor` profile, from
+231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`, against 0.5.1; `core`,
+whose tools take no tagged value, stays at 28,044.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an

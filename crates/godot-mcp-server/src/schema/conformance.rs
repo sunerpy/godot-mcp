@@ -1,5 +1,7 @@
 //! A partial JSON Schema checker, for tests that hold an advertised schema and
-//! the handler behind it to the same verdict on the same cases.
+//! the handler behind it to the same verdict on the same cases. The
+//! acceptance suites reach [`conforms`] through `test_support`, to hold the
+//! requests they send to the schemas `tools/list` advertises.
 //!
 //! It knows the keywords the tool schemas use and a regular-expression subset
 //! large enough for their patterns. Anything else panics, so a schema the
@@ -9,7 +11,7 @@ use serde_json::{Map, Value};
 
 /// Whether `instance` conforms to `schema`. A `$ref` resolves against `schema`
 /// itself, which must therefore carry the `$defs` it refers to.
-pub(crate) fn conforms(schema: &Value, instance: &Value) -> bool {
+pub fn conforms(schema: &Value, instance: &Value) -> bool {
     Checker { root: schema }.check(schema, instance)
 }
 
@@ -17,6 +19,97 @@ pub(crate) fn conforms(schema: &Value, instance: &Value) -> bool {
 /// applies it.
 pub(crate) fn pattern_matches(pattern: &str, text: &str) -> bool {
     Pattern::parse(pattern).search(text)
+}
+
+/// The rule one name-like string field follows: at most `limit` characters,
+/// empty only when `empty` allows it, and without a control character
+/// ([`char::is_control`]) when `control` refuses them.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NameRule {
+    pub(crate) limit: usize,
+    pub(crate) empty: bool,
+    pub(crate) control: bool,
+}
+
+/// The cases every name-like field is held to, each with the verdict `rule`
+/// gives it: the longest value and one character more, in ASCII, in 4-byte
+/// characters and in 3-byte characters mixed with ASCII; U+001F, U+007F and
+/// U+009F, and U+00A0, which is not a control character; and the empty
+/// string. A value is `prefix`, the varying part and `suffix`, so a field
+/// with a shape of its own (a `res://` path with an extension) can take every
+/// case; the prefix and the suffix count toward the limit.
+#[cfg(test)]
+pub(crate) fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(String, bool)> {
+    let fixed = prefix.chars().count() + suffix.chars().count();
+    assert!(
+        fixed < rule.limit,
+        "the prefix and suffix leave room for a name"
+    );
+    let wrap = |inner: &str| format!("{prefix}{inner}{suffix}");
+    let fill = |unit: &[char], count: usize| -> String {
+        (0..count).map(|index| unit[index % unit.len()]).collect()
+    };
+    let mut cases = Vec::new();
+    for unit in [&['a'][..], &['\u{1F600}'][..], &['\u{540D}', 'a'][..]] {
+        cases.push((wrap(&fill(unit, rule.limit - fixed)), true));
+        cases.push((wrap(&fill(unit, rule.limit - fixed + 1)), false));
+    }
+    for control in ['\u{1F}', '\u{7F}', '\u{9F}'] {
+        cases.push((wrap(&format!("a{control}a")), !rule.control));
+    }
+    cases.push((wrap("a\u{A0}a"), true));
+    cases.push((String::new(), rule.empty));
+    cases
+}
+
+/// `schema` with each of the definitions `names` put back wherever a bare
+/// reference names it, and taken out of its `$defs`: how the schema reads
+/// before those definitions were shared.
+#[cfg(test)]
+pub(crate) fn inline_definitions(schema: &Value, names: &[&str]) -> Value {
+    fn put_back(value: &mut Value, definitions: &Map<String, Value>, names: &[&str]) {
+        let named = value
+            .as_object()
+            .filter(|map| map.len() == 1)
+            .and_then(|map| map.get("$ref"))
+            .and_then(Value::as_str)
+            .and_then(|reference| reference.strip_prefix("#/$defs/"))
+            .filter(|name| names.contains(name))
+            .map(str::to_owned);
+        if let Some(name) = named {
+            *value = definitions[&name].clone();
+            return;
+        }
+        match value {
+            Value::Object(map) => map
+                .values_mut()
+                .for_each(|child| put_back(child, definitions, names)),
+            Value::Array(items) => items
+                .iter_mut()
+                .for_each(|item| put_back(item, definitions, names)),
+            _ => {}
+        }
+    }
+    let mut inlined = schema.clone();
+    let Some(object) = inlined.as_object_mut() else {
+        return inlined;
+    };
+    let mut definitions = object
+        .remove("$defs")
+        .and_then(|definitions| definitions.as_object().cloned())
+        .unwrap_or_default();
+    let shared = definitions.clone();
+    object
+        .values_mut()
+        .for_each(|value| put_back(value, &shared, names));
+    for name in names {
+        definitions.remove(*name);
+    }
+    if !definitions.is_empty() {
+        object.insert("$defs".to_owned(), Value::Object(definitions));
+    }
+    inlined
 }
 
 /// Keywords that never change a verdict.
@@ -404,18 +497,21 @@ impl Parser<'_> {
                 negated: false,
                 ranges: vec![('0', '9')],
             },
-            'x' => Atom::Literal(self.hex()),
+            'x' => Atom::Literal(self.hex(2)),
+            'u' => Atom::Literal(self.hex(4)),
             character if !character.is_ascii_alphanumeric() => Atom::Literal(character),
             other => panic!("unsupported escape \\{other} in {:?}", self.source),
         }
     }
 
-    fn hex(&mut self) -> char {
-        let digits: String = [self.next(), self.next()].iter().collect();
-        u32::from_str_radix(&digits, 16)
+    /// The character `digits` hexadecimal digits name, as `\xHH` and `\uHHHH`
+    /// spell one.
+    fn hex(&mut self, digits: usize) -> char {
+        let text: String = (0..digits).map(|_| self.next()).collect();
+        u32::from_str_radix(&text, 16)
             .ok()
             .and_then(char::from_u32)
-            .unwrap_or_else(|| panic!("bad \\x escape in {:?}", self.source))
+            .unwrap_or_else(|| panic!("bad hexadecimal escape in {:?}", self.source))
     }
 
     fn class(&mut self) -> Atom {
@@ -446,7 +542,8 @@ impl Parser<'_> {
             return character;
         }
         match self.next() {
-            'x' => self.hex(),
+            'x' => self.hex(2),
+            'u' => self.hex(4),
             escaped if !escaped.is_ascii_alphanumeric() => escaped,
             other => panic!("unsupported class escape \\{other} in {:?}", self.source),
         }
@@ -528,6 +625,9 @@ mod tests {
         assert!(pattern_matches(r"^[^/\\]+$", "name.tres"));
         assert!(!pattern_matches(r"^[^/\\]+$", "a\\b"));
         assert!(pattern_matches(r"^[\x00-\x1F]$", "\u{1}"));
+        assert!(pattern_matches(r"^[\u2000-\u200A]$", "\u{2009}"));
+        assert!(!pattern_matches(r"^[^\u2000-\u200A\u3000]$", "\u{3000}"));
+        assert!(pattern_matches(r"^\u540D$", "\u{540D}"));
     }
 
     /// The engine's own path pattern gives the verdict of the engine's path

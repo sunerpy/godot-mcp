@@ -42,8 +42,10 @@ pub(super) const MAX_OPERATIONS: usize = 128;
 /// Largest serialized batch passed to the engine: a `repeat` of 4096 calls
 /// with three tagged arguments each fits.
 const MAX_BATCH_BYTES: usize = 1024 * 1024;
-/// Longest accepted name, node path or class string.
-const MAX_NAME_BYTES: usize = 512;
+/// Longest accepted name, node path, property path, class string or
+/// `res://` path, in characters: Unicode scalar values, as a schema's
+/// `maxLength` counts them.
+const MAX_NAME_CHARS: usize = 512;
 /// The operation fields that name a node of the edited scene.
 const NODE_FIELDS: [&str; 4] = ["node", "parent", "from", "to"];
 
@@ -215,8 +217,9 @@ const RESOURCE_SELECTORS: [&str; 3] = ["property", "animation", "library"];
 /// The scene files a scene batch instances: text and binary scenes, and the
 /// 3D model formats Godot imports as scenes.
 const SCENE_EXTENSIONS: [&str; 8] = ["tscn", "scn", "glb", "gltf", "fbx", "blend", "dae", "obj"];
-/// A property path: property names separated by `:`, none of them empty.
-const PROPERTY_PATH_PATTERN: &str = "^[^:]+(?::[^:]+)*$";
+/// A property path: property names separated by `:`, none of them empty,
+/// without a control character.
+const PROPERTY_PATH_PATTERN: &str = crate::schema::PROPERTY_PATH_PATTERN;
 
 /// The classes of the editing-method table, for descriptions.
 fn editing_classes() -> String {
@@ -241,26 +244,57 @@ const fn operations(
     }
 }
 
-/// The schema of one operation field of a scene (`scene`) or resource batch;
-/// a `live` operation names nodes by path only.
-fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
+/// A `res://` path to a project file with one of `extensions`, in any letter
+/// case, as [`resource_path`] checks one: what follows `res://` is a
+/// project-relative path by the rules of
+/// [`godot_mcp_engine::validation::PROJECT_RELATIVE_PATH_PATTERN`], and no
+/// character is a control character. The pattern spells "any character" as
+/// "any character but a control character", so a client reads it as the
+/// check does whatever line separators the path holds.
+fn resource_path_pattern(extensions: &[&str]) -> String {
+    let any = format!("[^{}]", crate::schema::CONTROL);
+    let extensions: Vec<String> = extensions
+        .iter()
+        .map(|extension| crate::schema::caseless(extension))
+        .collect();
+    format!(
+        r"^res://(?={any}*\.(?:{})$)(?:res://)?(?!(?:/|-|[A-Za-z]:))(?!(?:\.\.(?:/|$)|{any}*/\.\.(?:/|$)))(?!{any}*(?:\\|://)){any}+$",
+        extensions.join("|")
+    )
+}
+
+/// The schema of one field of operation `op` of a scene (`scene`) or
+/// resource batch; a `paths_only` batch (a live edit, or a new scene, whose
+/// nodes no scene tree answer has handed out yet) names nodes by path only.
+fn operation_field_schema(op: &str, field: &str, scene: bool, paths_only: bool) -> Value {
     match field {
-        "parent" | "node" | "from" | "to" if live => json!({
-            "type": "string",
-            "minLength": 1,
-            "maxLength": MAX_NAME_BYTES,
-            "description": "A node path relative to the scene root (`.` is the root)."
-        }),
-        "parent" | "node" | "from" | "to" => json!({
-            "type": "string",
-            "minLength": 1,
-            "maxLength": MAX_NAME_BYTES,
-            "description": "A node path relative to the scene root (`.` is the root), or the \
-                            handle a scene tree answer gave that node."
-        }),
+        "parent" | "node" | "from" | "to" => {
+            let path = crate::schema::relative_node_path(crate::schema::CONTROL);
+            let prefix = node_handle::PREFIX;
+            let (pattern, description) = if paths_only {
+                (
+                    format!("^(?!{prefix}){path}$"),
+                    "A node path relative to the scene root (`.` is the root).",
+                )
+            } else {
+                (
+                    format!("^(?:{}|(?!{prefix}){path})$", node_handle::pattern()),
+                    "A node path relative to the scene root (`.` is the root), or the handle a \
+                     scene tree answer gave that node.",
+                )
+            };
+            json!({
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_NAME_CHARS,
+                "pattern": pattern,
+                "description": description
+            })
+        }
         "scene" => json!({
             "type": "string",
-            "pattern": "^res://",
+            "maxLength": MAX_NAME_CHARS,
+            "pattern": resource_path_pattern(&SCENE_EXTENSIONS),
             "description": "A res:// path to a project scene: a .tscn or .scn file, or a 3D \
                             model Godot imports as a scene (.glb, .gltf, .fbx, .blend, .dae, \
                             .obj), instanced whole."
@@ -268,7 +302,7 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
         "property" => json!({
             "type": "string",
             "minLength": 1,
-            "maxLength": MAX_NAME_BYTES,
+            "maxLength": MAX_NAME_CHARS,
             "pattern": PROPERTY_PATH_PATTERN,
             "description": "A property, or a property path: names separated by `:` pass \
                             through properties holding resources the file embeds \
@@ -278,13 +312,15 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
         }),
         "script" => json!({
             "type": "string",
-            "pattern": "^res://",
+            "maxLength": MAX_NAME_CHARS,
+            "pattern": resource_path_pattern(&["gd"]),
             "description": "A res:// path to a project .gd script."
         }),
         "index" => json!({ "type": "integer", "minimum": 0 }),
         "value" => crate::schema::writable_value(),
         "properties" => json!({
             "type": "object",
+            "propertyNames": crate::schema::property_name(),
             "additionalProperties": crate::schema::writable_value(),
             "description": "Property names mapped to tagged values."
         }),
@@ -297,7 +333,7 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
                 "property": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": MAX_NAME_BYTES,
+                    "maxLength": MAX_NAME_CHARS,
                     "pattern": PROPERTY_PATH_PATTERN,
                     "description": "The embedded resource a property, or a property path \
                                     through embedded resources, of the edited resource holds."
@@ -316,7 +352,7 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
                 "property": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": MAX_NAME_BYTES,
+                    "maxLength": MAX_NAME_CHARS,
                     "pattern": PROPERTY_PATH_PATTERN,
                     "description": "The resource the node's property holds, or a property \
                                     path through embedded resources such as \
@@ -325,13 +361,15 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
                 "animation": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": MAX_NAME_BYTES,
+                    "maxLength": MAX_NAME_CHARS,
+                    "pattern": crate::schema::NO_CONTROL_PATTERN,
                     "description": "The animation an AnimationPlayer or AnimationTree holds, as \
                                     `library/name` or `name`."
                 },
                 "library": {
                     "type": "string",
-                    "maxLength": MAX_NAME_BYTES,
+                    "maxLength": MAX_NAME_CHARS,
+                    "pattern": crate::schema::NO_CONTROL_PATTERN,
                     "description": "The animation library an AnimationPlayer or AnimationTree \
                                     holds; \"\" is its default library."
                 }
@@ -339,7 +377,7 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
             "description": "Call a resource of the node instead of the node: one the scene \
                             embeds, never a separate resource file."
         }),
-        "method" => json!({
+        "method" if op == "call_method" => json!({
             "type": "string",
             "enum": method_names().into_iter().collect::<Vec<_>>(),
             "description": format!(
@@ -348,6 +386,12 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
                 editing_classes()
             )
         }),
+        "method" => {
+            let mut method = crate::schema::name(MAX_NAME_CHARS);
+            method["description"] =
+                json!("The method of `to` the signal calls, such as `_on_body_entered`.");
+            method
+        }
         "arguments" => json!({
             "type": "array",
             "maxItems": MAX_CALL_ARGUMENTS,
@@ -369,7 +413,7 @@ fn operation_field_schema(field: &str, scene: bool, live: bool) -> Value {
                             with `arguments`: one change, one undo step in the editor, and one \
                             entry in `results` whose `values` are the calls' return values."
         }),
-        _ => json!({ "type": "string", "minLength": 1, "maxLength": MAX_NAME_BYTES }),
+        _ => crate::schema::name(MAX_NAME_CHARS),
     }
 }
 
@@ -377,10 +421,69 @@ pub(super) fn operations_schema(scene: bool) -> Value {
     operations_schema_for(scene, false)
 }
 
+/// The `$defs` name a tool shares the schema of `field` of `op` under, when
+/// it repeats it. A `value` is a reference already, and a `call_method`'s
+/// `resource` is a different schema in a scene's operations and in a
+/// resource's, so neither is shared.
+fn shared_name(op: &str, field: &str) -> Option<&'static str> {
+    Some(match field {
+        "parent" | "node" | "from" | "to" => "NodeReference",
+        "property" => "PropertyPath",
+        "scene" => "ScenePath",
+        "script" => "ScriptPath",
+        "index" => "ChildIndex",
+        "properties" => "PropertyValues",
+        "method" if op == "call_method" => "EditingMethod",
+        "method" => "SignalMethod",
+        "arguments" => "CallArguments",
+        "repeat" => "RepeatedCalls",
+        "value" | "resource" => return None,
+        _ => "Name",
+    })
+}
+
+/// The operation field schemas a tool advertising operations of `shapes`,
+/// each a (`scene`, `paths_only`) pair as [`operations_schema_for`] takes
+/// it, shares when it repeats them, each under its [`shared_name`].
+pub(super) fn shared_fields(shapes: &[(bool, bool)]) -> Vec<(&'static str, Value)> {
+    let mut shared: Vec<(&'static str, Value)> = Vec::new();
+    for &(scene, paths_only) in shapes {
+        for (op, fields, _) in operations(scene) {
+            for field in *fields {
+                let Some(name) = shared_name(op, field) else {
+                    continue;
+                };
+                let schema = operation_field_schema(op, field, scene, paths_only);
+                match shared.iter().find(|(known, _)| *known == name) {
+                    Some((_, known)) => assert_eq!(
+                        known, &schema,
+                        "every field shared as {name} has one schema in a tool"
+                    ),
+                    None => shared.push((name, schema)),
+                }
+            }
+        }
+    }
+    shared
+}
+
+/// The operation field schemas `editor.scene.edit` shares: those of the
+/// scene batch model, with every node named by its path.
+pub(crate) fn live_shared_fields() -> Vec<(&'static str, Value)> {
+    shared_fields(&[(true, true)])
+}
+
 /// The operations an `editor.scene.edit` applies to the scene the editor
 /// holds: the scene batch model, with every node named by its path.
 pub(crate) fn live_operations_schema() -> Value {
     operations_schema_for(true, true)
+}
+
+/// A top-level name a creation takes, as [`string_field`] checks it.
+fn name_property(description: &str) -> Value {
+    let mut name = crate::schema::name(MAX_NAME_CHARS);
+    name["description"] = json!(description);
+    name
 }
 
 /// One operation of `editor.scene.edit`: a valid scene batch operation that
@@ -406,8 +509,8 @@ pub(crate) fn validate_live_operation(operation: &Value, index: usize) -> Result
     Ok(())
 }
 
-fn operations_schema_for(scene: bool, live: bool) -> Value {
-    let description = if live {
+fn operations_schema_for(scene: bool, paths_only: bool) -> Value {
+    let description = if paths_only {
         "Typed operations applied in order: add_node {parent?, name, type?}, instance_scene \
          {parent?, name, scene}, remove_node {node}, rename_node {node, name}, move_node {node, \
          parent, index?}, duplicate_node {node, name}, set_property {node?, property, value}, \
@@ -448,7 +551,9 @@ fn operations_schema_for(scene: bool, live: bool) -> Value {
                 .map(|(op, fields, required)| {
                     let fields: Vec<(&str, Value)> = fields
                         .iter()
-                        .map(|field| (*field, operation_field_schema(field, scene, live)))
+                        .map(|field| {
+                            (*field, operation_field_schema(op, field, scene, paths_only))
+                        })
                         .collect();
                     let mut variant = crate::schema::variant("op", op, &fields, required);
                     if *op == "call_method" {
@@ -482,30 +587,25 @@ pub(super) fn input_schema(kind: AuthorKind) -> Map<String, Value> {
         AuthorKind::SceneCreate => {
             properties.insert(
                 "rootType".to_owned(),
-                json!({
-                    "type": "string",
-                    "description": "Engine Node class of the root node (default Node)."
-                }),
+                name_property("Engine Node class of the root node (default Node)."),
             );
             properties.insert(
                 "rootName".to_owned(),
-                json!({
-                    "type": "string",
-                    "description": "Name of the root node (default the file name)."
-                }),
+                name_property("Name of the root node (default the file name)."),
             );
-            let mut operations = operations_schema(true);
+            // No scene tree answer has handed out a handle to a node of a
+            // scene that does not exist yet.
+            let mut operations = operations_schema_for(true, true);
             operations["minItems"] = json!(0);
             properties.insert("operations".to_owned(), operations);
         }
         AuthorKind::ResourceCreate => {
             properties.insert(
                 "class".to_owned(),
-                json!({
-                    "type": "string",
-                    "description": "Engine Resource class of the new resource (default Resource); \
-                                    initial values are set_property and call_method operations."
-                }),
+                name_property(
+                    "Engine Resource class of the new resource (default Resource); initial \
+                     values are set_property and call_method operations.",
+                ),
             );
             let mut operations = operations_schema(false);
             operations["minItems"] = json!(0);
@@ -540,13 +640,16 @@ pub(super) fn input_schema(kind: AuthorKind) -> Map<String, Value> {
             "description": "Run the engine and return the diff and tree without publishing."
         }),
     );
-    let schema = json!({
+    let mut schema = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": properties,
         "required": required,
-        "$defs": crate::schema::value_definitions(),
     });
+    // The shape of the operations above, as `operations_schema_for` takes
+    // it: of the four, only a new scene names its nodes by path alone.
+    let shape = (kind.is_scene(), kind == AuthorKind::SceneCreate);
+    crate::schema::define_shared(&mut schema, &shared_fields(&[shape]));
     schema
         .as_object()
         .cloned()
@@ -560,7 +663,9 @@ fn string_field<'a>(
 ) -> Result<Option<&'a str>, OutcomeError> {
     match object.get(key) {
         None => Ok(None),
-        Some(Value::String(value)) if !value.is_empty() && value.len() <= MAX_NAME_BYTES => {
+        Some(Value::String(value))
+            if !value.is_empty() && value.chars().count() <= MAX_NAME_CHARS =>
+        {
             if value.chars().any(char::is_control) {
                 return Err(invalid(format!(
                     "{context}: `{key}` must not contain control characters"
@@ -569,7 +674,7 @@ fn string_field<'a>(
             Ok(Some(value))
         }
         Some(_) => Err(invalid(format!(
-            "{context}: `{key}` must be a non-empty string of at most {MAX_NAME_BYTES} bytes"
+            "{context}: `{key}` must be a non-empty string of at most {MAX_NAME_CHARS} characters"
         ))),
     }
 }
@@ -776,7 +881,9 @@ fn call_operation(
         let (kind, name) = selector.iter().next().expect("one selector");
         let name = name
             .as_str()
-            .filter(|name| name.len() <= MAX_NAME_BYTES && !name.chars().any(char::is_control))
+            .filter(|name| {
+                name.chars().count() <= MAX_NAME_CHARS && !name.chars().any(char::is_control)
+            })
             .ok_or_else(|| invalid(format!("{context}: `resource.{kind}` must be a name")))?;
         if !selectors.contains(&kind.as_str())
             || (kind != "library" && name.is_empty())
@@ -824,9 +931,11 @@ fn property_map(object: &Map<String, Value>, key: &str, context: &str) -> Result
         None => Ok(()),
         Some(Value::Object(properties)) => {
             for (name, value) in properties {
-                if name.is_empty() || name.len() > MAX_NAME_BYTES {
+                if name.is_empty() || name.chars().count() > crate::schema::MAX_PROPERTY_NAME_CHARS
+                {
                     return Err(invalid(format!(
-                        "{context}: property names must be non-empty"
+                        "{context}: property names are 1 to {} characters",
+                        crate::schema::MAX_PROPERTY_NAME_CHARS
                     )));
                 }
                 tagged_value(value, &format!("{context}.{name}"))?;
@@ -1222,39 +1331,309 @@ pub(super) fn semantic_tree(path: &str, text: &str, generation: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::conformance::{NameRule, conforms, name_cases};
+
+    /// The rule of every name-like string field of an operation.
+    const NAME: NameRule = NameRule {
+        limit: MAX_NAME_CHARS,
+        empty: false,
+        control: true,
+    };
+
+    /// Every way an operation is advertised, as (`scene`, `live`): in a scene
+    /// batch, in a resource batch and in a live edit of the editor's scene.
+    const SHAPES: [(bool, bool); 3] = [(true, false), (false, false), (true, true)];
+
+    /// A valid value of `field` in `op`: a callback name for a signal
+    /// operation's `method`, an editing method for `call_method`'s.
+    fn sample(op: &str, field: &str) -> Value {
+        match field {
+            "parent" | "node" | "from" | "to" => json!("."),
+            "scene" => json!("res://scenes/a.tscn"),
+            "script" => json!("res://scripts/a.gd"),
+            "index" => json!(0),
+            "value" => json!({ "type": "integer", "value": 1 }),
+            "properties" => json!({}),
+            "method" if op == "call_method" => json!("clear"),
+            "method" => json!("_on_body_entered"),
+            _ => json!("Name"),
+        }
+    }
+
+    /// `op` with only its `required` fields, each a valid sample.
+    fn with_required(op: &str, required: &[&str]) -> Value {
+        let mut operation = Map::new();
+        operation.insert("op".to_owned(), json!(op));
+        for field in required {
+            operation.insert((*field).to_owned(), sample(op, field));
+        }
+        Value::Object(operation)
+    }
+
+    /// The advertised schema of one operation of a scene (`scene`) or
+    /// resource batch, or of a live edit (`live`), as a standalone schema
+    /// carrying the definitions it refers to.
+    fn advertised_operation_schema(scene: bool, live: bool) -> Value {
+        json!({
+            "allOf": [operations_schema_for(scene, live)["items"].clone()],
+            "$defs": crate::schema::value_definitions(),
+        })
+    }
+
+    /// Hold the advertised `schema` of an operation and the check behind it
+    /// to `expected` on `operation`, which `case` names.
+    fn agree(
+        (scene, live): (bool, bool),
+        schema: &Value,
+        operation: &Value,
+        expected: bool,
+        case: &str,
+    ) {
+        assert_eq!(
+            conforms(schema, operation),
+            expected,
+            "the schema's verdict (scene {scene}, live {live}) on {case}"
+        );
+        let accepted = if live {
+            validate_live_operation(operation, 0).is_ok()
+        } else {
+            validate_operation(scene, operation, 0).is_ok()
+        };
+        assert_eq!(
+            accepted, expected,
+            "the handler's verdict (scene {scene}, live {live}) on {case}"
+        );
+    }
 
     /// The schema and the validator read one table: every operation with only
-    /// its required fields validates, and no operation takes a field it does
-    /// not declare.
+    /// its required fields conforms and validates, and no operation takes a
+    /// field it does not declare.
     #[test]
     fn every_operation_the_schema_lists_validates_with_its_required_fields() {
-        fn sample(field: &str) -> Value {
-            match field {
-                "parent" | "node" | "from" | "to" => json!("."),
-                "scene" => json!("res://scenes/a.tscn"),
-                "script" => json!("res://scripts/a.gd"),
-                "index" => json!(0),
-                "value" => json!({ "type": "integer", "value": 1 }),
-                "properties" => json!({}),
-                "method" => json!("clear"),
-                _ => json!("Name"),
-            }
-        }
-        for scene in [true, false] {
-            for (op, _, required) in operations(scene) {
-                let mut operation = Map::new();
-                operation.insert("op".to_owned(), json!(op));
-                for field in *required {
-                    operation.insert((*field).to_owned(), sample(field));
-                }
-                let operation = Value::Object(operation);
-                assert!(
-                    validate_operation(scene, &operation, 0).is_ok(),
-                    "{operation}"
-                );
+        for shape in SHAPES {
+            let schema = advertised_operation_schema(shape.0, shape.1);
+            for (op, _, required) in operations(shape.0) {
+                let operation = with_required(op, required);
+                agree(shape, &schema, &operation, true, &operation.to_string());
                 let mut extra = operation.clone();
                 extra["colour"] = json!("red");
-                assert!(validate_operation(scene, &extra, 0).is_err(), "{extra}");
+                agree(shape, &schema, &extra, false, &extra.to_string());
+            }
+        }
+    }
+
+    /// Every name-like string field of every operation follows one rule in
+    /// the schema and the check: 1 to 512 characters, whatever the bytes
+    /// each takes, and no control character. A scene or script path is a
+    /// `res://` path of that length ending in its extension.
+    #[test]
+    fn every_name_field_follows_one_rule_in_the_schema_and_the_check() {
+        for shape in SHAPES {
+            let schema = advertised_operation_schema(shape.0, shape.1);
+            for (op, fields, required) in operations(shape.0) {
+                for field in *fields {
+                    let (prefix, suffix) = match *field {
+                        "scene" => ("res://", ".tscn"),
+                        "script" => ("res://", ".gd"),
+                        "method" if *op == "call_method" => continue,
+                        "index" | "value" | "properties" | "resource" | "arguments" | "repeat" => {
+                            continue;
+                        }
+                        _ => ("", ""),
+                    };
+                    for (index, (value, expected)) in
+                        name_cases(NAME, prefix, suffix).into_iter().enumerate()
+                    {
+                        let mut operation = with_required(op, required);
+                        operation[*field] = json!(value);
+                        let case = format!(
+                            "{op}.{field}, case {index} ({} characters)",
+                            value.chars().count()
+                        );
+                        agree(shape, &schema, &operation, expected, &case);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A `call_method` resource selector names its resource by the same
+    /// rule; only the default animation library's name may be empty.
+    #[test]
+    fn every_selector_name_follows_one_rule_in_the_schema_and_the_check() {
+        let library = NameRule {
+            empty: true,
+            ..NAME
+        };
+        for shape in SHAPES {
+            let schema = advertised_operation_schema(shape.0, shape.1);
+            let selectors: &[(&str, NameRule)] = if shape.0 {
+                &[
+                    ("property", NAME),
+                    ("animation", NAME),
+                    ("library", library),
+                ]
+            } else {
+                &[("property", NAME)]
+            };
+            for (selector, rule) in selectors {
+                for (index, (value, expected)) in name_cases(*rule, "", "").into_iter().enumerate()
+                {
+                    let mut resource = Map::new();
+                    resource.insert((*selector).to_owned(), json!(value));
+                    let operation =
+                        json!({ "op": "call_method", "method": "clear", "resource": resource });
+                    let case = format!(
+                        "resource.{selector}, case {index} ({} characters)",
+                        value.chars().count()
+                    );
+                    agree(shape, &schema, &operation, expected, &case);
+                }
+            }
+        }
+    }
+
+    /// A property map's keys, of `set_subresource` and of a new resource a
+    /// call passes, are 1 to 512 characters. The check takes a control
+    /// character in a property name, so the schema does too.
+    #[test]
+    fn every_property_name_follows_one_rule_in_the_schema_and_the_check() {
+        let rule = NameRule {
+            limit: crate::schema::MAX_PROPERTY_NAME_CHARS,
+            empty: false,
+            control: false,
+        };
+        let tagged = json!({ "type": "integer", "value": 1 });
+        for shape in SHAPES {
+            let schema = advertised_operation_schema(shape.0, shape.1);
+            for (index, (key, expected)) in name_cases(rule, "", "").into_iter().enumerate() {
+                let mut properties = Map::new();
+                properties.insert(key.clone(), tagged.clone());
+                let set = json!({ "op": "set_subresource", "property": "material",
+                                  "class": "StandardMaterial3D", "properties": properties });
+                let call = json!({ "op": "call_method", "method": "add_animation", "arguments": [
+                    { "type": "new_resource",
+                      "value": { "class": "Animation", "properties": properties } }
+                ] });
+                for operation in [set, call] {
+                    let case = format!(
+                        "{} property name, case {index} ({} characters)",
+                        operation["op"],
+                        key.chars().count()
+                    );
+                    agree(shape, &schema, &operation, expected, &case);
+                }
+            }
+        }
+    }
+
+    /// A new scene's root type and name, and a new resource's class, follow
+    /// the same rule in the tool schema and the check.
+    #[test]
+    fn the_names_a_creation_takes_follow_one_rule() {
+        for (kind, path, field) in [
+            (AuthorKind::SceneCreate, "a.tscn", "rootType"),
+            (AuthorKind::SceneCreate, "a.tscn", "rootName"),
+            (AuthorKind::ResourceCreate, "a.tres", "class"),
+        ] {
+            let schema = Value::Object(crate::kernel::tool_schema(
+                kind.tool_name(),
+                crate::core::CoreLimits::default(),
+            ));
+            for (index, (value, expected)) in name_cases(NAME, "", "").into_iter().enumerate() {
+                let mut call = json!({ "path": path, "idempotencyId": "call-1" });
+                call[field] = json!(value);
+                let case = format!(
+                    "{field}, case {index} ({} characters)",
+                    value.chars().count()
+                );
+                assert_eq!(
+                    conforms(&schema, &call),
+                    expected,
+                    "the schema's verdict on {case}"
+                );
+                let mut arguments = call.as_object().cloned().expect("an object");
+                arguments.remove("idempotencyId");
+                assert_eq!(
+                    parse(kind, arguments).is_ok(),
+                    expected,
+                    "the handler's verdict on {case}"
+                );
+            }
+        }
+    }
+
+    /// A node field takes a node path relative to the scene root, or in a
+    /// batch a handle a scene tree answer issued; a live edit and a new scene
+    /// take paths only.
+    #[test]
+    fn the_node_schemas_and_the_node_checks_agree() {
+        let handle = format!("{}{}", node_handle::PREFIX, "0123456789abcdef".repeat(2));
+        // (value, verdict in a batch, verdict in a live edit or a creation)
+        let cases = [
+            (".".to_owned(), true, true),
+            ("Player/Sprite".to_owned(), true, true),
+            ("..a/b..".to_owned(), true, true),
+            ("\u{540D}/\u{1F600}".to_owned(), true, true),
+            (handle.clone(), true, false),
+            (format!("{}xyz", node_handle::PREFIX), false, false),
+            (
+                format!("{}{}", node_handle::PREFIX, "A".repeat(32)),
+                false,
+                false,
+            ),
+            (format!("{handle}/a"), false, false),
+            ("/root".to_owned(), false, false),
+            ("a/".to_owned(), false, false),
+            ("a//b".to_owned(), false, false),
+            ("..".to_owned(), false, false),
+            ("../a".to_owned(), false, false),
+            ("a/../b".to_owned(), false, false),
+        ];
+        for shape in [(true, false), (true, true)] {
+            let schema = advertised_operation_schema(shape.0, shape.1);
+            for (op, fields, required) in operations(true) {
+                for field in fields.iter().filter(|field| NODE_FIELDS.contains(field)) {
+                    for (value, in_batch, in_live) in &cases {
+                        let expected = if shape.1 { *in_live } else { *in_batch };
+                        let mut operation = with_required(op, required);
+                        operation[*field] = json!(value);
+                        agree(
+                            shape,
+                            &schema,
+                            &operation,
+                            expected,
+                            &format!("{op}.{field} {value:?}"),
+                        );
+                    }
+                }
+            }
+        }
+        let schema = Value::Object(crate::kernel::tool_schema(
+            AuthorKind::SceneCreate.tool_name(),
+            crate::core::CoreLimits::default(),
+        ));
+        for (op, fields, required) in operations(true) {
+            for field in fields.iter().filter(|field| NODE_FIELDS.contains(field)) {
+                for (value, _, expected) in &cases {
+                    let mut operation = with_required(op, required);
+                    operation[*field] = json!(value);
+                    let call = json!({ "path": "a.tscn", "idempotencyId": "call-1",
+                                       "operations": [operation] });
+                    let case = format!("scene.create {op}.{field} {value:?}");
+                    assert_eq!(
+                        conforms(&schema, &call),
+                        *expected,
+                        "the schema's verdict on {case}"
+                    );
+                    let mut arguments = call.as_object().cloned().expect("an object");
+                    arguments.remove("idempotencyId");
+                    assert_eq!(
+                        parse(AuthorKind::SceneCreate, arguments).is_ok(),
+                        *expected,
+                        "the handler's verdict on {case}"
+                    );
+                }
             }
         }
     }
@@ -1779,6 +2158,21 @@ mod tests {
                 true,
                 false,
             ),
+            (
+                json!({ "op": "instance_scene", "name": "Ship", "scene": "res://models/Ship.BLEND" }),
+                true,
+                false,
+            ),
+            (
+                json!({ "op": "replace_instance", "node": "Ship", "scene": "res://levels/A.TSCN" }),
+                true,
+                false,
+            ),
+            (
+                json!({ "op": "attach_script", "script": "res://scripts/Player.GD" }),
+                true,
+                false,
+            ),
         ];
         for kind in [AuthorKind::SceneBatch, AuthorKind::ResourceBatch] {
             let root = Value::Object(input_schema(kind));
@@ -1800,10 +2194,129 @@ mod tests {
                 );
             }
         }
-        // The schema does not encode a scene's extension; the check does.
-        for scene in ["res://a.txt", "res://a.tres", "res://a.png"] {
-            let operation = json!({ "op": "instance_scene", "name": "A", "scene": scene });
-            assert!(validate_operation(true, &operation, 0).is_err(), "{scene}");
+        // A scene or script path is a project path after `res://` and ends in
+        // one of its extensions, in both the schema and the check.
+        let schema = advertised_operation_schema(true, false);
+        for (field, path, expected) in [
+            ("scene", "res://a.txt", false),
+            ("scene", "res://a.tres", false),
+            ("scene", "res://a.png", false),
+            ("scene", "res://a", false),
+            ("scene", "res://a.tscn/", false),
+            ("scene", "res://a.tscn.b/c", false),
+            ("scene", "res://a.tscn ", false),
+            ("scene", "res://../a.tscn", false),
+            ("scene", "res://a/../b.tscn", false),
+            ("scene", "res:///a.tscn", false),
+            ("scene", "res://C:/a.tscn", false),
+            ("scene", "res://-a.tscn", false),
+            ("scene", "res://a\\b.tscn", false),
+            ("scene", "res://x://a.tscn", false),
+            ("scene", "a.tscn", false),
+            ("scene", "res://a/./b.scn", true),
+            ("scene", "res://.tscn", true),
+            ("scene", "res://\u{2028}a.obj", true),
+            ("script", "res://a.gdc", false),
+            ("script", "res://a.tscn", false),
+            ("script", "res://a/b.gd", true),
+        ] {
+            let operation = if field == "scene" {
+                json!({ "op": "instance_scene", "name": "A", "scene": path })
+            } else {
+                json!({ "op": "attach_script", "script": path })
+            };
+            agree(
+                (true, false),
+                &schema,
+                &operation,
+                expected,
+                &format!("{field} {path:?}"),
+            );
+        }
+    }
+
+    /// Sharing changes how a tool writes its operations, not what they take:
+    /// every tool that takes operations defines each field schema it shares
+    /// once and refers to it more than once, and with those definitions put
+    /// back, every field of every operation it advertises is that field's own
+    /// schema.
+    #[test]
+    fn a_shared_definition_stands_for_exactly_the_fields_it_replaces() {
+        /// Where a tool advertises an operation list, and the (`scene`,
+        /// `paths_only`) shape the list has.
+        type List = (&'static str, (bool, bool));
+        let operations = "/properties/operations";
+        let tools: [(&str, &[List]); 6] = [
+            ("scene.create", &[(operations, (true, true))]),
+            ("scene.batch.apply", &[(operations, (true, false))]),
+            ("resource.create", &[(operations, (false, false))]),
+            ("resource.batch.apply", &[(operations, (false, false))]),
+            ("editor.scene.edit", &[(operations, (true, true))]),
+            (
+                "project.batch.apply",
+                &[
+                    (
+                        "/properties/files/items/oneOf/0/properties/operations",
+                        (true, false),
+                    ),
+                    (
+                        "/properties/files/items/oneOf/1/properties/operations",
+                        (false, false),
+                    ),
+                ],
+            ),
+        ];
+        let values = crate::schema::value_definitions();
+        for (tool, lists) in tools {
+            let schema = Value::Object(crate::kernel::tool_schema(
+                tool,
+                crate::core::CoreLimits::default(),
+            ));
+            let shared: Vec<&str> = schema["$defs"]
+                .as_object()
+                .expect("an authoring tool carries definitions")
+                .keys()
+                .map(String::as_str)
+                .filter(|name| !values.contains_key(*name))
+                .collect();
+            assert!(!shared.is_empty(), "{tool} shares what it repeats");
+            let mut body = schema.clone();
+            if let Some(object) = body.as_object_mut() {
+                object.remove("$defs");
+            }
+            let written = body.to_string();
+            for name in &shared {
+                let uses = written
+                    .matches(&format!("{{\"$ref\":\"#/$defs/{name}\"}}"))
+                    .count();
+                assert!(uses > 1, "{tool} refers to {name} {uses} times");
+            }
+            let inlined = crate::schema::conformance::inline_definitions(&schema, &shared);
+            for &(pointer, (in_scene, paths_only)) in lists {
+                let list = inlined
+                    .pointer(pointer)
+                    .unwrap_or_else(|| panic!("{tool} advertises operations at {pointer}"));
+                for variant in list["items"]["oneOf"]
+                    .as_array()
+                    .expect("operation variants")
+                {
+                    let op = variant["properties"]["op"]["const"]
+                        .as_str()
+                        .expect("an operation name");
+                    for (field, advertised) in
+                        variant["properties"].as_object().expect("operation fields")
+                    {
+                        if field == "op" {
+                            continue;
+                        }
+                        assert_eq!(
+                            advertised,
+                            &operation_field_schema(op, field, in_scene, paths_only),
+                            "{tool} {op}.{field}"
+                        );
+                    }
+                }
+            }
         }
     }
 

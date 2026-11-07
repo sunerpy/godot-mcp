@@ -32,7 +32,7 @@ use godot_mcp_domain::workspace_root::{WorkspaceError, WorkspaceRoot};
 use godot_mcp_domain::{CapabilityProfile, ErrorKind};
 use serde_json::{Map, Value, json};
 
-use crate::bootstrap_schema::MAX_NAME_BYTES;
+use crate::bootstrap_schema::MAX_NAME_CHARS;
 use crate::kernel::{
     AccessContext, KernelToolCall, KernelToolHandler, PrivatePaths, ServiceKernel,
 };
@@ -256,6 +256,26 @@ fn string_argument<'a>(
     })
 }
 
+/// The application name `project.create` gives a new project: not empty
+/// once trimmed, at most [`MAX_NAME_CHARS`] characters and without a control
+/// character.
+fn application_name(arguments: &Map<String, Value>) -> Result<&str, OutcomeError> {
+    let name = string_argument(arguments, "name")?;
+    if name.trim().is_empty()
+        || name.chars().count() > MAX_NAME_CHARS
+        || name.chars().any(char::is_control)
+    {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            format!(
+                "`name` must be 1-{MAX_NAME_CHARS} characters, not all white space, without \
+                 control characters"
+            ),
+        ));
+    }
+    Ok(name)
+}
+
 /// A workspace-relative spelling with `\` folded to `/`.
 fn relative_path(raw: &str) -> Result<PathBuf, OutcomeError> {
     let trimmed = raw.trim();
@@ -378,16 +398,7 @@ impl BootstrapHandler {
             ));
         };
         let relative = relative_path(string_argument(&call.arguments, "path")?)?;
-        let name = string_argument(&call.arguments, "name")?;
-        if name.trim().is_empty()
-            || name.len() > MAX_NAME_BYTES
-            || name.chars().any(char::is_control)
-        {
-            return Err(outcome_error(
-                ErrorKind::InvalidInput,
-                format!("`name` must be 1-{MAX_NAME_BYTES} bytes without control characters"),
-            ));
-        }
+        let name = application_name(&call.arguments)?;
         let renderer = match call.arguments.get("renderer") {
             None => "forward_plus",
             Some(Value::String(renderer))
@@ -639,6 +650,49 @@ pub async fn serve_bootstrap_stdio(slot: Arc<ServerSlot>) -> Result<(), StdioErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A new project's application name follows one rule in the schema and
+    /// the check: 1 to 256 characters, whatever the bytes each takes, no
+    /// control character, and not white space alone.
+    #[test]
+    fn the_application_name_schema_and_its_check_agree() {
+        use crate::schema::conformance::{NameRule, conforms, name_cases};
+        let schema = Value::Object(crate::bootstrap_schema::input_schema(
+            BootstrapOperation::ProjectCreate,
+        ))["properties"]["name"]
+            .clone();
+        let rule = NameRule {
+            limit: MAX_NAME_CHARS,
+            empty: false,
+            control: true,
+        };
+        let mut cases = name_cases(rule, "", "");
+        for (name, expected) in [
+            ("My Game", true),
+            ("  padded  ", true),
+            ("\u{FEFF}", true),
+            ("\u{200B}", true),
+            (" ", false),
+            ("\u{3000}", false),
+            (" \u{A0}\u{2028} ", false),
+        ] {
+            cases.push((name.to_owned(), expected));
+        }
+        for (name, expected) in cases {
+            let case = format!("{name:?} ({} characters)", name.chars().count());
+            assert_eq!(
+                conforms(&schema, &json!(name)),
+                expected,
+                "the schema's verdict on {case}"
+            );
+            let arguments = json!({ "name": name });
+            assert_eq!(
+                application_name(arguments.as_object().expect("an object")).is_ok(),
+                expected,
+                "the handler's verdict on {case}"
+            );
+        }
+    }
 
     #[test]
     fn a_new_manifest_parses_as_a_godot_4_project() {

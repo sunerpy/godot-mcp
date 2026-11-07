@@ -38,8 +38,9 @@ use super::request::EngineOperation;
 use super::runtime::{EngineRuntime, engine_transport};
 use crate::kernel::AccessContext;
 
-/// Longest accepted node path, property path or selector name.
-const MAX_NAME_BYTES: usize = 512;
+/// Longest accepted node path, property path or selector name, in
+/// characters: Unicode scalar values, as a schema's `maxLength` counts them.
+const MAX_NAME_CHARS: usize = 512;
 /// Largest serialized list of calls passed to the engine.
 const MAX_CALLS_BYTES: usize = 256 * 1024;
 /// How long the helper may take to load the target and make every call.
@@ -114,8 +115,8 @@ fn selector_schema(kind: ReadKind) -> Value {
         json!({
             "type": "string",
             "minLength": 1,
-            "maxLength": MAX_NAME_BYTES,
-            "pattern": "^[^:]+(?::[^:]+)*$",
+            "maxLength": MAX_NAME_CHARS,
+            "pattern": crate::schema::PROPERTY_PATH_PATTERN,
             "description": "The resource a property holds, or a property path through the \
                             resources each property holds, embedded or saved in its own file \
                             (`navigation_mesh`, `tree_root:states/Run/node`)."
@@ -126,7 +127,8 @@ fn selector_schema(kind: ReadKind) -> Value {
         json!({
             "type": "string",
             "minLength": 1,
-            "maxLength": MAX_NAME_BYTES,
+            "maxLength": MAX_NAME_CHARS,
+            "pattern": crate::schema::NO_CONTROL_PATTERN,
             "description": match kind {
                 ReadKind::Scene => "The animation an AnimationPlayer or AnimationTree holds, as \
                                     `library/name` or `name`.",
@@ -139,7 +141,8 @@ fn selector_schema(kind: ReadKind) -> Value {
             "library".to_owned(),
             json!({
                 "type": "string",
-                "maxLength": MAX_NAME_BYTES,
+                "maxLength": MAX_NAME_CHARS,
+                "pattern": crate::schema::NO_CONTROL_PATTERN,
                 "description": "The animation library an AnimationPlayer or AnimationTree \
                                 holds; \"\" is its default library."
             }),
@@ -164,7 +167,11 @@ pub(crate) fn calls_schema(kind: ReadKind) -> Value {
             json!({
                 "type": "string",
                 "minLength": 1,
-                "maxLength": MAX_NAME_BYTES,
+                "maxLength": MAX_NAME_CHARS,
+                "pattern": format!(
+                    "^{}$",
+                    crate::schema::relative_node_path(crate::schema::CONTROL)
+                ),
                 "description": "A node path relative to the scene root (`.`, the default, is \
                                 the root)."
             }),
@@ -209,7 +216,7 @@ pub(crate) fn calls_schema(kind: ReadKind) -> Value {
 
 /// The strict input schema of one read tool.
 pub(super) fn input_schema(kind: ReadKind) -> Map<String, Value> {
-    let schema = json!({
+    let mut schema = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -225,28 +232,28 @@ pub(super) fn input_schema(kind: ReadKind) -> Map<String, Value> {
             "calls": calls_schema(kind)
         },
         "required": ["path", "calls"],
-        "$defs": crate::schema::value_definitions(),
     });
+    crate::schema::define_values(&mut schema);
     schema
         .as_object()
         .cloned()
         .expect("read tool schemas are JSON objects")
 }
 
-/// A name a call carries: a string of at most [`MAX_NAME_BYTES`] bytes
+/// A name a call carries: a string of at most [`MAX_NAME_CHARS`] characters
 /// without control characters, empty only when `empty` allows it.
 fn name<'a>(value: &'a Value, what: &str, empty: bool) -> Result<&'a str, OutcomeError> {
     value
         .as_str()
         .filter(|text| {
             (empty || !text.is_empty())
-                && text.len() <= MAX_NAME_BYTES
+                && text.chars().count() <= MAX_NAME_CHARS
                 && !text.chars().any(char::is_control)
         })
         .ok_or_else(|| {
             invalid(format!(
-                "{what} must be a string of at most {MAX_NAME_BYTES} bytes without control \
-                 characters"
+                "{what} must be a string of at most {MAX_NAME_CHARS} characters without \
+                 control characters"
             ))
         })
 }
@@ -864,9 +871,107 @@ impl EngineRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::conformance::{NameRule, conforms, name_cases};
 
     fn arguments(value: Value) -> Map<String, Value> {
         value.as_object().cloned().expect("an object")
+    }
+
+    /// The advertised schema of one call of a `kind` read, as a standalone
+    /// schema carrying the definitions it refers to.
+    fn advertised_call_schema(kind: ReadKind) -> Value {
+        json!({
+            "allOf": [calls_schema(kind)["items"].clone()],
+            "$defs": crate::schema::value_definitions(),
+        })
+    }
+
+    /// Hold the advertised call schema of a `kind` read and the call check
+    /// to `expected` on `value`, which `case` names.
+    fn agree(kind: ReadKind, value: &Value, expected: bool, case: &str) {
+        assert_eq!(
+            conforms(&advertised_call_schema(kind), value),
+            expected,
+            "the {kind:?} schema's verdict on {case}"
+        );
+        assert_eq!(
+            call(kind, value, "call 0").is_ok(),
+            expected,
+            "the {kind:?} handler's verdict on {case}"
+        );
+    }
+
+    /// Every name a call carries follows one rule in the schema and the
+    /// check: 1 to 512 characters, whatever the bytes each takes, and no
+    /// control character; only the default animation library's name is
+    /// empty.
+    #[test]
+    fn every_name_a_call_carries_follows_one_rule_in_the_schema_and_the_check() {
+        let rule = NameRule {
+            limit: MAX_NAME_CHARS,
+            empty: false,
+            control: true,
+        };
+        let library = NameRule {
+            empty: true,
+            ..rule
+        };
+        for kind in [ReadKind::Scene, ReadKind::Resource] {
+            let mut fields = vec![("property", rule), ("animation", rule)];
+            if kind == ReadKind::Scene {
+                fields.extend([("node", rule), ("library", library)]);
+            }
+            for (field, rule) in fields {
+                for (index, (text, expected)) in name_cases(rule, "", "").into_iter().enumerate() {
+                    let value = if field == "node" {
+                        json!({ "method": "get_used_cells", "node": text })
+                    } else {
+                        let mut resource = Map::new();
+                        resource.insert(field.to_owned(), json!(text));
+                        json!({ "method": "get_length", "resource": resource })
+                    };
+                    let case = format!(
+                        "{field}, case {index} ({} characters)",
+                        text.chars().count()
+                    );
+                    agree(kind, &value, expected, &case);
+                }
+            }
+        }
+    }
+
+    /// A call's node is a node path relative to the scene root, and a
+    /// selected property a property path of non-empty names, in both the
+    /// schema and the check.
+    #[test]
+    fn the_path_shapes_of_a_call_agree_in_the_schema_and_the_check() {
+        for (node, expected) in [
+            (".", true),
+            ("Player/Sprite", true),
+            ("..a/b..", true),
+            ("nh1:abc", true),
+            ("/root", false),
+            ("a/", false),
+            ("a//b", false),
+            ("..", false),
+            ("../a", false),
+            ("a/../b", false),
+        ] {
+            let value = json!({ "method": "get_used_cells", "node": node });
+            agree(ReadKind::Scene, &value, expected, &format!("node {node:?}"));
+        }
+        for (property, expected) in [
+            ("navigation_mesh", true),
+            ("tree_root:states/Run/node", true),
+            ("a::b", false),
+            (":a", false),
+            ("a:", false),
+        ] {
+            let value = json!({ "method": "get_length", "resource": { "property": property } });
+            for kind in [ReadKind::Scene, ReadKind::Resource] {
+                agree(kind, &value, expected, &format!("property {property:?}"));
+            }
+        }
     }
 
     #[test]

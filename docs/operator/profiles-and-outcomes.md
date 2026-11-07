@@ -17,6 +17,27 @@ manifests, so it can never drift from its parts. The complete generated list of
 tools and resources per profile is in
 [Profiles, tools and resources](../protocol/tool-inventory.md).
 
+### How much each profile lists
+
+A client reads the whole `tools/list` answer, and many put it in a model's context on every
+conversation, so a smaller profile is also a cheaper one. The sizes below are the `tools` array
+of each profile's answer, written as compact JSON, in UTF-8 bytes. They were measured with a
+debug build of the server on Linux x86_64, by
+`every_profile_lists_its_tools_within_its_size_budget` in
+`crates/godot-mcp-cli/tests/tool_schemas.rs`, which starts the shipped binary once per profile
+and fails when a profile grows more than 2% past its size here.
+
+| Profile | Tools | `tools/list` bytes |
+| --- | --- | --- |
+| `core` | 22 | 28,044 |
+| `editor` | 82 | 312,424 |
+| `runtime` | 74 | 193,983 |
+| `full` | 130 | 474,161 |
+
+A tool's schema carries only the definitions it refers to, and a tool that takes operations
+defines each field schema it repeats once
+([Schema evolution](../protocol/schema-evolution.md#060-schema-writing)).
+
 ## Script execution
 
 Three tools run caller-written GDScript
