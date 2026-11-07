@@ -141,7 +141,7 @@ lists every profile's tools.
 
 Analysis needs no engine. The tools that run Godot need an editor build of Godot 4.4.0 or later;
 the server looks in the usual install locations and on PATH. The tested builds are Godot 4.4.1,
-4.5.1, 4.6.1 and 4.7.1. To name a build, write a configuration file:
+4.5.1, 4.6.1, 4.7.1 and 4.7.2. To name a build, write a configuration file:
 
 ```toml
 transport = "stdio"
@@ -244,8 +244,11 @@ machines are theirs.
 | `http_disabled` | HTTP is off, the default | nothing, unless a second process needs it |
 
 `readiness` says whether reads, writes, the editor and the runtime are served now. A non-zero
-`journal` quarantine count means the write gate is closed: writes are refused until the user
-resolves it on the project's machine with `godot-mcp transaction repair`.
+`journal` quarantine count means the write gate is closed. A change the editor is still running
+keeps it closed until the editor answers; otherwise writes are refused until the user resolves
+it on the project's machine with `godot-mcp transaction repair`. For a change whose editor was
+closed or crashed before it answered, that is `--operation acknowledge-safe-state` with a
+`writer-ended` proof, once the editor's process has ended.
 
 When the server does not start at all, the client's log shows its stderr:
 

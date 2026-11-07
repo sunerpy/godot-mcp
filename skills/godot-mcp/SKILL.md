@@ -128,7 +128,7 @@ godot-mcp knows common setups by name. Before building one of these by hand, use
 - `theme` is a resource, not nodes: `resource.create` with `class` `Theme` makes it, and
   `resource.batch.apply` changes it.
 - `joystick` builds a `VirtualJoystick`, which Godot 4.4.1, 4.5.1 and 4.6.1 lack; it applies on
-  Godot 4.7.1.
+  Godot 4.7.1 and 4.7.2.
 
 ```json tool=scene.recipe.apply
 {
@@ -298,9 +298,11 @@ after the editor reconnects. Read the scene before you decide what to do next.
 **A closed write gate.** When the server cannot prove how an interrupted transaction ended, it
 quarantines the transaction and refuses every later write with `conflict`, saying that writes
 are blocked; `health.get` counts the quarantined transactions under `journal`. Reads still work.
-Stop writing, and do not change the files some other way: tell the user that the project's owner
-resolves it on that machine with `godot-mcp transaction repair`, starting with its `reconcile`
-operation. The gate does not reopen by itself.
+Stop writing, and do not change the files some other way. A change the editor is still running
+settles when the editor answers it, and the gate reopens then: check `health.get` again once
+the editor's work should be done. When the editor was closed or crashed first, or the gate stays
+closed, tell the user that the project's owner resolves it on that machine with
+`godot-mcp transaction repair`, starting with its `reconcile` operation.
 
 ## Scripts are the operator's decision
 
