@@ -28,6 +28,7 @@ Start here:
 | [Quickstart: local stdio](operator/quickstart-stdio.md) | The default deployment |
 | [Configuration](operator/configuration.md) | Layered loading, keys, invariants |
 | [MCP clients](operator/mcp-clients.md) | Client wiring examples |
+| [Agent Skills](operator/skills.md) | `godot-mcp skill install`: the skills it carries, where each agent reads them, and how it decides |
 | [Profiles and tool outcomes](operator/profiles-and-outcomes.md) | Membership, availability, uncertainty |
 | [Project-wide analysis](operator/project-analysis.md) | Unused files, cycles, signal flow, metrics, search, UIDs, node and export queries |
 | [HTTP: `trusted_local`](operator/http-trusted-local.md) | Launch-secret-authenticated loopback HTTP |

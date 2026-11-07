@@ -527,6 +527,7 @@ pub const CLI_BINARY_NAME: &str = "godot-mcp";
 pub const CLI_SUBCOMMAND_ENUMS: &[(&str, &str)] = &[
     ("Command", ""),
     ("AssetsCommand", "assets"),
+    ("SkillCommand", "skill"),
     ("TransactionCommand", "transaction"),
 ];
 

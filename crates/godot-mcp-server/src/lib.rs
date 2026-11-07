@@ -58,6 +58,10 @@ pub mod stdio;
 pub mod test_support;
 pub mod workspace;
 
+/// Bounded unified diffs, rendered as the authoring tools' results and dry runs
+/// show them.
+pub use authoring::diff;
+
 /// The version of this server build: the workspace version Release Please sets.
 ///
 /// `serverInfo` in `initialize`, the health document and the editor bridge's
