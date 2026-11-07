@@ -102,7 +102,7 @@ proof that the editor's process has ended.
   for 50 s, kept its session, because the status the quarantine changed was outstanding, and
   its answer settled it there. With `deadline_ms` 29000 and the main thread held for 40 s, Godot
   4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2 each lost the session to the silence rule, dialled again
-  when the run ended, and settled the run from its report 42.8 to 43.1 s after the call.
+  when the run ended, and settled the run from its report 43.0 to 44.1 s after the call.
 - An add-on older than 0.4.1 sends no report and names no executable, so only an answer on the
   same session settles a change made through it, and the operator's repair cannot.
 - The repair is unavailable where the server cannot identify the editor's process: on Windows,
