@@ -12,11 +12,24 @@ mod support;
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use live::{Editor, Ids, editors, ok, wait_connected};
 use serde_json::{Value, json};
 use support::{ProjectTree, StdioSession, error_code};
+
+/// The runs that keep an editor or a server busy for tens of seconds take
+/// turns with the run whose answer is timed against its deadline: an editor
+/// starting beside it on a loaded host delays the server's answer, which
+/// that test bounds. The other runs of this suite go on in parallel.
+static TURNS: Mutex<()> = Mutex::new(());
+
+/// A turn among the runs [`TURNS`] orders; a run that failed during its turn
+/// does not stop the next one.
+fn take_turn() -> MutexGuard<'static, ()> {
+    TURNS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A project with the add-on installed and enabled, and a server on it that
 /// runs scripts.
@@ -214,6 +227,7 @@ fn a_run_reaches_the_open_project_and_says_what_it_did_in(binary: &Path) {
 fn a_run_that_outlasts_its_deadline_keeps_running_in_the_editor() {
     let (binaries, _unpacked) = editors();
     for binary in &binaries {
+        let _turn = take_turn();
         a_run_that_outlasts_its_deadline_keeps_running_in_the_editor_in(binary);
     }
 }
@@ -339,6 +353,7 @@ fn writes_reopen(session: &mut StdioSession, ids: &mut Ids, editor: &Editor) {
 fn a_run_that_outlasts_its_server_is_settled_by_the_next_one() {
     let (binaries, _unpacked) = editors();
     for binary in &binaries {
+        let _turn = take_turn();
         a_run_that_outlasts_its_server_is_settled_by_the_next_one_in(binary);
     }
 }
@@ -406,6 +421,7 @@ fn a_run_that_outlasts_its_server_is_settled_by_the_next_one_in(binary: &Path) {
 fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer() {
     let (binaries, _unpacked) = editors();
     for binary in &binaries {
+        let _turn = take_turn();
         a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(binary);
     }
 }
