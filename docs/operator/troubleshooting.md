@@ -153,6 +153,53 @@ expired one returns `timeout`. A cancelled request resolves through the service'
 cancellation path, so an in-flight effect observes cancellation rather than being
 abandoned mid-write.
 
+## Projects with a GDExtension
+
+These entries were measured on 2026-11-07 on Linux x86_64 with one extension: the minimal
+godot-rust extension in the repository's `gdext-reference/`, built with `godot = "=0.5.5"`
+and its `api-4-4` feature. Other extensions may behave differently.
+
+### `project.import.run` answers `failed` with signal `SIGABRT`
+
+Godot aborted while it imported the project, and the server reports the abort as it
+happened. With this extension in the project, the first import aborts on Godot 4.7.1 and
+4.7.2; on 4.4.1 it does not.
+[ADR 0010](../contributor/adr/0010-complete-development-bridge-strategy.md#spike-outcome-2026-10)
+measured the same abort on 4.5.1, 4.6.1 and 4.7.1, and found that the same project without
+the extension imports cleanly.
+
+Only the first import aborts. That import still writes `.godot/extension_list.cfg`, and the
+next one exits 0 and answers `inconclusive`, as 4.4.1 does. A windowed 4.7.1 or 4.7.2
+editor opened on a project that was never imported did not abort: it scanned the project,
+wrote the same file, and exited 0 when it was quit. After the failed import the server
+stayed `ready` and writes were not blocked, so run `project.import.run` again, or open the
+project in the editor once first.
+
+### `script.run` with `context: "copy"` answers `unavailable`
+
+The message reads `the copy could not be imported before the run (exit None, timed out:
+false); the source was not run`. A disposable copy never carries `.godot/`, so importing it
+is always a first import, and on 4.7.1 and 4.7.2 that import aborts as described above.
+Importing the project itself does not help the copy. Use `context: "project"`, or, while an
+editor is connected and the project context is refused, `editor.script.run`.
+
+Until a project has been imported once, the extension is not loaded at all: Godot loads the
+extensions `.godot/extension_list.cfg` lists, and a fresh project has none. In a project
+that was never imported, `ClassDB.class_exists` for the extension's class answered `false`
+on all three builds; after the first import, even one that aborted, it answered `true`.
+
+What each operation answered:
+
+| Operation | 4.4.1 | 4.7.1 and 4.7.2, never imported | 4.7.1 and 4.7.2, imported once |
+| --- | --- | --- | --- |
+| `project.import.run` | `inconclusive`, exit 0 | `failed`, signal `SIGABRT` | `inconclusive`, exit 0 |
+| `script.run`, `context: "copy"` | `passed` | `unavailable` | `unavailable` |
+| `script.run`, `context: "project"` | `passed` | `passed` | `passed` |
+| `scene.batch.apply`, `scene.create`, `scene.recipe.apply` | `proven_post_state` | `proven_post_state` | `proven_post_state` |
+| `script.check` | `passed` | `passed` | `passed` |
+| `editor.session.start`, then `editor.session.stop` | started, then stopped | started, then stopped | started, then stopped |
+| a windowed editor with the add-on, quit through `editor.script.run` | connected, exit 0 | connected, exit 0 | connected, exit 0 |
+
 ## After a crash
 
 ### `godot-mcp serve: write gate closed: ...`
