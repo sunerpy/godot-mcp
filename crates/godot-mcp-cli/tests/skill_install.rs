@@ -33,10 +33,12 @@ impl Sandbox {
     fn new() -> Self {
         let guard = TempDir::new().expect("a temporary directory");
         // Canonical, so a path the command reports compares equal to ours.
-        let root = guard
-            .path()
-            .canonicalize()
-            .expect("the temporary directory resolves");
+        let root = as_reported(
+            guard
+                .path()
+                .canonicalize()
+                .expect("the temporary directory resolves"),
+        );
         let home = root.join("home");
         let cwd = root.join("work");
         fs::create_dir_all(&home).expect("create the home directory");
@@ -81,6 +83,19 @@ impl Sandbox {
             .current_dir(&self.cwd);
         command
     }
+}
+
+/// `path` as a process reports its working directory. On Windows a canonical
+/// path carries the `\\?\` verbatim prefix and a process's current directory
+/// does not, so a drive path drops it.
+fn as_reported(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(rest) = path.to_str().and_then(|text| text.strip_prefix(r"\\?\"))
+        && rest.as_bytes().get(1) == Some(&b':')
+    {
+        return PathBuf::from(rest);
+    }
+    path
 }
 
 fn run_with(context: &SkillContext, request: &Request) -> (Summary, String) {
