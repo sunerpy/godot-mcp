@@ -34,7 +34,7 @@ godot-mcp serve: write gate open
 
 请让编辑器保持打开，直到它答复。godot-mcp 0.5.0 及更早版本安装的插件只会在同一个连接上答复，用 `editor.addon.update` 把它更新到最新即可。
 
-编辑器在答复之前崩溃或被关闭时，不会再有答复。确认那个编辑器已经结束后，停止服务器，用 `godot-mcp transaction repair` 加 `--operation acknowledge-safe-state` 和一份 `writer-ended` 证明：它把项目文件的现状认作这次请求的结果，重试这个请求仍然答复 `uncertain`。那个编辑器还在运行时，或者服务器没能识别编辑器的进程时（例如在 Windows 上），这个命令会拒绝；具体步骤见[恢复参考](../../../operator/recovery.md#an-editor-that-ended-before-it-answered)。godot-mcp 0.5.0 及更早版本会让这样的改动一直保持隔离。
+编辑器在答复之前崩溃或被关闭时，不会再有答复。确认那个编辑器已经结束后，停止服务器，用 `godot-mcp transaction repair` 加 `--operation acknowledge-safe-state` 和一份 `writer-ended` 证明：它把项目文件的现状认作这次请求的结果，重试这个请求仍然答复 `uncertain`。那个编辑器还在运行时，或者服务器无法识别编辑器的进程时（例如在 Windows 上），这个命令会拒绝；具体步骤见[恢复参考](../../../operator/recovery.md#an-editor-that-ended-before-it-answered)。godot-mcp 0.5.0 及更早版本会让这样的改动一直保持隔离。
 
 ## 解决隔离
 
