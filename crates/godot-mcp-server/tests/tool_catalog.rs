@@ -576,3 +576,77 @@ fn no_discovered_schema_combines_shapes_at_its_top_level() {
         found.join("\n")
     );
 }
+
+/// Push every `$ref` inside `schema` onto `found`.
+fn references(schema: &Value, found: &mut Vec<String>) {
+    match schema {
+        Value::Object(map) => {
+            if let Some(reference) = map.get("$ref") {
+                found.push(
+                    reference
+                        .as_str()
+                        .unwrap_or_else(|| panic!("a reference is a string: {reference}"))
+                        .to_owned(),
+                );
+            }
+            map.values().for_each(|value| references(value, found));
+        }
+        Value::Array(items) => items.iter().for_each(|item| references(item, found)),
+        _ => {}
+    }
+}
+
+/// Every reference in a discovered schema, in every profile, resolves in the
+/// tool's own `$defs`, and every definition the tool carries is one it refers
+/// to: from its body, or from a definition its body refers to. A tool carries
+/// the definitions it uses and no others, so a client resolves every reference
+/// from the tool alone and pays for nothing it never reads.
+#[test]
+fn every_discovered_schema_carries_exactly_the_definitions_it_refers_to() {
+    let tree = ProjectTree::new("w1-definitions");
+    for profile in ["core", "editor", "runtime", "full"] {
+        let mut session = StdioSession::initialized(&Spawn {
+            project: &tree.root,
+            current_dir: None,
+            profile,
+            godot: None,
+        });
+        for tool in listed(&mut session, 2) {
+            let name = tool["name"].as_str().expect("tool name");
+            let mut body = tool["inputSchema"].clone();
+            let definitions = body
+                .as_object_mut()
+                .and_then(|schema| schema.remove("$defs"))
+                .map(|definitions| {
+                    definitions
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_else(|| panic!("{profile} {name}: $defs is an object"))
+                })
+                .unwrap_or_default();
+            let mut pending = Vec::new();
+            references(&body, &mut pending);
+            let mut reached = BTreeSet::new();
+            while let Some(reference) = pending.pop() {
+                let definition = reference
+                    .strip_prefix("#/$defs/")
+                    .and_then(|definition| definitions.get(definition))
+                    .unwrap_or_else(|| {
+                        panic!("{profile} {name}: {reference} resolves to no definition of its own")
+                    });
+                if reached.insert(reference.clone()) {
+                    references(definition, &mut pending);
+                }
+            }
+            let carried: BTreeSet<String> = definitions
+                .keys()
+                .map(|definition| format!("#/$defs/{definition}"))
+                .collect();
+            assert_eq!(
+                reached, carried,
+                "{profile} {name}: the definitions it carries are exactly the ones it refers to"
+            );
+        }
+        let _ = session.finish();
+    }
+}

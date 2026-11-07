@@ -118,7 +118,7 @@ fn file_schema(scene: bool) -> Value {
 
 /// The strict input schema of `project.batch.apply`.
 pub(super) fn input_schema() -> Map<String, Value> {
-    let schema = json!({
+    let mut schema = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -144,8 +144,11 @@ pub(super) fn input_schema() -> Map<String, Value> {
             }
         },
         "required": ["files", "idempotencyId"],
-        "$defs": crate::schema::value_definitions(),
     });
+    // A scene file's operations and a resource file's, as their own batch
+    // tools advertise them.
+    let shared = authored::shared_fields(&[(true, false), (false, false)]);
+    crate::schema::define_shared(&mut schema, &shared);
     schema
         .as_object()
         .cloned()

@@ -1661,11 +1661,13 @@ impl EditorCall for EditorOperation {
             "properties": properties,
             "required": required,
         });
-        if matches!(
-            self,
-            Self::SceneEdit | Self::PreferencesSet | Self::SceneRead
-        ) {
-            schema["$defs"] = Value::Object(crate::schema::value_definitions());
+        match self {
+            Self::SceneEdit => crate::schema::define_shared(
+                &mut schema,
+                &crate::engine_plane::authored::live_shared_fields(),
+            ),
+            Self::PreferencesSet | Self::SceneRead => crate::schema::define_values(&mut schema),
+            _ => {}
         }
         schema
     }
