@@ -191,7 +191,7 @@ No request a 0.5.0 server took is refused.
 #### 0.6.0 schema writing
 
 Release 0.6.0 changes how the tool schemas are written and nothing they decide. The contract
-stays 0.5.0: every request a 0.5.1 server takes it takes, and every one it refuses it refuses.
+stays 0.5.0: the schemas take and refuse exactly the requests they did before.
 
 * A tool's `$defs` holds only the definitions its schema refers to, directly or through another
   definition. A tool that takes only plain values no longer carries the definitions of a
@@ -210,8 +210,8 @@ A tool that took no tagged value still carries no `$defs`, and every reference r
 tool's own schema. Measured as
 [How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
 describes, `tools/list` shrinks from 406,072 to 312,424 bytes in the `editor` profile, from
-231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`, against 0.5.1; `core`,
-whose tools take no tagged value, stays at 28,044.
+231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`; `core`, whose tools take
+no tagged value, stays at 28,044.
 
 ## Bridge protocol
 
