@@ -162,9 +162,9 @@ All of them are additions: a 0.4.0 client loses nothing, and a request it could 
 it meant. A 0.4.0 server refuses a configuration file with `mode = "open"`, as it refuses every
 unknown value.
 
-#### 0.5.1 correction
+#### 0.6.0 corrections
 
-Release 0.5.1 corrects places where a tool's advertised schema and its own check disagreed.
+Release 0.6.0 corrects places where a tool's advertised schema and its own check disagreed.
 The contract stays 0.5.0: no data-transfer object, error variant or capability manifest changes
 shape.
 
