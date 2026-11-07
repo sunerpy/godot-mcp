@@ -18,12 +18,13 @@ The matrix below is **defined**: the CI workflows derive their job list, their
 download URLs and their expected digests from this lock, and a test asserts no
 workflow restates a version by hand. Whether a given row has been **observed
 green on a real runner** is a separate fact, recorded per observation and not
-implied by presence here. For the tree this page was generated from, every
-editor row and every template archive below was exercised by the real-client
-matrix (`scripts/real_client/platform_matrix.py`) on a real runner of its
-platform: Linux x86_64, an Apple silicon Mac and a Windows Server 2022 desktop
-session; see [Process boundaries](process-boundaries.md#what-has-been-executed-where).
-An observation belongs to the tree it was made on, so
+implied by presence here. The real-client matrix
+(`scripts/real_client/platform_matrix.py`) drives the release archive built for
+a platform on a real runner of that platform: Linux x86_64, an Apple silicon Mac
+and a Windows Server 2022 desktop session.
+[Process boundaries](process-boundaries.md#what-has-been-executed-where) names
+the Godot releases it has run against there. An observation belongs to the tree
+it was made on, so
 a row is not observed for a later tree until the matrix runs there again.
 
 
@@ -84,6 +85,20 @@ a row is not observed for a later tree until the matrix runs there again.
 | `macos-universal` | `editor` | `Godot_v4.7.1-stable_macos.universal.zip` | 166939858 | `897cb7f9799796c717ae75f31446aed883dc92b1d6c3b33d893cc7843fff2fa9` | `github_release_asset_digest` |
 | `windows-x86_64` | `editor` | `Godot_v4.7.1-stable_win64.exe.zip` | 84198557 | `c7a289051eaefb460b0106b60e9cd5bee0ef55fd102dcb2bed1eb356cf3d90a1` | `github_release_asset_digest` |
 | `all-platforms` | `export_templates` | `Godot_v4.7.1-stable_export_templates.tpz` | 1280486955 | `86409db6200b6f8fd3230989c2d2002851f3dd18acf11d7bdbafddf5a0dd0f72` | `github_release_asset_digest` |
+
+### `4.7.2`
+
+* Git tag: `4.7.2-stable`
+* Channel: `stable`
+* Published: `2026-08-18T16:12:28Z`
+* Release page: https://github.com/godotengine/godot/releases/tag/4.7.2-stable
+
+| Platform | Kind | Artifact | Bytes | SHA-256 | Digest provenance |
+| --- | --- | --- | --- | --- | --- |
+| `linux-x86_64` | `editor` | `Godot_v4.7.2-stable_linux.x86_64.zip` | 77860424 | `cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4` | `github_release_asset_digest` |
+| `macos-universal` | `editor` | `Godot_v4.7.2-stable_macos.universal.zip` | 170622178 | `c58a24e31d720be9d62f60cb5627c4e695fb72f21b0cfe1bc9ccaa9a3b3ba63e` | `github_release_asset_digest` |
+| `windows-x86_64` | `editor` | `Godot_v4.7.2-stable_win64.exe.zip` | 86013866 | `731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953` | `github_release_asset_digest` |
+| `all-platforms` | `export_templates` | `Godot_v4.7.2-stable_export_templates.tpz` | 1281349702 | `f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011` | `github_release_asset_digest` |
 
 ## Digest provenance kinds
 

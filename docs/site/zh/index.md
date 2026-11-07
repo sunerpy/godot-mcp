@@ -270,8 +270,10 @@ home:
     title: 引擎，版本精确
     intro: 项目支持的每个 Godot 版本都是锁文件里的一个确切补丁版本，带官方下载地址和摘要。每次发布都为下面每个平台提供一个归档，并在该平台上针对最新版本冒烟测试。
     versions:
-      - version: 4.7.1
+      - version: 4.7.2
         detail: 编辑器检查、导出模板、显示检查和打包冒烟，覆盖 Linux、macOS 和 Windows
+      - version: 4.7.1
+        detail: 编辑器检查和导出模板，在 Linux 上
       - version: 4.6.1
         detail: 编辑器检查和导出模板，在 Linux 上
       - version: 4.5.1
@@ -331,7 +333,7 @@ home:
           text: Rust 服务器，不只是编辑器插件
           link: /zh/guide/introduction#rust-服务器不只是编辑器插件
       - q: 支持哪些 Godot 版本？
-        a: Godot 4.4.0 或更新版本。CI 检查 4.4.1、4.5.1、4.6.1 和 4.7.1 这几个确切版本；需要更新版本的工具会说明，例如 `editor.log.get` 需要 4.5.1。
+        a: Godot 4.4.0 或更新版本。CI 检查 4.4.1、4.5.1、4.6.1、4.7.1 和 4.7.2 这几个确切版本；需要更新版本的工具会说明，例如 `editor.log.get` 需要 4.5.1。
         guide:
           text: Godot 版本
           link: /zh/reference/godot-versions

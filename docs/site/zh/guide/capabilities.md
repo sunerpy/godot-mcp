@@ -27,7 +27,7 @@ description: godot-mcp 用哪些工具处理动画、AnimationTree、物理、3D
 
 ## 配方
 
-`scene.recipe.apply` 按名字把一种常见设置加进场景，带上参数，并在答复里给出用到的每个值。它把配方展开成一批上面那样的操作，写入日志，并对照场景的 SHA-256 执行；场景正在你的编辑器里打开时，则成为一次可撤销操作。可以加进场景的配方有十个：`body-2d`、`body-3d`、`light-3d`、`particles-2d`、`navigation-2d`、`audio-2d`、`shader-2d`、`hud`、`gridmap-3d` 和 `joystick`，最后一个需要 Godot 4.7.1，那里才有 `VirtualJoystick` 类。`theme` 配方生成的是资源，交给 `resource.create`。
+`scene.recipe.apply` 按名字把一种常见设置加进场景，带上参数，并在答复里给出用到的每个值。它把配方展开成一批上面那样的操作，写入日志，并对照场景的 SHA-256 执行；场景正在你的编辑器里打开时，则成为一次可撤销操作。可以加进场景的配方有十个：`body-2d`、`body-3d`、`light-3d`、`particles-2d`、`navigation-2d`、`audio-2d`、`shader-2d`、`hud`、`gridmap-3d` 和 `joystick`，最后一个需要 Godot 4.7.1 或 4.7.2，这两个版本才有 `VirtualJoystick` 类。`theme` 配方生成的是资源，交给 `resource.create`。
 
 ```json
 {
