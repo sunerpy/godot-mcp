@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "The `godot-mcp` command-line entry point: `version`, `check-config`, `serve` (MCP over default stdio or opt-in authenticated loopback HTTP selected with --config), `transaction repair` (the local operator-repair command), `self-check` (verify an extracted release package against its own MANIFEST.json), and `assets install`/`assets update`/`assets remove`/`assets status` for the project assets this package carries, which land under godot_mcp/ rather than an addons/ tree because no editor plug-in ships."
+description = "The `godot-mcp` command-line entry point: `version`, `check-config`, `serve` (MCP over default stdio or opt-in authenticated loopback HTTP selected with --config), `transaction repair` (the local operator-repair command), `self-check` (verify an extracted release package against its own MANIFEST.json), and `assets install`/`assets update`/`assets remove`/`assets status` for the project assets this package carries, which land under godot_mcp/ rather than an addons/ tree because no editor plug-in ships, and `skill install`/`skill update`/`skill uninstall`/`skill status` for the Agent Skills it carries, written into the skill directories of the agents in use."
 
 # The shipping CLI binary is `godot-mcp`.
 [[bin]]

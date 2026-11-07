@@ -41,6 +41,14 @@ rejection:
 }
 ```
 
+## Agent Skills
+
+Each tool describes itself, but not how tools combine into a job. The Agent Skills godot-mcp
+carries do: `godot-mcp skill install` copies them into the skill directories of the agents you
+use, and an agent loads one when a task needs it. Install them on the machine the agent runs
+on, which over HTTP may not be the machine with the project. [Agent Skills](skills.md) lists
+the targets, the commands and which target each client uses.
+
 ## HTTP on loopback
 
 Use HTTP only when a second local process genuinely has to reach the same running

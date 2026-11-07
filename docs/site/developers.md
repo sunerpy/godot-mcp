@@ -21,6 +21,7 @@ is pinned to an exact version.
 | `crates/godot-mcp-server/` | The MCP kernel, policy, journal, scheduler, sessions, HTTP and diagnostics |
 | `crates/godot-mcp-cli/` | The `godot-mcp` binary, packaging, the release gates and operator repair |
 | `schemas/` | The JSON schemas of every contract the server publishes |
+| `skills/` | The Agent Skills the binary embeds and `godot-mcp skill install` copies, one `SKILL.md` each |
 | `tests/fixtures/godot-releases.lock.json` | Every Godot version the project supports, with its official URLs and digests |
 | `docs/` | The references; `docs/site/` is this site |
 

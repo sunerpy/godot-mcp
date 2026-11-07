@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 /// Whether `instance` conforms to `schema`. A `$ref` resolves against `schema`
 /// itself, which must therefore carry the `$defs` it refers to.
-pub(crate) fn conforms(schema: &Value, instance: &Value) -> bool {
+pub fn conforms(schema: &Value, instance: &Value) -> bool {
     Checker { root: schema }.check(schema, instance)
 }
 

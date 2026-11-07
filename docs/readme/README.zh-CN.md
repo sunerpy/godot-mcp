@@ -125,7 +125,11 @@ make dist        # 输出 target/release-dist/godot-mcp-<版本>-<目标>.<扩�
 
 ## 配合 LLM 使用
 
-先按[安装](#安装)一节装好，再像上面那样在客户端里注册服务器，其余的让 Agent 自己发现：
+先按[安装](#安装)一节装好，再像上面那样在客户端里注册服务器，其余的让 Agent 自己发现。要让 Agent 也用上 godot-mcp 的 Agent Skills，就把它们复制进 Agent 的 skill 目录（见 [Agent Skills](../operator/skills.md)）：
+
+```sh
+godot-mcp skill install
+```
 
 <details>
 <summary>给 Agent 的速查</summary>

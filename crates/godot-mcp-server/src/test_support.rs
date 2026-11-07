@@ -20,6 +20,10 @@ mod router_harness;
 mod scheduler_harness;
 mod task34_fixture;
 
+/// The partial JSON Schema checker the schema/handler agreement tests use, for
+/// a non-shipping tool that holds documented arguments to a tool's advertised
+/// schema. It panics on a keyword it does not know rather than passing it.
+pub use crate::schema::conformance::conforms as schema_conforms;
 pub use audit_limits_harness::{
     AttemptRefusal, AttemptReport, AttemptSpec, AuditLimitsConfig, AuditLimitsHarness,
     KernelAuditCallReport, LimitGate, NegativeCallReport,

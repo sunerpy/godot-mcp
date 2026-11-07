@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use godot_mcp_domain::contracts::GodotValue;
 use serde_json::{Map, Value, json};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) mod conformance;
 
 /// One variant of a discriminated object: `discriminator` is the constant

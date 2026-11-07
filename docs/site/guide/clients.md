@@ -105,3 +105,8 @@ of starting a second server: see [HTTP](../operate/http.md).
 When the agent runs on another machine of your development network, start the server with
 `--http 0.0.0.0:8765` and give the client the URL the server prints: see
 [HTTP](../operate/http.md#open).
+
+## Agent Skills
+
+To give the agent godot-mcp's Agent Skills as well, run `godot-mcp skill install`; see
+[Agent Skills](skills.md) for the target each client uses.

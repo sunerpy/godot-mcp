@@ -27,6 +27,7 @@ pub mod scan;
 pub mod script;
 pub mod secrets;
 pub mod security;
+pub mod skills;
 
 use std::path::{Path, PathBuf};
 

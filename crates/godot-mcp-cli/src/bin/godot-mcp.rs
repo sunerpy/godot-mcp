@@ -1,8 +1,8 @@
 //! The `godot-mcp` command-line entry point.
 //!
-//! The surface below is exactly six top-level subcommands: `version`,
-//! `check-config`, `serve`, `transaction`, `self-check` and `assets`. Todo 1
-//! scaffolded the surface and transport-clean startup. Todo 2 added
+//! The surface below is exactly seven top-level subcommands: `version`,
+//! `check-config`, `serve`, `transaction`, `self-check`, `assets` and `skill`.
+//! Todo 1 scaffolded the surface and transport-clean startup. Todo 2 added
 //! `check-config`, which loads a typed configuration file, enforces every
 //! security invariant, and maps the result to a process exit code (0 valid, 2
 //! invalid). Todo 6 wires `serve --stdio --project <dir>` to the shared service
@@ -10,7 +10,9 @@
 //! reconciles every transaction left open by a previous process, then serves MCP
 //! over stdin/stdout. Todo 34 adds `transaction repair`, the local-owner-only
 //! operator-recovery command, plus `self-check` and `assets` over the release
-//! package it produces.
+//! package it produces. `skill` installs the Agent Skills embedded in this
+//! binary into the skill directories of the agents in use
+//! ([`godot_mcp_cli::skill`]).
 //!
 //! `serve` defaults to stdio. Supplying a validated `--config` may opt into the
 //! authenticated loopback Streamable HTTP transport compiled into release
@@ -42,6 +44,10 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use godot_mcp_cli::package;
 use godot_mcp_cli::repair::{RepairRequest, run as run_repair};
+use godot_mcp_cli::skill::{
+    Action as SkillAction, Location as SkillLocation, Request as SkillRequest, SkillContext,
+    TargetSelection, parse_target_selection,
+};
 use godot_mcp_domain::CapabilityProfile;
 use godot_mcp_domain::config::{
     CliOverrides, HttpMode, SecretRef, ServerConfig, Transport, load_config,
@@ -175,6 +181,13 @@ enum Command {
         #[command(subcommand)]
         command: AssetsCommand,
     },
+    /// Install, update, uninstall or report on the Agent Skills this binary
+    /// carries, in the skill directories of the agents you use. Only those
+    /// directories are written, and no Godot project is read.
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -208,6 +221,67 @@ struct AssetsArgs {
     /// binary was launched from.
     #[arg(long)]
     package: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+enum SkillCommand {
+    /// Write each skill into the selected agents' skill directories. A skill
+    /// already up to date is left as it is; one whose `SKILL.md` was changed
+    /// after godot-mcp wrote it, or that godot-mcp cannot tell it wrote, is
+    /// skipped unless `--force` is given.
+    Install(SkillWriteArgs),
+    /// Bring installed skills to this binary's version, under the same rules as
+    /// `install`.
+    Update(SkillUpdateArgs),
+    /// Remove each skill godot-mcp wrote, with its marker and its directory once
+    /// empty. A `SKILL.md` changed since godot-mcp wrote it is kept.
+    Uninstall(SkillScopeArgs),
+    /// Report each skill: not installed, up to date, update available,
+    /// modified, or an error. Changes nothing.
+    Status(SkillScopeArgs),
+}
+
+#[derive(Debug, Args)]
+struct SkillScopeArgs {
+    /// The agents: `auto` (every agent whose configuration directory exists,
+    /// else claude), `all`, or a comma-separated list of claude, codex, cursor,
+    /// gemini, kiro and opencode.
+    #[arg(
+        long,
+        value_name = "TARGETS",
+        default_value = "auto",
+        value_parser = parse_target_selection
+    )]
+    target: TargetSelection,
+    /// Use the skill directories under your home directory (the default).
+    #[arg(long, conflicts_with = "local")]
+    global: bool,
+    /// Use the skill directories under the current directory instead.
+    #[arg(long)]
+    local: bool,
+}
+
+#[derive(Debug, Args)]
+struct SkillWriteArgs {
+    #[command(flatten)]
+    scope: SkillScopeArgs,
+    /// Overwrite a `SKILL.md` that was changed after godot-mcp wrote it, or that
+    /// godot-mcp cannot tell it wrote.
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Args)]
+struct SkillUpdateArgs {
+    #[command(flatten)]
+    write: SkillWriteArgs,
+    /// Report what would change and write nothing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Also print the unified diff from each installed `SKILL.md` to this
+    /// binary's.
+    #[arg(long)]
+    diff: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -433,6 +507,53 @@ fn assets(command: &AssetsCommand) -> ExitCode {
         }
         Err(error) => {
             eprintln!("godot-mcp assets: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn skill_request(action: SkillAction, scope: &SkillScopeArgs) -> SkillRequest {
+    // clap refuses `--global` together with `--local`, so `--global` only
+    // restates the default.
+    let location = if scope.local && !scope.global {
+        SkillLocation::Local
+    } else {
+        SkillLocation::Global
+    };
+    SkillRequest::new(action, scope.target.clone(), location)
+}
+
+/// Run one `skill` command. The report goes to stdout; the exit status is 1
+/// when any skill could not be processed and 0 otherwise, including when a
+/// changed `SKILL.md` was skipped or kept.
+fn skill(command: &SkillCommand) -> ExitCode {
+    let request = match command {
+        SkillCommand::Install(arguments) => SkillRequest {
+            force: arguments.force,
+            ..skill_request(SkillAction::Install, &arguments.scope)
+        },
+        SkillCommand::Update(arguments) => SkillRequest {
+            force: arguments.write.force,
+            dry_run: arguments.dry_run,
+            diff: arguments.diff,
+            ..skill_request(SkillAction::Update, &arguments.write.scope)
+        },
+        SkillCommand::Uninstall(arguments) => skill_request(SkillAction::Uninstall, arguments),
+        SkillCommand::Status(arguments) => skill_request(SkillAction::Status, arguments),
+    };
+    let context = match SkillContext::from_env() {
+        Ok(context) => context,
+        Err(error) => {
+            eprintln!("godot-mcp skill: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    match godot_mcp_cli::skill::run(&request, &context, &mut out) {
+        Ok(summary) => ExitCode::from(summary.exit_status()),
+        Err(error) => {
+            eprintln!("godot-mcp skill: cannot write the report: {error}");
             ExitCode::from(1)
         }
     }
@@ -840,6 +961,9 @@ fn main() -> ExitCode {
         }
         Some(Command::Assets { command }) => {
             run_with_default_diagnostics("assets", || assets(&command))
+        }
+        Some(Command::Skill { command }) => {
+            run_with_default_diagnostics("skill", || skill(&command))
         }
     }
 }
