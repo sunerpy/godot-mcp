@@ -83,4 +83,4 @@ godot-mcp skill uninstall
 removes the skills godot-mcp wrote, and their directories once they are empty.
 
 The reference, with every rule the commands follow, is [Agent Skills](../../operator/skills.md).
-godot-mcp 0.5.0 and earlier have no `skill` command.
+Releases before godot-mcp 0.6.0 have no `skill` command.

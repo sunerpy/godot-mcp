@@ -69,4 +69,4 @@ godot-mcp skill uninstall
 
 这条命令删除 godot-mcp 写入的 skill，目录变空后一并删除。
 
-这些命令遵循的全部规则见参考页 [Agent Skills](../../../operator/skills.md)（英文）。godot-mcp 0.5.0 及更早的版本没有 `skill` 命令。
+这些命令遵循的全部规则见参考页 [Agent Skills](../../../operator/skills.md)（英文）。godot-mcp 0.6.0 之前的版本没有 `skill` 命令。
