@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use godot_mcp_domain::catalog::ServerState;
 use godot_mcp_domain::contracts::{ByteRange, ErrorKind, OutcomeError};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverRequestMethod, DiscoverResult,
@@ -129,13 +130,15 @@ impl ServerHandler for RmcpAdapter {
             #[cfg(feature = "stdio")]
             KernelSource::Slot(_) => tools.enable_tool_list_changed().build(),
         };
+        let (kernel, _access, _generation) = self.current();
+        let bootstrap = kernel.state() == ServerState::Bootstrap;
         ServerConfig::new(capabilities)
             .with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
             .with_server_info(Implementation::new("godot-mcp-server", SERVER_VERSION))
-            .with_instructions(
-                "Use canonical Godot MCP tools and opaque resources; storage paths are never \
-                 public.",
-            )
+            .with_instructions(crate::instructions::server_instructions(
+                kernel.profile(),
+                bootstrap,
+            ))
     }
 
     /// `server/discover` opens the 2026-07-28 lifecycle, which this server does not

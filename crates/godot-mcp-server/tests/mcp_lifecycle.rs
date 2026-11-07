@@ -192,6 +192,16 @@ async fn stdio_serves_only_the_initialize_lifecycle() -> anyhow::Result<()> {
         "a client asking for a revision without a handshake is given the newest with one: \
          {initialized}"
     );
+    assert_eq!(
+        initialized
+            .pointer("/result/instructions")
+            .and_then(Value::as_str),
+        Some(
+            godot_mcp_server::instructions::server_instructions(CapabilityProfile::Core, false)
+                .as_str()
+        ),
+        "initialize carries the profile's generated instructions: {initialized}"
+    );
     peer.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
         .await?;
     let tools = peer.request(request(3, "tools/list", json!({}))).await?;
