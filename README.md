@@ -53,7 +53,7 @@ cannot.
   uniforms and compile errors. Exports cover packs, patches and Android APKs;
   `android.deploy` installs and starts an APK on a device over adb, so far
   measured only against a stand-in adb. CI checks every release against exact
-  locked Godot builds from 4.4.1 to 4.7.1.
+  locked Godot builds from 4.4.1 to 4.7.2.
 - **Games and editors it owns.** Start a game or an editor, send keyboard, mouse,
   action and sequence input and record and replay it, read the live scene tree,
   properties, signals and UI, write live properties, wait for a condition, find

@@ -223,12 +223,13 @@ pub fn version_matrix(canonical: &Canonical) -> Result<String, String> {
          download URLs and their expected digests from this lock, and a test asserts no\n\
          workflow restates a version by hand. Whether a given row has been **observed\n\
          green on a real runner** is a separate fact, recorded per observation and not\n\
-         implied by presence here. For the tree this page was generated from, every\n\
-         editor row and every template archive below was exercised by the real-client\n\
-         matrix (`scripts/real_client/platform_matrix.py`) on a real runner of its\n\
-         platform: Linux x86_64, an Apple silicon Mac and a Windows Server 2022 desktop\n\
-         session; see [Process boundaries](process-boundaries.md#what-has-been-executed-where).\n\
-         An observation belongs to the tree it was made on, so\n\
+         implied by presence here. The real-client matrix\n\
+         (`scripts/real_client/platform_matrix.py`) drives the release archive built for\n\
+         a platform on a real runner of that platform: Linux x86_64, an Apple silicon Mac\n\
+         and a Windows Server 2022 desktop session.\n\
+         [Process boundaries](process-boundaries.md#what-has-been-executed-where) names\n\
+         the Godot releases it has run against there. An observation belongs to the tree\n\
+         it was made on, so\n\
          a row is not observed for a later tree until the matrix runs there again.\n",
         lock.minimum_supported_version
     )

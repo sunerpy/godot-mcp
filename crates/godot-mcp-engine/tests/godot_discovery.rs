@@ -141,9 +141,10 @@ async fn godot_discovery_happy_path() {
             "4.4.1".to_string(),
             "4.5.1".to_string(),
             "4.6.1".to_string(),
-            "4.7.1".to_string()
+            "4.7.1".to_string(),
+            "4.7.2".to_string()
         ],
-        "the lock file pins exactly the four supported patch releases"
+        "the lock file pins exactly the five supported patch releases"
     );
     assert_eq!(
         lock.minimum_supported_version(),
@@ -190,7 +191,7 @@ async fn godot_discovery_happy_path() {
             );
         }
     }
-    assert_eq!(urls.len(), 16, "4 releases x 4 required platform artifacts");
+    assert_eq!(urls.len(), 20, "5 releases x 4 required platform artifacts");
     assert_eq!(
         lock.artifact("4.7.1", Platform::AllPlatforms)
             .map(|artifact| artifact.kind),

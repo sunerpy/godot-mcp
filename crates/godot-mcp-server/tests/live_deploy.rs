@@ -226,7 +226,7 @@ fn pack_format_of(build: &str) -> u64 {
     match build {
         "4.4.1" => 2,
         "4.5.1" | "4.6.1" => 3,
-        "4.7.1" => 4,
+        "4.7.1" | "4.7.2" => 4,
         other => panic!("no pack format of Godot {other} has been measured"),
     }
 }

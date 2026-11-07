@@ -247,9 +247,35 @@
     "source_tree": "2222222222222222222222222222222222222222"
   },
   {
-    "command": "RUSTUP_TOOLCHAIN=1.96.0 make godot-test GODOT_ARTIFACT_URL=https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip GODOT_ARTIFACT_SHA256=c7ff14fd28472c8d4f193043de30278dcf7e5241a1dcf7566b02e27addaa33ba GODOT_DISPLAY_REQUIRED=1",
+    "command": "RUSTUP_TOOLCHAIN=1.96.0 make godot-test GODOT_ARTIFACT_URL=https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip GODOT_ARTIFACT_SHA256=cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4 GODOT_ARTIFACT_NAME=Godot_v4.7.2-stable_linux.x86_64.zip",
     "exit_code": 0,
-    "name": "gpu-display-editor-4.7.1",
+    "name": "godot-matrix-linux-editor-4.7.2",
+    "observation": "executed",
+    "runner_identity": {
+      "arch": "x86_64",
+      "os": "Linux",
+      "os_version": "6.11.0-fixture"
+    },
+    "source_commit": "1111111111111111111111111111111111111111",
+    "source_tree": "2222222222222222222222222222222222222222"
+  },
+  {
+    "command": "RUSTUP_TOOLCHAIN=1.96.0 make godot-test GODOT_ARTIFACT_URL=https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz GODOT_ARTIFACT_SHA256=f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011 GODOT_ARTIFACT_NAME=Godot_v4.7.2-stable_export_templates.tpz",
+    "exit_code": 0,
+    "name": "godot-matrix-export-templates-4.7.2",
+    "observation": "executed",
+    "runner_identity": {
+      "arch": "x86_64",
+      "os": "Linux",
+      "os_version": "6.11.0-fixture"
+    },
+    "source_commit": "1111111111111111111111111111111111111111",
+    "source_tree": "2222222222222222222222222222222222222222"
+  },
+  {
+    "command": "RUSTUP_TOOLCHAIN=1.96.0 make godot-test GODOT_ARTIFACT_URL=https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip GODOT_ARTIFACT_SHA256=cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4 GODOT_DISPLAY_REQUIRED=1",
+    "exit_code": 0,
+    "name": "gpu-display-editor-4.7.2",
     "observation": "executed",
     "runner_identity": {
       "arch": "x86_64",
@@ -275,9 +301,9 @@
   },
   {
     "archive_sha256": "397589cab139460d4567623f3efdf7a315752703bc70267a6b91d16a3a4c5cae",
-    "command": "RUSTUP_TOOLCHAIN=1.96.0 ./scripts/packaged-smoke.sh --archive godot-mcp-0.1.0-x86_64-unknown-linux-musl.tar.gz --godot-url https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip --godot-sha256 c7ff14fd28472c8d4f193043de30278dcf7e5241a1dcf7566b02e27addaa33ba",
+    "command": "RUSTUP_TOOLCHAIN=1.96.0 ./scripts/packaged-smoke.sh --archive godot-mcp-0.1.0-x86_64-unknown-linux-musl.tar.gz --godot-url https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip --godot-sha256 cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4",
     "exit_code": 0,
-    "name": "packaged-smoke-linux-x86_64-4.7.1",
+    "name": "packaged-smoke-linux-x86_64-4.7.2",
     "observation": "executed",
     "runner_identity": {
       "arch": "x86_64",
@@ -289,9 +315,9 @@
   },
   {
     "archive_sha256": "896ad10c5dd5f30fb4fbf3c9d67ccd3bb66f5f0f1e530a75dc47054274e5a3d8",
-    "command": "RUSTUP_TOOLCHAIN=1.96.0 ./scripts/packaged-smoke.sh --archive godot-mcp-0.1.0-aarch64-apple-darwin.tar.gz --godot-url https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_macos.universal.zip --godot-sha256 897cb7f9799796c717ae75f31446aed883dc92b1d6c3b33d893cc7843fff2fa9",
+    "command": "RUSTUP_TOOLCHAIN=1.96.0 ./scripts/packaged-smoke.sh --archive godot-mcp-0.1.0-aarch64-apple-darwin.tar.gz --godot-url https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip --godot-sha256 c58a24e31d720be9d62f60cb5627c4e695fb72f21b0cfe1bc9ccaa9a3b3ba63e",
     "exit_code": 0,
-    "name": "packaged-smoke-macos-universal-4.7.1",
+    "name": "packaged-smoke-macos-universal-4.7.2",
     "observation": "executed",
     "runner_identity": {
       "arch": "arm64",
@@ -303,9 +329,9 @@
   },
   {
     "archive_sha256": "ed68f4e041bdd9edc152db5bd81f51cd42a7d8275f1036601922a3c9177e1098",
-    "command": "RUSTUP_TOOLCHAIN=1.96.0 ./scripts/packaged-smoke.sh --archive godot-mcp-0.1.0-x86_64-pc-windows-msvc.zip --godot-url https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_win64.exe.zip --godot-sha256 c7a289051eaefb460b0106b60e9cd5bee0ef55fd102dcb2bed1eb356cf3d90a1",
+    "command": "RUSTUP_TOOLCHAIN=1.96.0 ./scripts/packaged-smoke.sh --archive godot-mcp-0.1.0-x86_64-pc-windows-msvc.zip --godot-url https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip --godot-sha256 731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953",
     "exit_code": 0,
-    "name": "packaged-smoke-windows-x86_64-4.7.1",
+    "name": "packaged-smoke-windows-x86_64-4.7.2",
     "observation": "executed",
     "runner_identity": {
       "arch": "x86_64",
