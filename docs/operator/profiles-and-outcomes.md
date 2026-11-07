@@ -53,7 +53,7 @@ How a run ends depends on where it runs:
 | --- | --- | --- | --- |
 | Its deadline passes | the engine is ended; `timeout`, with the files changed until then | the server stops waiting; `uncertain`, with the files changed so far | the server stops waiting; `uncertain`, with the files changed so far |
 | What ends the code | the deadline or a cancellation | only closing the editor | stopping the session |
-| Afterwards | nothing is blocked | every change is refused until an operator resolves the transaction ([Recovery](recovery.md)) | nothing is blocked |
+| Afterwards | nothing is blocked | every change is refused until the editor's answer settles the transaction or an operator resolves it ([Recovery](recovery.md#late-editor-answers)) | nothing is blocked |
 | Errors inside `run()` | always seen | seen on Godot 4.5.1 and later | seen on Godot 4.5.1 and later |
 
 `script.run` in the project context is refused while an editor is connected; use

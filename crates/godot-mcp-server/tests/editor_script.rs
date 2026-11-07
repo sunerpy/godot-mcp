@@ -250,3 +250,74 @@ fn a_run_the_editor_does_not_answer_in_time_is_uncertain_and_blocks_writes() {
     let _ = session.finish();
     let _ = plugin.join();
 }
+
+/// Wait until the journal holds no quarantined transaction.
+fn writes_reopen(session: &mut StdioSession, next_id: &mut u64) {
+    let started = Instant::now();
+    loop {
+        *next_id += 1;
+        let health = ok(&session.call_tool(*next_id, "health.get", json!({})));
+        if health["journal"]["quarantined"]["total"] == json!(0) {
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the late answer never settled the run: {health}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn a_run_the_editor_answers_after_the_server_stopped_waiting_settles_and_reopens_writes() {
+    let tree = ProjectTree::new("editor-script-answered-late");
+    let mut session = server(&tree, true);
+    // The run ends four and a half seconds in: past its one-second deadline and
+    // the bridge's grace, while the session is still open.
+    let plugin = running_plugin(
+        &tree,
+        FakeAnswer::PayloadAfter {
+            delay: Duration::from_millis(4500),
+            payload: json!({
+                "stage": "done",
+                "ran": true,
+                "literal": "3",
+                "log_capture": true,
+                "log": [],
+                "log_skipped": 0,
+                "log_truncated": false,
+                "action": "godot-mcp: editor.script.run"
+            }),
+        },
+    );
+    let mut id = 1;
+    connected(&mut session, &mut id);
+    let arguments =
+        json!({ "source": SOURCE, "deadline_ms": 1000, "idempotencyId": "answered-late" });
+    id += 1;
+    let late = session.call_tool(id, "editor.script.run", arguments.clone());
+    assert_eq!(error_code(&late), json!("uncertain"), "{late}");
+
+    // The editor's answer, once the run ends, is the receipt the quarantine
+    // lacked.
+    writes_reopen(&mut session, &mut id);
+    id += 1;
+    ok(&session.call_tool(
+        id,
+        "file.create",
+        json!({ "path": "after.txt", "content": "x\n", "idempotencyId": "after-answered-late" }),
+    ));
+    assert!(tree.root.join("after.txt").exists());
+
+    // The same request answers what became of it, without running again.
+    id += 1;
+    let replay = ok(&session.call_tool(id, "editor.script.run", arguments));
+    assert_eq!(replay["replayed"], true, "{replay}");
+    assert_eq!(
+        sent(&plugin).len(),
+        1,
+        "a replay never runs the source again"
+    );
+    let _ = session.finish();
+    let _ = plugin.join();
+}

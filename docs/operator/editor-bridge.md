@@ -696,11 +696,15 @@ checks before it compiles anything.
 - **A deadline ends the wait, not the code.** The server waits `deadline_ms` (60 s by default,
   600 s at most) and a further two seconds. A run not answered by then is `uncertain`; the
   editor may still be running it, and since it may still save files the transaction covers the
-  whole project: every change is refused until an operator resolves it, as after an
-  unanswered [rescan](#rescanning-the-project). Only closing the editor ends the code.
+  whole project: every change is refused, as after an unanswered
+  [rescan](#rescanning-the-project), until the editor's answer settles it when the run ends
+  ([Late editor answers](recovery.md#late-editor-answers)) or an operator resolves it. Only
+  closing the editor ends the code.
 - **It holds the editor.** Requests run one at a time, so the editor's other requests wait
-  while a run awaits, and code that holds the main thread past the bridge's 30-second
-  liveness window ends the session.
+  while a run awaits. Code that holds the main thread past the run's deadline leaves the editor
+  silent, which can end the session
+  ([Editor bridge protocol](../protocol/bridge-protocol.md)); the run's answer then comes on the
+  next session.
 - **The panel's pause holds it back** like any other mutation; see
   [Pausing agent edits](#pausing-agent-edits).
 

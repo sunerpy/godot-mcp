@@ -688,6 +688,12 @@ impl Envelope {
         self.method.as_deref()
     }
 
+    /// The event's name, on an event.
+    #[must_use]
+    pub fn event_name(&self) -> Option<&str> {
+        self.event_name.as_deref()
+    }
+
     /// The declared operation class.
     #[must_use]
     pub const fn operation_class(&self) -> Option<OperationClass> {
@@ -1091,6 +1097,17 @@ mod tests {
             let parsed = Envelope::parse(&text).expect("parses back");
             assert_eq!(canonical_bytes(&parsed), bytes, "{:?}", envelope.kind());
             assert_eq!(parsed, envelope, "{:?}", envelope.kind());
+        }
+    }
+
+    #[test]
+    fn an_event_names_itself_and_nothing_else_does() {
+        for envelope in every_kind() {
+            let parsed =
+                Envelope::parse(&String::from_utf8(canonical_bytes(&envelope)).expect("utf8"))
+                    .expect("parses back");
+            let expected = (envelope.kind() == MessageKind::Event).then_some("editor.changed");
+            assert_eq!(parsed.event_name(), expected, "{:?}", envelope.kind());
         }
     }
 

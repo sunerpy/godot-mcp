@@ -33,6 +33,20 @@ With a transaction quarantined the gate stays closed: reads still work, writes a
 the reason, and `health.get` reports it. Godot processes a previous server left running — a game,
 an editor, an export — are ended and recorded at the same time.
 
+## When the editor answers late
+
+A change made through the editor is also quarantined when its answer does not come back in time:
+a run that outlasted its `deadline_ms`, a save during a long import. The editor still finishes
+what it started and answers, on the same connection or, when that connection ended, on the next
+one it opens, even to a restarted server. The server then ends the transaction the way the
+answer says, `committed`, or `compensated` when the change never started, and writes reopen. An
+answer that cannot say what happened leaves the quarantine in place, and so does an editor that
+closes before it answers.
+
+Keep the editor open until it answers. An add-on installed by godot-mcp 0.5.0 or earlier answers
+only on the same connection; `editor.addon.update` brings it up to date. godot-mcp 0.5.0 and
+earlier keep the change quarantined after the editor answers.
+
 ## Resolving a quarantine
 
 Resolving a quarantine is a deliberate local action, through a command on the machine itself; no

@@ -12,7 +12,7 @@ backed by a re-derived proof, and there is no bypass.
 | --- | --- |
 | `compensated` | The effect was undone from a proven pre-state. The project is as it was. |
 | `committed` | The effect is proven to have landed in its post-state. |
-| `quarantined` | Neither could be proven. Writes are blocked until an operator resolves it. |
+| `quarantined` | Neither could be proven. Writes are blocked until it is resolved: by an operator, or, for an editor change, by the editor's late answer. |
 
 A fourth outcome is not representable. In particular there is no "assume it worked"
 and no "probably fine" — an unprovable state becomes quarantine, which is a
@@ -68,7 +68,9 @@ godot-mcp serve: write gate open
 
 If a transaction could not be resolved, the gate is closed instead and the reason is
 printed. Read requests still work; writes are refused until the quarantine is
-resolved. A closed gate is not a transient condition that clears itself.
+resolved. A closed gate is not a transient condition that clears itself: only proof
+opens it, an operator's repair or, for an editor change, the answer the editor gives
+later (see [Late editor answers](#late-editor-answers)).
 
 ## Survivors from a previous run
 
@@ -147,7 +149,8 @@ other edit. With the `godot_mcp` editor add-on connected, a `scene.batch.apply` 
 open in the editor is one undo action there, and `editor.undo` / `editor.redo` move through
 that history; see [Editor bridge](editor-bridge.md). An editor change whose answer was lost
 is unresolved: it is never resent, and one that may have saved a file blocks writes until it
-is resolved, like any other quarantined transaction.
+is resolved, like any other quarantined transaction, by the editor's late answer or by an
+operator.
 
 Some editor effects may write files nobody can list in advance: `editor.scene.save` and
 `editor.play.start` save the open scenes with whatever external resources they changed,
@@ -155,12 +158,39 @@ Some editor effects may write files nobody can list in advance: `editor.scene.sa
 `project.settings.patch` carried out by the editor may switch a plugin, whose own code then
 runs. Each of these transactions records the files it names, each with its precondition,
 and one more entry, `*`, that stands for the whole project. A lost answer quarantines it
-like any unresolved effect that touched files, so writes stay blocked until an operator
-resolves it, and a committed one is followed by a full rescan of the workspace.
+like any unresolved effect that touched files, so writes stay blocked until the editor's
+late answer settles it or an operator resolves it, and a committed one is followed by a full
+rescan of the workspace.
 
 Nothing in the shipped planes silently substitutes for it. A durable write on the
 project plane is not undoable through the editor's history — its recovery story is the
 three-state contract above, which is why that contract is strict.
+
+## Late editor answers
+
+The server stops waiting for an editor change at its deadline, two seconds later, or when
+the editor's session ends, but the editor goes on with a change it has started: GDScript
+cannot be stopped part way. When the editor finishes, it answers anyway, on the same session,
+or, when that session ended meanwhile, in a report to the next session it opens, which may
+be a later server's ([Editor bridge protocol](../protocol/bridge-protocol.md#late-mutation-answers)).
+That answer is the bound receipt the quarantined transaction lacked, and it settles the
+transaction:
+
+| The editor's late answer | The transaction |
+| --- | --- |
+| `committed` | ends `committed`, with the answer as its receipt, and the outcome the answer reports: success, or the error the change ended with |
+| `not_started` | ends `compensated`, with the editor's reason |
+| `unresolved` | stays `quarantined`; the answer is recorded in the audit log |
+
+An answer settles only the quarantined live-editor transaction whose transaction ID and
+idempotency ID it names, and the audit log records it before the transaction changes. Writes
+reopen as soon as no transaction is quarantined. A retry of the same request then answers
+the settled outcome from the journal, and the editor is never asked to run it again. An
+answer that arrives while the server is still writing the transaction's unresolved outcome
+is held and applied as soon as that outcome is written.
+
+An editor that exits before it answers sends nothing, so its change stays quarantined until
+an operator resolves it.
 
 ## Operator repair
 

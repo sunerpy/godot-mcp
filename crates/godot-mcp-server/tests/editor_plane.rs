@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use godot_mcp_server::test_support::fake_editor_plugin::{
-    FakeAnswer, FakeEditorPlugin, FakePluginScript,
+    FakeAnswer, FakeEditorPlugin, FakePluginScript, SeenRequest,
 };
 use serde_json::{Value, json};
 use support::{ProjectTree, Spawn, StdioSession, error_code, sha256_hex};
@@ -217,6 +217,162 @@ fn a_lost_editor_batch_is_uncertain_blocks_writes_and_is_never_resent() {
     assert_eq!(
         std::fs::read_to_string(tree.root.join("scenes/main.tscn")).expect("scene"),
         SCENE
+    );
+    let _ = session.finish();
+    second.join().expect("the second plugin ended");
+}
+
+fn quarantined(session: &mut StdioSession, next_id: &mut u64) -> Value {
+    *next_id += 1;
+    ok(&session.call_tool(*next_id, "health.get", json!({})))["journal"]["quarantined"]["total"]
+        .clone()
+}
+
+/// An editor whose batch request the connection lost, and the request it lost.
+fn lose_a_batch(
+    tree: &ProjectTree,
+    session: &mut StdioSession,
+    next_id: &mut u64,
+    idempotency_id: &str,
+) -> (Value, SeenRequest) {
+    let first = FakeEditorPlugin::spawn(
+        &rendezvous(tree),
+        FakePluginScript::implementing(&["editor.state", "editor.scene.batch"])
+            .answering(
+                "editor.state",
+                FakeAnswer::Payload(editor_state_with_open_scene()),
+            )
+            .answering("editor.scene.batch", FakeAnswer::Disconnect),
+    );
+    wait_connected(session, next_id);
+    let arguments = json!({
+        "path": "scenes/main.tscn",
+        "expectedSha256": sha256_hex(SCENE.as_bytes()),
+        "operations": [{ "op": "add_node", "parent": ".", "name": "Lost", "type": "Node" }],
+        "idempotencyId": idempotency_id
+    });
+    *next_id += 1;
+    let lost = session.call_tool(*next_id, "scene.batch.apply", arguments.clone());
+    assert_eq!(error_code(&lost), json!("uncertain"), "{lost}");
+    let request = first
+        .seen()
+        .into_iter()
+        .find(|request| request.method == "editor.scene.batch")
+        .expect("the editor received the batch");
+    first
+        .join()
+        .expect("the first plugin dropped its connection");
+    (arguments, request)
+}
+
+/// The editor, reconnecting, reports what became of `request`.
+fn reconnect_reporting(tree: &ProjectTree, report: Value) -> FakeEditorPlugin {
+    FakeEditorPlugin::spawn(
+        &rendezvous(tree),
+        FakePluginScript::implementing(&["editor.state", "editor.scene.batch"])
+            .answering(
+                "editor.state",
+                FakeAnswer::Payload(editor_state_with_open_scene()),
+            )
+            .reporting_late(report),
+    )
+}
+
+fn committed_report() -> Value {
+    json!({
+        "mutation_status": "committed",
+        "ok": true,
+        "action": "godot-mcp: scene.batch.apply",
+        "digest": "live-digest"
+    })
+}
+
+#[test]
+fn a_lost_editor_batch_the_reconnecting_editor_reports_settles_and_reopens_writes() {
+    let tree = ProjectTree::new("m4-editor-lost-reported");
+    tree.write("scenes/main.tscn", SCENE);
+    let mut session = open(&tree);
+    let mut id = 1;
+    let (arguments, request) = lose_a_batch(&tree, &mut session, &mut id, "editor-reported-1");
+    assert_eq!(quarantined(&mut session, &mut id), json!(1));
+
+    let second = reconnect_reporting(&tree, request.late_report(committed_report()));
+    // The report precedes every answer on the new session, so the status
+    // read that sees the editor connected is answered after it.
+    wait_connected(&mut session, &mut id);
+    assert_eq!(quarantined(&mut session, &mut id), json!(0));
+    id += 1;
+    ok(&session.call_tool(
+        id,
+        "file.create",
+        json!({ "path": "notes/after.txt", "content": "x\n", "idempotencyId": "after-reported" }),
+    ));
+    id += 1;
+    let replay = ok(&session.call_tool(id, "scene.batch.apply", arguments));
+    assert_eq!(replay["replayed"], json!(true), "{replay}");
+    assert_eq!(
+        methods(&second, "editor.scene.batch"),
+        0,
+        "a settled editor change is never sent again"
+    );
+    let _ = session.finish();
+    second.join().expect("the second plugin ended");
+}
+
+#[test]
+fn a_batch_lost_before_a_restart_settles_when_the_editor_reports_it_to_the_next_server() {
+    let tree = ProjectTree::new("m4-editor-lost-restart");
+    tree.write("scenes/main.tscn", SCENE);
+    let mut session = open(&tree);
+    let mut id = 1;
+    let (arguments, request) = lose_a_batch(&tree, &mut session, &mut id, "editor-restart-1");
+    let _ = session.finish();
+
+    // The next server holds the quarantine its predecessor left.
+    let mut session = open(&tree);
+    let mut id = 1;
+    assert_eq!(quarantined(&mut session, &mut id), json!(1));
+    let second = reconnect_reporting(&tree, request.late_report(committed_report()));
+    wait_connected(&mut session, &mut id);
+    assert_eq!(quarantined(&mut session, &mut id), json!(0));
+    id += 1;
+    let replay = ok(&session.call_tool(id, "scene.batch.apply", arguments));
+    assert_eq!(replay["replayed"], json!(true), "{replay}");
+    let _ = session.finish();
+    second.join().expect("the second plugin ended");
+}
+
+#[test]
+fn a_reported_answer_for_another_request_leaves_writes_blocked() {
+    let tree = ProjectTree::new("m4-editor-lost-misreported");
+    tree.write("scenes/main.tscn", SCENE);
+    let mut session = open(&tree);
+    let mut id = 1;
+    let (_, request) = lose_a_batch(&tree, &mut session, &mut id, "editor-misreported-1");
+    let mut other = request.clone();
+    other.idempotency_id = Some("another-request".to_owned());
+    let unresolved = json!({ "mutation_status": "unresolved", "ok": false, "error_kind": "uncertain", "message": "unknown" });
+    let second = FakeEditorPlugin::spawn(
+        &rendezvous(&tree),
+        FakePluginScript::implementing(&["editor.state", "editor.scene.batch"])
+            .answering(
+                "editor.state",
+                FakeAnswer::Payload(editor_state_with_open_scene()),
+            )
+            .reporting_late(other.late_report(committed_report()))
+            .reporting_late(request.late_report(unresolved)),
+    );
+    wait_connected(&mut session, &mut id);
+    assert_eq!(quarantined(&mut session, &mut id), json!(1));
+    id += 1;
+    let blocked = session.call_tool(
+        id,
+        "file.create",
+        json!({ "path": "notes/after.txt", "content": "x\n", "idempotencyId": "after-misreported" }),
+    );
+    assert!(
+        blocked.get("error").is_some() || blocked["result"]["isError"] == json!(true),
+        "an answer that settles nothing leaves every write blocked: {blocked}"
     );
     let _ = session.finish();
     second.join().expect("the second plugin ended");

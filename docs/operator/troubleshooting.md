@@ -158,9 +158,16 @@ abandoned mid-write.
 ### `godot-mcp serve: write gate closed: ...`
 
 A transaction could not be reconciled to a proven state, so it is quarantined and
-writes are refused. Reads still work. This does not clear itself.
+writes are refused. Reads still work.
 
-Diagnose it, then resolve it deliberately:
+When the quarantined transaction is an editor change the server stopped waiting for, such as
+an `editor.script.run` that outlasted its `deadline_ms`, leave the editor running: once the
+change ends, the editor answers, and its answer settles the transaction and reopens writes,
+on this server or on the next one for the project. `health.get` then counts no quarantined
+transaction in its `journal` section. See
+[Late editor answers](recovery.md#late-editor-answers).
+
+Any other quarantine does not clear itself. Diagnose it, then resolve it deliberately:
 
 ```sh
 godot-mcp transaction repair \

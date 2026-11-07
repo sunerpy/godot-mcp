@@ -248,16 +248,16 @@ not seen. Nothing it changes is in the editor's undo history.
 
 Godot cannot stop a script part way through. The server waits `deadline_ms` and two seconds more;
 a run that has not answered by then is `uncertain`, the editor may still be running it, and the
-project's changes stay blocked until the transaction is resolved
-([Recovery](../operate/recovery.md)). Only closing the editor ends the code.
+project's changes stay blocked until the editor answers when the run ends, or the transaction is
+resolved ([Recovery](../operate/recovery.md)). Only closing the editor ends the code.
 
 ## When an answer is lost
 
 Every editor change ends `committed`, `not_started` or `unresolved`. An unresolved change — the
 request reached the editor and no answer came back, or a save it made could not be proven —
 answers `uncertain` and is never sent again, not on retry and not after the editor reconnects.
-One that may have saved a file blocks further writes until it is resolved
-([Recovery](../operate/recovery.md)).
+One that may have saved a file blocks further writes until the editor's late answer settles it
+or it is resolved ([Recovery](../operate/recovery.md)).
 
 ## What it does not do
 
