@@ -18,10 +18,12 @@ tooling.lock.json
 *.toml
 
 # Byte-pinned trees: bridge goldens, fixtures, digest-pinned schemas, QA task records, the
-# gdext reference, and the documentation that docs-check and the website sync read
+# gdext reference, the documentation that docs-check and the website sync read, and the Agent
+# Skills that the binary embeds and docs-check holds to their measured budgets
 crates/
 docs/
 schemas/
+skills/
 qa/
 tests/
 ci/

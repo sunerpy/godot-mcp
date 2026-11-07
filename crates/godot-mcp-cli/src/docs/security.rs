@@ -7,9 +7,9 @@
 //! source and every test fixture necessarily contain the terms being forbidden,
 //! and none of them is documentation, so none of them needs an opt-out.
 //!
-//! ## Two narrow exemptions, both verified rather than trusted
+//! ## Three narrow exemptions, all verified rather than trusted
 //!
-//! A blanket "ignore this line" marker would make the lint decorative, so neither
+//! A blanket "ignore this line" marker would make the lint decorative, so no
 //! exemption is a free-text opt-out:
 //!
 //! * [`QUOTED_TERM_MARKER`] permits a forbidden term only on a line of
@@ -21,8 +21,16 @@
 //! * [`ABSENCE_CLAIM_MARKER`] permits naming a forbidden operator affordance only
 //!   on a line that also asserts, in one of a fixed set of absence phrasings, that
 //!   the affordance does not exist. It cannot be used to document usage.
+//! * [`FORCE_FLAG_COMMANDS`] are the two commands that do accept `--force`:
+//!   `godot-mcp skill install` and `godot-mcp skill update`, which overwrite an
+//!   Agent Skill a user changed in an agent's skill directory, never a project
+//!   file or a journaled transaction. A `--force` is permitted only inside a code
+//!   span, or on a code-block line, that starts with one of them, and only up to
+//!   the first shell separator. `tests/skill_install.rs` asks every command of
+//!   the shipped surface for `--force` and proves these two are the only ones
+//!   that accept it.
 //!
-//! [`self_check`] proves both exemptions still reject the abuse they exist to
+//! [`self_check`] proves every exemption still rejects the abuse it exists to
 //! prevent, and the checker runs it on every invocation, so an over-broad rewrite
 //! of the exemption logic fails in production and not only under `cargo test`.
 
@@ -53,6 +61,15 @@ pub const ABSENCE_PHRASES: &[&str] = &[
     "is refused",
     "never accepts",
 ];
+
+/// The commands that accept `--force`, spelled as a reader runs them.
+pub const FORCE_FLAG_COMMANDS: &[&str] = &["godot-mcp skill install", "godot-mcp skill update"];
+
+/// The flag [`FORCE_FLAG_COMMANDS`] accept.
+const FORCE_FLAG: &str = "--force";
+
+/// Where a shell command line ends and another begins.
+const SHELL_SEPARATORS: &[&str] = &["&&", "||", ";", "|"];
 
 /// Terms that must never describe this project's isolation.
 pub const CONTAINMENT_TERMS: &[&str] = &["sandbox", "sandboxed", "sandboxing", "sandboxes"];
@@ -176,6 +193,52 @@ fn is_absence_claim(line_lower: &str) -> bool {
         && ABSENCE_PHRASES
             .iter()
             .any(|phrase| line_lower.contains(phrase))
+}
+
+/// Blank every `--force` in `command` when it starts with one of
+/// [`FORCE_FLAG_COMMANDS`], up to the first shell separator.
+fn blank_accepted_force(command: &mut [u8]) {
+    let text = String::from_utf8_lossy(command).into_owned();
+    let start = text.len() - text.trim_start().len();
+    if !FORCE_FLAG_COMMANDS
+        .iter()
+        .any(|accepting| text[start..].starts_with(accepting))
+    {
+        return;
+    }
+    let end = SHELL_SEPARATORS
+        .iter()
+        .filter_map(|separator| text.find(separator))
+        .min()
+        .unwrap_or(text.len());
+    let mut from = 0;
+    while let Some(found) = text[from..end].find(FORCE_FLAG) {
+        let at = from + found;
+        command[at..at + FORCE_FLAG.len()].fill(b' ');
+        from = at + FORCE_FLAG.len();
+    }
+}
+
+/// `line_lower` with every `--force` a command accepts blanked, so the
+/// forbidden-affordance scan sees only the other mentions: on a code-block
+/// line the line itself is the command, elsewhere each inline code span is.
+fn without_accepted_force(line_lower: &str, in_fence: bool) -> String {
+    let mut bytes = line_lower.as_bytes().to_vec();
+    if in_fence {
+        blank_accepted_force(&mut bytes);
+    } else {
+        let mut cursor = 0;
+        while let Some(open) = line_lower[cursor..].find('`') {
+            let span_start = cursor + open + 1;
+            let Some(length) = line_lower[span_start..].find('`') else {
+                break;
+            };
+            blank_accepted_force(&mut bytes[span_start..span_start + length]);
+            cursor = span_start + length + 1;
+        }
+    }
+    // Only ASCII spaces replaced ASCII bytes, so the text is still UTF-8.
+    String::from_utf8(bytes).unwrap_or_else(|_| line_lower.to_owned())
 }
 
 fn is_verified_posture_quotation(file: &str, line: &str) -> bool {
@@ -508,7 +571,7 @@ pub fn check_page(page: &DocFile) -> Vec<Finding> {
                 &mut findings,
                 file,
                 line_number,
-                &lower,
+                &without_accepted_force(&lower, scanned.in_fence[index]),
                 FORBIDDEN_AFFORDANCES,
                 "forbidden-affordance",
                 "no force-overwrite or quarantine-clear bypass exists, so naming one outside \
@@ -630,6 +693,39 @@ pub fn self_check() -> Vec<Finding> {
     ) {
         fail("the absence-claim exemption rejected a genuine absence statement");
     }
+    let still_forbidden =
+        |line: &str, in_fence: bool| without_accepted_force(line, in_fence).contains(FORCE_FLAG);
+    for (line, in_fence) in [
+        (
+            "run `godot-mcp transaction repair --force` to fix it",
+            false,
+        ),
+        ("`--force` overwrites it", false),
+        ("godot-mcp skill install --force", false),
+        ("`godot-mcp skill install`, then --force", false),
+        (
+            "`godot-mcp skill install --force; godot-mcp transaction repair --force`",
+            false,
+        ),
+        ("godot-mcp assets install --force", true),
+        ("godot-mcp skill update && godot-mcp serve --force", true),
+    ] {
+        if !still_forbidden(line, in_fence) {
+            fail(&format!(
+                "the --force exemption accepted a flag no accepting command carries: {line:?}"
+            ));
+        }
+    }
+    for (line, in_fence) in [
+        ("`godot-mcp skill install --force` overwrites it", false),
+        ("godot-mcp skill update --force --target claude", true),
+    ] {
+        if still_forbidden(line, in_fence) {
+            fail(&format!(
+                "the --force exemption rejected a command that accepts the flag: {line:?}"
+            ));
+        }
+    }
     findings
 }
 
@@ -682,6 +778,27 @@ mod tests {
                 .iter()
                 .any(|rule| rule == "overstated-containment")
         );
+    }
+
+    #[test]
+    fn force_is_named_only_with_a_command_that_accepts_it() {
+        for accepted in [
+            "Run `godot-mcp skill install --force` to overwrite it.\n",
+            "```sh\ngodot-mcp skill update --force --target claude\n```\n",
+        ] {
+            assert!(!triggers(accepted, "forbidden-affordance"), "{accepted}");
+        }
+        for refused in [
+            "Run `godot-mcp transaction repair --force` to fix it.\n",
+            "`--force` overwrites it.\n",
+            "Run `godot-mcp skill install --force --skip-proof`.\n",
+            "`godot-mcp skill install --force; godot-mcp transaction repair --force`\n",
+            "```sh\ngodot-mcp assets install --force\n```\n",
+            "Run `godot-mcp skill install --force`, then force overwrite the rest.\n",
+        ] {
+            assert!(triggers(refused, "forbidden-affordance"), "{refused}");
+        }
+        assert!(self_check().is_empty(), "{:?}", self_check());
     }
 
     #[test]

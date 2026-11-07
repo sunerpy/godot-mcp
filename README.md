@@ -203,7 +203,13 @@ client wiring for HTTP and reverse proxies is in [MCP clients](docs/operator/mcp
 ## Using with an LLM
 
 Install through the [Install](#install) section, register the server with your
-client as above, then let the agent discover the rest:
+client as above, then let the agent discover the rest. To give the agent
+godot-mcp's Agent Skills too, copy them into its skill directory
+([Agent Skills](docs/operator/skills.md)):
+
+```sh
+godot-mcp skill install
+```
 
 <details>
 <summary>Agent reference</summary>

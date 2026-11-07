@@ -94,6 +94,7 @@ test to make a change pass. Tests that need a maintainer-only input (`.omo/`) ar
 | HTTP and authentication              | `http_*` and `oidc_resource_server` suites; negative cases first            | `http-*.md`, `threat-model.md`                  |
 | packaging and release                | `release_package`, `release_graph_audit`, `ci_matrix_lock`; `make dist`     | `packaging.md`                                  |
 | workflows and scripts                | `actionlint`, `shellcheck`, `ci_matrix_lock`                                | `docs/contributor/workflow.md`                  |
+| Agent Skills under `skills/`         | `docs-check` (frontmatter, budgets, tools, examples); `skill_install`       | `docs/operator/skills.md`                       |
 | documentation                        | `cargo +1.96.0 run -p godot-mcp-cli --features test-hooks --bin docs-check` | the canonical page, not a summary of it         |
 
 ## Documentation rules

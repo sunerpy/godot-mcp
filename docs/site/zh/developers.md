@@ -19,6 +19,7 @@ godot-mcp 是一个 Rust workspace；`rust-toolchain.toml` 钉住 Rust 1.96.0，
 | `crates/godot-mcp-server/` | MCP 内核、策略、日志、调度器、会话、HTTP 与诊断 |
 | `crates/godot-mcp-cli/` | `godot-mcp` 二进制、打包、发布门禁与运维修复 |
 | `schemas/` | 服务器发布的每个契约的 JSON schema |
+| `skills/` | 二进制内嵌、由 `godot-mcp skill install` 复制的 Agent Skills，每个只有一个 `SKILL.md` |
 | `tests/fixtures/godot-releases.lock.json` | 项目支持的每个 Godot 版本，以及官方下载地址和摘要 |
 | `docs/` | 参考文档；`docs/site/` 就是本站 |
 

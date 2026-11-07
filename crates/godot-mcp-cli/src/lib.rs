@@ -5,11 +5,12 @@
 //!
 //! ## What the shipped binary actually exposes
 //!
-//! `src/bin/godot-mcp.rs` defines exactly six top-level subcommands and no
-//! others: `version`, `check-config`, `serve`, `transaction`, `self-check` and
-//! `assets`. `transaction` has one subcommand, `repair`. `assets` has four:
-//! `install`, `update`, `remove` and `status`. There is no `init`, no `locate`
-//! and no `configure` subcommand.
+//! `src/bin/godot-mcp.rs` defines exactly seven top-level subcommands and no
+//! others: `version`, `check-config`, `serve`, `transaction`, `self-check`,
+//! `assets` and `skill`. `transaction` has one subcommand, `repair`. `assets`
+//! has four: `install`, `update`, `remove` and `status`. `skill` has four too:
+//! `install`, `update`, `uninstall` and `status` ([`skill`]). There is no
+//! `init`, no `locate` and no `configure` subcommand.
 //!
 //! Three distinctions are load-bearing, because each is easy to overstate:
 //!
@@ -57,4 +58,5 @@ pub mod package;
 pub mod release_gates;
 pub mod repair;
 pub mod serve_banner;
+pub mod skill;
 pub mod tooling_lock;

@@ -4,7 +4,7 @@
 //! configuration example and generated page in `docs/` still agree with the
 //! canonical owner of that fact?
 //!
-//! Nine rule families, all fail-closed:
+//! Ten rule families, all fail-closed:
 //!
 //! 1. `generated-page` — a generated page is regenerated and byte-compared.
 //! 2. `stale-name` — every back-ticked dotted lowercase token must be a canonical
@@ -19,6 +19,9 @@
 //! 7. `broken-link` — every relative Markdown link must resolve on disk.
 //! 8. `required-statement` — pages that must state an honesty-critical fact do.
 //! 9. `runnable-block` — every executable quickstart block is well-formed.
+//! 10. `skill-*` — every Agent Skill under `skills/` keeps its layout,
+//!     frontmatter, contract, budget, tool names, examples and links
+//!     ([`skills`]).
 //!
 //! The security lint and the credential scanner run alongside, and both of their
 //! self-checks run too, so a weakened scanner fails rather than reporting clean.
@@ -28,7 +31,7 @@ use std::path::Path;
 
 use super::canonical::{self, Canonical};
 use super::scan::{Scanned, inline_spans, scan};
-use super::{DocFile, Finding, generated, script, secrets, security};
+use super::{DocFile, Finding, generated, script, secrets, security, skills};
 
 /// Historical verification reports record what an earlier contract served.
 /// They may name a frozen version 0.1 tool that contract 0.2 no longer lists;
@@ -180,14 +183,14 @@ pub const REQUIRED_STATEMENTS: &[RequiredStatement] = &[
     },
 ];
 
-fn is_probably_file_name(token: &str) -> bool {
+pub(super) fn is_probably_file_name(token: &str) -> bool {
     token
         .split('.')
         .any(|segment| NON_NAME_SEGMENTS.contains(&segment))
 }
 
 /// Whether a token has the shape of a canonical dotted name.
-fn is_dotted_name_shape(token: &str) -> bool {
+pub(super) fn is_dotted_name_shape(token: &str) -> bool {
     if !token.contains('.') || token.contains('/') || token.contains('-') || token.contains(' ') {
         return false;
     }
@@ -525,6 +528,7 @@ pub fn check(workspace_root: &Path) -> Result<Vec<Finding>, String> {
         findings.extend(check_links(workspace_root, page, &scanned));
     }
     findings.extend(check_required_statements(&pages));
+    findings.extend(skills::check(workspace_root));
     let (_scripts, script_findings) = script::extract_all(&pages);
     findings.extend(script_findings);
     findings.extend(security::check(&pages));
