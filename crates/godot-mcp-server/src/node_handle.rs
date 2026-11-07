@@ -32,6 +32,12 @@ pub(crate) fn mint(scene: &str, node_path: &str, scene_sha256: &str) -> String {
     handle
 }
 
+/// The shape of a minted handle, as an unanchored pattern fragment: what
+/// [`well_formed`] accepts.
+pub(crate) fn pattern() -> String {
+    format!("{PREFIX}[0-9a-f]{{{DIGEST_HEX}}}")
+}
+
 /// Whether `value` has the shape of a minted handle.
 pub(crate) fn well_formed(value: &str) -> bool {
     value.strip_prefix(PREFIX).is_some_and(|digest| {
@@ -75,5 +81,28 @@ mod tests {
         assert!(!well_formed(&format!("nh1:{}", "A".repeat(32))));
         assert!(!well_formed(&format!("nh1:{}", "a".repeat(31))));
         assert!(well_formed(&format!("nh1:{}", "a".repeat(32))));
+    }
+
+    /// The handle pattern a schema states accepts exactly the minted shape.
+    #[test]
+    fn the_handle_pattern_accepts_exactly_the_minted_shape() {
+        let pattern = format!("^{}$", pattern());
+        for value in [
+            mint("scenes/main.tscn", "Player", SHA),
+            "Player".to_owned(),
+            "nh1:".to_owned(),
+            "nh1:xyz".to_owned(),
+            format!("nh1:{}", "A".repeat(32)),
+            format!("nh1:{}", "a".repeat(31)),
+            format!("nh1:{}", "a".repeat(33)),
+            format!("nh1:{}", "a".repeat(32)),
+            format!("nh2:{}", "a".repeat(32)),
+        ] {
+            assert_eq!(
+                crate::schema::conformance::pattern_matches(&pattern, &value),
+                well_formed(&value),
+                "{value}"
+            );
+        }
     }
 }
