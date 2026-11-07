@@ -391,27 +391,14 @@ fn named(table: &[(&str, i64)], lower: &str) -> Option<i64> {
         .map(|(_, code)| *code)
 }
 
-/// `name` as a pattern fragment that matches it in any letter case.
-fn caseless(name: &str) -> String {
-    name.chars()
-        .map(|character| {
-            if character.is_ascii_alphabetic() {
-                format!(
-                    "[{}{}]",
-                    character.to_ascii_uppercase(),
-                    character.to_ascii_lowercase()
-                )
-            } else {
-                character.to_string()
-            }
-        })
-        .collect()
-}
-
 /// A pattern matching exactly the names [`key_code`] accepts.
 fn key_name_pattern() -> String {
     let mut names = vec!["[A-Za-z0-9]".to_owned(), "[Ff](?:[1-9]|1[0-2])".to_owned()];
-    names.extend(NAMED_KEYS.iter().map(|(name, _)| caseless(name)));
+    names.extend(
+        NAMED_KEYS
+            .iter()
+            .map(|(name, _)| crate::schema::caseless(name)),
+    );
     format!("^(?:{})$", names.join("|"))
 }
 
@@ -419,7 +406,7 @@ fn key_name_pattern() -> String {
 fn mouse_button_pattern() -> String {
     let names: Vec<String> = MOUSE_BUTTONS
         .iter()
-        .map(|(name, _)| caseless(name))
+        .map(|(name, _)| crate::schema::caseless(name))
         .collect();
     format!("^(?:{})$", names.join("|"))
 }
@@ -803,13 +790,21 @@ fn only_fields(operation: &Map<String, Value>, allowed: &[&str]) -> Result<(), O
     Ok(())
 }
 
+/// Longest autoload or input action name, in characters.
+const MAX_ENTRY_NAME_CHARS: usize = 128;
+/// An autoload name, as [`identifier`] checks one.
+const IDENTIFIER_PATTERN: &str = "^[A-Za-z_][A-Za-z0-9_]*$";
+/// An input action name, as `set_input_action` checks one: no control
+/// character, quote, `=`, `:`, bracket or brace.
+const ACTION_NAME_PATTERN: &str = r#"^[^\x00-\x1F\x7F-\x9F"=\[\]{}:]*$"#;
+
 fn identifier(name: &str, what: &str) -> Result<(), OutcomeError> {
     let mut characters = name.chars();
     let valid_start = characters
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == '_');
     if !valid_start
-        || name.len() > 128
+        || name.chars().count() > MAX_ENTRY_NAME_CHARS
         || !name
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
@@ -978,7 +973,7 @@ fn apply_operation(
         "set_input_action" => {
             let name = field(operation, "name")?;
             if name.is_empty()
-                || name.len() > 128
+                || name.chars().count() > MAX_ENTRY_NAME_CHARS
                 || name
                     .chars()
                     .any(|character| character.is_control() || "\"=[]{}:".contains(character))
@@ -1343,9 +1338,24 @@ fn selected_entries(
     Ok(Some(json!({ "entries": entries, "truncated": truncated })))
 }
 
-/// The schema of one settings operation field.
-fn settings_field_schema(field: &str) -> Value {
+/// The schema of one field of settings operation `op`.
+fn settings_field_schema(op: &str, field: &str) -> Value {
     match field {
+        "name" if op == "set_autoload" => json!({
+            "type": "string",
+            "maxLength": MAX_ENTRY_NAME_CHARS,
+            "pattern": IDENTIFIER_PATTERN,
+            "description": "An identifier: letters, digits and underscores, not starting \
+                            with a digit."
+        }),
+        "name" if op == "set_input_action" => json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_ENTRY_NAME_CHARS,
+            "pattern": ACTION_NAME_PATTERN,
+            "description": "The action's name, without a control character, a quote, `=`, \
+                            `:`, a bracket or a brace."
+        }),
         "scene" | "path" | "plugin" => json!({ "type": "string", "pattern": "^res://" }),
         "singleton" => json!({ "type": "boolean" }),
         "setting" => json!({
@@ -1497,7 +1507,7 @@ fn operation_items() -> Value {
         }
         let fields: Vec<(&str, Value)> = fields
             .iter()
-            .map(|field| (*field, settings_field_schema(field)))
+            .map(|field| (*field, settings_field_schema(op, field)))
             .collect();
         variants.push(crate::schema::variant("op", op, &fields, required));
     }
@@ -2692,6 +2702,70 @@ mod tests {
             selected["entries"].as_array().expect("entries").len(),
             MAX_SELECTED_SETTINGS
         );
+    }
+
+    /// An autoload's name is an identifier of at most 128 characters, and an
+    /// input action's name 1 to 128 characters, whatever the bytes each
+    /// takes, without a control character, a quote, `=`, `:`, a bracket or a
+    /// brace, in both the schema and the check.
+    #[test]
+    fn the_names_an_operation_sets_follow_one_rule_in_the_schema_and_the_check() {
+        use crate::schema::conformance::{NameRule, name_cases};
+        let key = json!({ "type": "key", "key": "Space" });
+        let action =
+            |name: &str| json!({ "op": "set_input_action", "name": name, "events": [key] });
+        let autoload = |name: &str| json!({ "op": "set_autoload", "name": name, "path": "res://autoload/game.gd" });
+        let rule = NameRule {
+            limit: 128,
+            empty: false,
+            control: true,
+        };
+        let mut cases: Vec<(Value, bool)> = name_cases(rule, "", "")
+            .into_iter()
+            .map(|(name, expected)| (action(&name), expected))
+            .collect();
+        for (name, expected) in [
+            ("jump", true),
+            ("a b", true),
+            ("a\"b", false),
+            ("a=b", false),
+            ("a:b", false),
+            ("a[b", false),
+            ("a]b", false),
+            ("a{b", false),
+            ("a}b", false),
+        ] {
+            cases.push((action(name), expected));
+        }
+        for (name, expected) in [
+            ("Game".to_owned(), true),
+            ("_Game2".to_owned(), true),
+            ("A".repeat(128), true),
+            ("A".repeat(129), false),
+            ("2Game".to_owned(), false),
+            ("bad name".to_owned(), false),
+            ("Ga-me".to_owned(), false),
+            ("\u{540D}".to_owned(), false),
+            (String::new(), false),
+        ] {
+            cases.push((autoload(&name), expected));
+        }
+        let schema = advertised_operation_schema();
+        for (case, expected) in &cases {
+            let shown = format!("{} {:?}", case["op"], case["name"]);
+            assert_eq!(
+                crate::schema::conformance::conforms(&schema, case),
+                *expected,
+                "the schema's verdict on {shown}"
+            );
+            let mut document = Document::parse(MANIFEST_TEXT);
+            let mut requirements = Requirements { files: Vec::new() };
+            assert_eq!(
+                apply_operation(&mut document, case, &mut requirements).is_ok(),
+                *expected,
+                "the handler's verdict on {shown}"
+            );
+        }
     }
 
     /// The `project.settings.get` schema and the selection check give the

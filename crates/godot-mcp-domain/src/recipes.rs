@@ -33,8 +33,8 @@ pub const RECIPE_TOOL: &str = "scene.recipe.apply";
 /// Longest `parent` node path, in characters.
 pub const MAX_PARENT_CHARS: usize = 80;
 /// Longest node name, in characters. With [`MAX_PARENT_CHARS`] and the longest
-/// fixed child path a recipe adds, every node path stays within the 512 bytes
-/// an authoring batch accepts, whatever the characters.
+/// fixed child path a recipe adds, every node path stays within the 512
+/// characters an authoring batch accepts.
 pub const MAX_NAME_CHARS: usize = 40;
 /// Longest label text, in characters.
 const MAX_TEXT_CHARS: usize = 256;

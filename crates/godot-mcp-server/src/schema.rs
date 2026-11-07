@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use godot_mcp_domain::contracts::GodotValue;
 use serde_json::{Map, Value, json};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) mod conformance;
 
 /// One variant of a discriminated object: `discriminator` is the constant
@@ -51,6 +51,54 @@ const WRITABLE_VALUE: &str = "WritableGodotValue";
 const PLAIN_VALUE: &str = "PlainGodotValue";
 /// The `$defs` name of one argument of a batch's `call_method`.
 pub(crate) const CALL_ARGUMENT: &str = "CallArgument";
+
+/// The characters [`char::is_control`] refuses, U+0000–U+001F and
+/// U+007F–U+009F, as the body of a regular-expression class.
+pub(crate) const CONTROL: &str = r"\x00-\x1F\x7F-\x9F";
+
+/// A string without a character [`char::is_control`] refuses.
+pub(crate) const NO_CONTROL_PATTERN: &str = r"^[^\x00-\x1F\x7F-\x9F]*$";
+
+/// A property path without control characters: property names separated by
+/// `:`, none of them empty.
+pub(crate) const PROPERTY_PATH_PATTERN: &str =
+    r"^[^:\x00-\x1F\x7F-\x9F]+(?::[^:\x00-\x1F\x7F-\x9F]+)*$";
+
+/// A name a handler takes as it is: 1 to `limit` characters (Unicode scalar
+/// values, as `maxLength` counts them), none of them a control character.
+pub(crate) fn name(limit: usize) -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": limit,
+        "pattern": NO_CONTROL_PATTERN
+    })
+}
+
+/// A node path relative to the scene root, unanchored: one or more segments
+/// separated by `/`, none of them empty or `..` (so the path never starts
+/// with `/`), holding no character of the class body `excluded` either.
+pub(crate) fn relative_node_path(excluded: &str) -> String {
+    let segment = format!(r"(?!\.\.(?:/|$))[^/{excluded}]+");
+    format!("{segment}(?:/{segment})*")
+}
+
+/// `name` as a pattern fragment that matches it in any letter case.
+pub(crate) fn caseless(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphabetic() {
+                format!(
+                    "[{}{}]",
+                    character.to_ascii_uppercase(),
+                    character.to_ascii_lowercase()
+                )
+            } else {
+                character.to_string()
+            }
+        })
+        .collect()
+}
 
 /// One segment of a normalized project path: not empty, not `.` or `..`,
 /// and without a slash or a backslash.
@@ -202,6 +250,7 @@ fn generated_definitions() -> Map<String, Value> {
                                 },
                                 "properties": {
                                     "type": "object",
+                                    "propertyNames": property_name(),
                                     "additionalProperties": { "$ref": format!("#/$defs/{WRITABLE_VALUE}") },
                                     "description": "Property names mapped to tagged values."
                                 }
@@ -218,6 +267,16 @@ fn generated_definitions() -> Map<String, Value> {
         Value::Object(definitions) => definitions,
         _ => unreachable!("definitions stay an object"),
     }
+}
+
+/// Longest property name a batch's property map takes, in characters.
+pub(crate) const MAX_PROPERTY_NAME_CHARS: usize = 512;
+
+/// A key of a batch's property map: 1 to [`MAX_PROPERTY_NAME_CHARS`]
+/// characters. The handler takes a control character in a property name, so
+/// the schema does too.
+pub(crate) fn property_name() -> Value {
+    json!({ "type": "string", "minLength": 1, "maxLength": MAX_PROPERTY_NAME_CHARS })
 }
 
 /// Point the generated schema's references to its root at `definition`.
@@ -262,6 +321,67 @@ fn retarget(schema: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`CONTROL`] is exactly what [`char::is_control`] refuses, and the
+    /// patterns built on it read it that way.
+    #[test]
+    fn the_control_class_is_what_is_control_refuses() {
+        for character in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            let code = u32::from(character);
+            assert_eq!(
+                code <= 0x1F || (0x7F..=0x9F).contains(&code),
+                character.is_control(),
+                "U+{code:04X}"
+            );
+        }
+        assert_eq!(NO_CONTROL_PATTERN, format!("^[^{CONTROL}]*$"));
+        assert_eq!(
+            PROPERTY_PATH_PATTERN,
+            format!("^[^:{CONTROL}]+(?::[^:{CONTROL}]+)*$")
+        );
+        for character in (0..=0x2FF).filter_map(char::from_u32) {
+            let text = format!("a{character}b");
+            assert_eq!(
+                conformance::pattern_matches(NO_CONTROL_PATTERN, &text),
+                !character.is_control(),
+                "U+{:04X}",
+                u32::from(character)
+            );
+        }
+    }
+
+    /// A relative node path is one or more segments, none empty or `..`.
+    #[test]
+    fn a_relative_node_path_has_no_empty_or_parent_segment() {
+        let pattern = format!("^{}$", relative_node_path(CONTROL));
+        for (path, expected) in [
+            (".", true),
+            ("Player", true),
+            ("Player/Sprite", true),
+            ("..a", true),
+            ("a/..b", true),
+            ("a/b..", true),
+            ("名/\u{1F600}", true),
+            ("", false),
+            ("/root", false),
+            ("a/", false),
+            ("a//b", false),
+            ("..", false),
+            ("../a", false),
+            ("a/..", false),
+            ("a/../b", false),
+            ("a\u{1F}b", false),
+        ] {
+            assert_eq!(
+                conformance::pattern_matches(&pattern, path),
+                expected,
+                "{path:?}"
+            );
+        }
+        let open = format!("^{}$", relative_node_path(""));
+        assert!(conformance::pattern_matches(&open, "a\u{1F}b"));
+        assert!(!conformance::pattern_matches(&open, "a//b"));
+    }
 
     #[test]
     fn a_variant_declares_exactly_its_fields_and_its_discriminator() {
