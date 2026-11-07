@@ -204,6 +204,44 @@ fn a_read_only_profile_cannot_create_a_project() {
     );
 }
 
+/// A server that starts without a project is told, in its `initialize` answer,
+/// how to bind one, and only a write-capable profile is told about
+/// `project.create`.
+#[test]
+fn a_bootstrap_server_tells_the_client_how_to_bind_a_project() {
+    for (label, profile, domain) in [
+        (
+            "m2-instructions-core",
+            "core",
+            godot_mcp_domain::CapabilityProfile::Core,
+        ),
+        (
+            "m2-instructions-full",
+            "full",
+            godot_mcp_domain::CapabilityProfile::Full,
+        ),
+    ] {
+        let workspace = workspace(label);
+        let (session, initialized) =
+            StdioSession::handshake(StdioSession::spawn_workspace(&workspace.root, profile));
+        let instructions = initialized["result"]["instructions"]
+            .as_str()
+            .unwrap_or_else(|| panic!("initialize carries instructions: {initialized}"));
+        assert_eq!(
+            instructions,
+            godot_mcp_server::instructions::server_instructions(domain, true),
+            "{profile}"
+        );
+        assert!(instructions.contains("`project.bind`"), "{instructions}");
+        assert_eq!(
+            instructions.contains("`project.create`"),
+            profile == "full",
+            "{instructions}"
+        );
+        session.kill();
+    }
+}
+
 /// An idempotency id names exactly one `project.create` request: its retry
 /// replays the answer, the same id with other arguments is refused, and
 /// another id never claims the project as its own replay.
