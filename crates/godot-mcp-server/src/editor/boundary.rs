@@ -32,7 +32,7 @@ use crate::effect::boundary::{
     BoundaryUnavailable, EditorEffectBoundary, EditorEffectOutcome, EditorMutation, EffectTicket,
 };
 use crate::effect::gateway::LateEditorAnswer;
-use crate::journal::TypedProof;
+use crate::journal::{EditorProcess, TypedProof};
 use crate::router::{HeldPath, LiveEditorView};
 
 /// How long the live-editor view waits for the editor to say what it holds.
@@ -83,6 +83,7 @@ fn unbound_proof() -> TypedProof {
         receipt_transaction_id: None,
         receipt_action_id: None,
         live_state_probe: None,
+        editor_process: None,
     }
 }
 
@@ -104,6 +105,7 @@ pub(crate) fn receipt(ticket: &EffectTicket, action: &str, payload: &Value) -> T
                 .and_then(Value::as_str)
                 .map_or_else(|| "answered".to_owned(), str::to_owned),
         ),
+        editor_process: None,
     }
 }
 
@@ -133,14 +135,14 @@ impl EditorEffectBoundary for BridgeEditorBoundary {
             return self.capture(ticket, mutation);
         }
         let payload: Value = serde_json::from_str(&mutation.payload).unwrap_or_else(|_| json!({}));
-        let answer = self.bridge.call(
+        let (answer, editor_process) = self.bridge.call_with_process(
             &mutation.action,
             OperationClass::Mutation,
             &payload,
             &mutation.idempotency_id,
             mutation.timeout,
         );
-        bridge_outcome(ticket, &mutation.action, answer, "editor")
+        bridge_outcome(ticket, &mutation.action, answer, "editor", editor_process)
     }
 }
 
@@ -363,11 +365,18 @@ fn read(
 /// answer carries its mutation status, a request that reached the peer and
 /// was never answered is `unresolved`, and one that never reached it is
 /// [`BoundaryUnavailable`].
+///
+/// `editor_process` is the editor process the request was sent to, as its
+/// bridge session proved it. Only the proof of a request that reached the
+/// peer and was never answered keeps it: once that process has ended, nothing
+/// can still write for the request, which is what lets an operator settle the
+/// transaction (`transaction repair --operation acknowledge-safe-state`).
 pub(crate) fn bridge_outcome(
     ticket: &EffectTicket,
     action: &str,
     answer: Result<BridgeAnswer, BridgeFailure>,
     boundary: &'static str,
+    editor_process: Option<EditorProcess>,
 ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
     match answer {
         Ok(BridgeAnswer::Result { status, payload }) => Ok(EditorEffectOutcome {
@@ -408,7 +417,13 @@ pub(crate) fn bridge_outcome(
                     failure.message()
                 },
             )),
-            proof: unbound_proof(),
+            proof: TypedProof::EditorRuntime {
+                bridge_reachable: false,
+                receipt_transaction_id: None,
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process,
+            },
         }),
         Err(_) => Err(BoundaryUnavailable { boundary }),
     }

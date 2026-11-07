@@ -181,6 +181,13 @@ godot-mcp transaction repair \
 Read the report before recording anything. `reconcile` writes nothing. See
 [Recovery](recovery.md) for the four operations and what each proves.
 
+When the quarantined transaction is an editor mutation the editor never answered —
+`editor.script.run` past its deadline, or an editor that crashed or was closed
+mid-request — close that editor and stop the server, then settle it with a
+`writer-ended` proof and `--operation acknowledge-safe-state`. The command refuses
+while the editor process the record names still runs. See
+[An editor that ended before it answered](recovery.md#an-editor-that-ended-before-it-answered).
+
 ### `terminate applies only to a process_launch transaction, not ...`
 
 `terminate` is meaningful only for a supervised launch. For a file effect, the

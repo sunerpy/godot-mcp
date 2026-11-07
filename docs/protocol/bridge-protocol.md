@@ -191,6 +191,13 @@ sent, naming the add-on's version. Adding a method is therefore a compatible cha
 needs no new protocol version; an add-on and a server of different releases agree on the
 methods both have.
 
+An editor add-on's description also names its process ID (`pid`) and the executable it
+runs (`executable`). The server keeps that process's identity — its ID and start time —
+only when the operating system confirms both, and records it with any request the editor
+then leaves unanswered, so that an operator can settle that request once the process has
+ended ([Recovery](../operator/recovery.md#an-editor-that-ended-before-it-answered)). An
+add-on that names no executable is served exactly as before, without that identity.
+
 The server sends `bridge:heartbeat` every 5 seconds and closes a session that stays silent
 for 30. A peer that is running a request whose `deadline_unix_ms` has not passed is not
 silent: an editor runs one request at a time on its main thread and answers no heartbeat

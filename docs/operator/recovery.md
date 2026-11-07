@@ -18,6 +18,11 @@ A fourth outcome is not representable. In particular there is no "assume it work
 and no "probably fine" — an unprovable state becomes quarantine, which is a
 deliberately loud, blocking condition rather than a warning you can miss.
 
+One kind of `committed` transaction proves no post-state: an editor mutation the
+editor never answered, which an operator commits once that editor has ended
+([An editor that ended before it answered](#an-editor-that-ended-before-it-answered)).
+Its files are accepted as they are, and its result stays `uncertain`.
+
 ## Three effect kinds
 
 Every transaction records which kind of effect it made, and the proof form follows from
@@ -240,6 +245,75 @@ godot-mcp transaction repair \
 Every refusal — an unproven state, a mismatched proof, the wrong project object or
 generation, a transaction that is not quarantined, an I/O error while re-deriving —
 exits non-zero and leaves the transaction exactly as it was.
+
+### An editor that ended before it answered
+
+An editor mutation that may write project files and that the editor never answered —
+`editor.script.run` past its deadline, or an editor that exited or lost its connection
+mid-request — is quarantined as an `editor_runtime` transaction: the editor may have
+written project files, and it may still be writing them. Nothing the server can read
+proves what it wrote. What it can prove is that the writer is gone.
+
+When the add-on connects, the server records which editor process it is talking to:
+the process ID and its start time, kept only when the platform reports start times
+(Linux and macOS), the add-on reports the executable it runs, and that process
+really runs that executable. An unanswered request's record names that process. Once
+the process has ended, `acknowledge-safe-state` with a `writer-ended` proof accepts
+the project's files as they are, and the request's own result stays unknown:
+
+```json
+{
+  "effect_kind": "editor_runtime",
+  "transaction_id": "00000000-0000-0000-0000-000000000302",
+  "project_object_identity": "project_…",
+  "project_generation": 0,
+  "bridge_reachable": false,
+  "claimed_disposition": "writer-ended"
+}
+```
+
+`project_object_identity` and `project_generation` are the `object_id` and
+`generation` of the `project` object that `project.info.get` answers, and a wrong
+value is refused with the value the held lease designates. An optional `editor_process` object
+(`pid`, `start_time`) is checked against the record when it is present.
+
+1. Close the editor, or wait for it to end. While the recorded process still runs,
+   `acknowledge-safe-state` is refused and `reconcile` proves no disposition, both
+   with `the editor that ran this request is still running (pid …): wait for it to answer, or close it`.
+2. Stop the server. The command holds the project's lease while it works, so it is
+   refused while a server owns the project.
+3. Check the files the request could have changed. The command proves that nothing
+   can still write for the request, not what was written.
+4. Run `reconcile`. It reports `proven-disposition writer-ended` and records nothing.
+5. Run `acknowledge-safe-state`:
+
+   ```sh
+   godot-mcp transaction repair \
+     --project /srv/projects/my-game \
+     --transaction-id 00000000-0000-0000-0000-000000000302 \
+     --operation acknowledge-safe-state \
+     --proof-file ./proof.json
+   ```
+
+   The record moves to `committed_fsynced` with the terminal outcome `uncertain`,
+   and the report names the editor process that ended.
+6. Start the server. Writes are served again. A replay of the request with the same
+   `idempotencyId` and arguments still answers `uncertain`, from the journal, and is
+   not sent to the editor again; like every editor mutation, it is answered only
+   while an editor is connected.
+
+The command re-derives the end of the editor itself, from the operating system's
+process table, and the server's own gateway derives it again before it records the
+transition. It is refused, and the transaction stays quarantined, when:
+
+* the record names no editor process — the server could not prove the editor's
+  process when it connected (Windows, an editor in another PID namespace such as a
+  container or a Flatpak, an add-on that does not report its executable), the editor
+  answered without settling the request, or the record predates editor process
+  records;
+* the proof file claims a reachable bridge, a bridge receipt, a live state probe, or
+  another editor process than the one recorded;
+* the operation is `compensate`: the end of the editor proves no pre-state.
 
 ## Related
 

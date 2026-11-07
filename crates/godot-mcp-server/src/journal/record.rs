@@ -243,7 +243,22 @@ pub(crate) enum TypedProof {
         receipt_transaction_id: Option<String>,
         receipt_action_id: Option<String>,
         live_state_probe: Option<String>,
+        /// The editor process an unanswered request was sent to, when the
+        /// server proved which one it was. Absent from every other proof, and
+        /// from records written before it was recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        editor_process: Option<EditorProcess>,
     },
+}
+
+/// One editor process, identified as a durable record can match it again: a
+/// later process that reuses the id has another start time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EditorProcess {
+    pub(crate) pid: u32,
+    /// Platform-native start time, as the engine's process observation spells it.
+    pub(crate) start_time: String,
 }
 
 impl TypedProof {
@@ -579,6 +594,17 @@ mod tests {
                 receipt_transaction_id: Some("00000000-0000-4000-8000-000000000101".to_owned()),
                 receipt_action_id: Some("undo-42".to_owned()),
                 live_state_probe: Some("node:/root/Main".to_owned()),
+                editor_process: None,
+            },
+            TypedProof::EditorRuntime {
+                bridge_reachable: false,
+                receipt_transaction_id: None,
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process: Some(EditorProcess {
+                    pid: 4242,
+                    start_time: "12345".to_owned(),
+                }),
             },
         ] {
             let mut record = sample();
@@ -612,6 +638,102 @@ mod tests {
         ] {
             assert!(phase.is_terminal());
             assert!(phase.legal_successors().is_empty());
+        }
+    }
+
+    /// An `editor_runtime` record whose request went unanswered.
+    fn unanswered(editor_process: Option<EditorProcess>) -> TransactionRecord {
+        let mut record = sample();
+        record.effect_kind = EffectKind::EditorRuntime;
+        record.effect_boundary = EffectBoundaryKind::Editor;
+        record.phase = Phase::Quarantined;
+        record.proof = Some(TypedProof::EditorRuntime {
+            bridge_reachable: false,
+            receipt_transaction_id: None,
+            receipt_action_id: None,
+            live_state_probe: None,
+            editor_process,
+        });
+        record
+    }
+
+    #[test]
+    fn an_unanswered_editor_request_records_the_editor_process_it_was_sent_to() {
+        let record = unanswered(Some(EditorProcess {
+            pid: 4242,
+            start_time: "12345".to_owned(),
+        }));
+        let bytes = record.to_canonical_bytes().expect("the proof validates");
+        let text = String::from_utf8(bytes.clone()).expect("utf-8");
+        assert!(
+            text.contains(r#""editor_process":{"pid":4242,"start_time":"12345"}"#),
+            "{text}"
+        );
+        assert_eq!(
+            TransactionRecord::from_canonical_bytes(&bytes).expect("round trip"),
+            record
+        );
+    }
+
+    #[test]
+    fn an_editor_runtime_proof_without_an_editor_process_writes_no_field() {
+        let record = unanswered(None);
+        let bytes = record.to_canonical_bytes().expect("the proof validates");
+        let text = String::from_utf8(bytes.clone()).expect("utf-8");
+        assert!(!text.contains("editor_process"), "{text}");
+        assert_eq!(
+            TransactionRecord::from_canonical_bytes(&bytes).expect("round trip"),
+            record
+        );
+    }
+
+    #[test]
+    fn an_editor_runtime_proof_written_before_editor_processes_remains_readable() {
+        let mut value = serde_json::to_value(unanswered(None)).expect("value");
+        value["proof"] = serde_json::json!({
+            "kind": "editor_runtime",
+            "bridge_reachable": false,
+            "receipt_transaction_id": null,
+            "receipt_action_id": null,
+            "live_state_probe": null,
+        });
+        let bytes = serde_json::to_vec(&value).expect("bytes");
+        let decoded = TransactionRecord::from_canonical_bytes(&bytes)
+            .expect("a proof written before editor processes were recorded remains readable");
+        assert!(
+            matches!(
+                decoded.proof,
+                Some(TypedProof::EditorRuntime {
+                    editor_process: None,
+                    ..
+                })
+            ),
+            "{:?}",
+            decoded.proof
+        );
+    }
+
+    #[test]
+    fn an_editor_process_the_schema_does_not_define_is_rejected() {
+        for editor_process in [
+            Value::Null,
+            serde_json::json!({ "pid": 4242 }),
+            serde_json::json!({ "start_time": "12345" }),
+            serde_json::json!({ "pid": 0, "start_time": "12345" }),
+            serde_json::json!({ "pid": 4242, "start_time": "" }),
+            serde_json::json!({ "pid": 4242, "start_time": 12345 }),
+            serde_json::json!({ "pid": 4242, "start_time": "12345", "executable": "/bin/godot" }),
+        ] {
+            let mut value = serde_json::to_value(unanswered(None)).expect("value");
+            value["proof"]["editor_process"] = editor_process.clone();
+            let bytes = serde_json::to_vec(&value).expect("bytes");
+            assert!(
+                matches!(
+                    TransactionRecord::from_canonical_bytes(&bytes),
+                    Err(RecordError::Schema(_))
+                ),
+                "{editor_process} must be refused"
+            );
         }
     }
 }

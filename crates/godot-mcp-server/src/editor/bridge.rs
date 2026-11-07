@@ -59,6 +59,7 @@ use godot_mcp_domain::ErrorKind;
 use serde_json::{Value, json};
 
 use crate::effect::boundary::CancelSignal;
+use crate::journal::EditorProcess;
 
 /// Name of the rendezvous file inside the project's private state root. The
 /// plugin reads it as `res://.godot-mcp/editor-bridge.rendezvous`.
@@ -482,6 +483,9 @@ struct Session {
     plugin: PluginIdentity,
     description: Value,
     methods: BTreeSet<String>,
+    /// The editor process the peer runs in, when the host proved it from the
+    /// description ([`super::process::observe`]).
+    editor_process: Option<EditorProcess>,
 }
 
 /// Whether a peer described by `description` is sent the server status: this
@@ -753,6 +757,31 @@ impl EditorBridge {
             timeout,
             &CancelSignal::default(),
         )
+        .0
+    }
+
+    /// [`Self::call`], also answering the editor process of the session the
+    /// request was sent on, as that session's description proved it. The
+    /// session is chosen and its process read under one lock, so a newer
+    /// session that supersedes it meanwhile is never named instead. `None`
+    /// when nothing was sent or the session's process was not proven.
+    pub(crate) fn call_with_process(
+        &self,
+        method: &str,
+        class: OperationClass,
+        payload: &Value,
+        idempotency_id: &str,
+        timeout: Duration,
+    ) -> (Result<BridgeAnswer, BridgeFailure>, Option<EditorProcess>) {
+        call(
+            &self.inner,
+            method,
+            class,
+            payload,
+            idempotency_id,
+            timeout,
+            &CancelSignal::default(),
+        )
     }
 
     /// [`Self::call`], withdrawing the request from the peer as soon as
@@ -776,6 +805,7 @@ impl EditorBridge {
             timeout,
             cancellation,
         )
+        .0
     }
 
     /// Stop serving: tell the plugin, close the session and remove the
@@ -852,6 +882,9 @@ fn session_id() -> String {
     format!("bridge-{hex}")
 }
 
+/// Send one request on the current session and wait for its answer, with the
+/// editor process of the session it was sent on. Nothing is sent, and no
+/// process named, when no session takes the request.
 fn call(
     inner: &Arc<Inner>,
     method: &str,
@@ -860,22 +893,22 @@ fn call(
     idempotency_id: &str,
     timeout: Duration,
     cancellation: &CancelSignal,
-) -> Result<BridgeAnswer, BridgeFailure> {
-    let (writer, generation) = {
+) -> (Result<BridgeAnswer, BridgeFailure>, Option<EditorProcess>) {
+    let selected = {
         let current = lock(&inner.current);
-        let session = current.as_ref().ok_or(BridgeFailure::NotConnected)?;
-        if !session.methods.contains(method) {
-            return Err(BridgeFailure::Unsupported(method.to_owned()));
-        }
-        if class == OperationClass::Mutation
-            && method != RESTART_METHOD
-            && inner.restarting.load(Ordering::SeqCst) > 0
-        {
-            return Err(BridgeFailure::Restarting);
-        }
-        (session.writer.clone(), session.generation)
+        select(inner, current.as_ref(), method, class).map(|session| {
+            (
+                session.writer.clone(),
+                session.generation,
+                session.editor_process.clone(),
+            )
+        })
     };
-    send_request(
+    let (writer, generation, editor_process) = match selected {
+        Ok(selected) => selected,
+        Err(failure) => return (Err(failure), None),
+    };
+    let answer = send_request(
         inner,
         &writer,
         generation,
@@ -885,7 +918,28 @@ fn call(
         idempotency_id,
         timeout,
         cancellation,
-    )
+    );
+    (answer, editor_process)
+}
+
+/// The session that takes `method`, or why none does.
+fn select<'a>(
+    inner: &Inner,
+    current: Option<&'a Session>,
+    method: &str,
+    class: OperationClass,
+) -> Result<&'a Session, BridgeFailure> {
+    let session = current.ok_or(BridgeFailure::NotConnected)?;
+    if !session.methods.contains(method) {
+        return Err(BridgeFailure::Unsupported(method.to_owned()));
+    }
+    if class == OperationClass::Mutation
+        && method != RESTART_METHOD
+        && inner.restarting.load(Ordering::SeqCst) > 0
+    {
+        return Err(BridgeFailure::Restarting);
+    }
+    Ok(session)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1243,6 +1297,7 @@ fn accept_loop(inner: &Arc<Inner>, listener: &BridgeListener, handshake: &Handsh
             })
             .unwrap_or_default();
         let feeds_status = takes_status(inner.status, &description);
+        let editor_process = super::process::observe(&description);
         // An exclusion is checked and the session installed under one lock,
         // so no exclusion is granted between the check and the install.
         let admission = lock(&inner.admission);
@@ -1265,6 +1320,7 @@ fn accept_loop(inner: &Arc<Inner>, listener: &BridgeListener, handshake: &Handsh
             plugin,
             description,
             methods,
+            editor_process,
         });
         drop(admission);
         {
@@ -2112,6 +2168,121 @@ mod tests {
             status.methods,
             vec!["editor.scene.tree".to_owned(), "editor.state".to_owned()]
         );
+        bridge.stop();
+        second.join().expect("the second plugin ended");
+    }
+
+    /// A fake editor that reports this test process as the editor: its id and
+    /// the executable it runs, both of which this host can check.
+    fn as_this_process(script: FakePluginScript) -> FakePluginScript {
+        let executable = std::env::current_exe().expect("this test's executable");
+        script
+            .describing("pid", json!(std::process::id()))
+            .describing("executable", json!(executable.display().to_string()))
+    }
+
+    /// This test process as the bridge records it, where the host can observe it.
+    fn this_process() -> Option<EditorProcess> {
+        use godot_mcp_engine::supervision::procfs;
+        procfs::observations_available().then(|| {
+            let start_time = procfs::process_identity(std::process::id())
+                .expect("this process is observable")
+                .expect("this process is live")
+                .start_time
+                .expect("a start time is reported");
+            EditorProcess {
+                pid: std::process::id(),
+                start_time,
+            }
+        })
+    }
+
+    #[test]
+    fn an_unanswered_mutation_names_the_editor_process_its_session_runs_in() {
+        let scratch = Scratch::new("editor-process");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let plugin = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            as_this_process(FakePluginScript::implementing(&["editor.scene.batch"]))
+                .answering("editor.scene.batch", FakeAnswer::Disconnect),
+        );
+        wait_until("the plugin to connect", || bridge.status().connected);
+        let (answer, process) = bridge.call_with_process(
+            "editor.scene.batch",
+            OperationClass::Mutation,
+            &json!({ "path": "res://main.tscn" }),
+            "batch-1",
+            Duration::from_secs(10),
+        );
+        assert_eq!(answer, Err(BridgeFailure::Lost));
+        assert_eq!(process, this_process());
+        plugin.join().expect("the plugin ended");
+        bridge.stop();
+    }
+
+    #[test]
+    fn a_session_whose_editor_cannot_be_checked_names_no_process() {
+        let elsewhere = tempfile::NamedTempFile::new().expect("another file");
+        for script in [
+            // An add-on older than the `executable` field.
+            FakePluginScript::implementing(&["editor.state"])
+                .describing("pid", json!(std::process::id())),
+            // A process that does not run the executable the editor named.
+            FakePluginScript::implementing(&["editor.state"])
+                .describing("pid", json!(std::process::id()))
+                .describing("executable", json!(elsewhere.path().display().to_string())),
+        ] {
+            let scratch = Scratch::new("no-editor-process");
+            let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+            let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
+            wait_until("the plugin to connect", || bridge.status().connected);
+            let (answer, process) = bridge.call_with_process(
+                "editor.state",
+                OperationClass::Read,
+                &json!({}),
+                "state-1",
+                Duration::from_secs(5),
+            );
+            assert!(answer.is_ok(), "{answer:?}");
+            assert_eq!(process, None);
+            bridge.stop();
+            plugin.join().expect("the plugin ended");
+        }
+    }
+
+    #[test]
+    fn a_request_names_the_process_of_the_session_it_was_sent_on() {
+        let scratch = Scratch::new("superseded-process");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let first = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            as_this_process(FakePluginScript::implementing(&["editor.state"])),
+        );
+        wait_until("the first plugin", || bridge.status().sessions_opened == 1);
+        let (answer, process) = bridge.call_with_process(
+            "editor.state",
+            OperationClass::Read,
+            &json!({}),
+            "state-1",
+            Duration::from_secs(5),
+        );
+        assert!(answer.is_ok(), "{answer:?}");
+        assert_eq!(process, this_process());
+        let second = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]),
+        );
+        wait_until("the second plugin", || bridge.status().sessions_opened == 2);
+        first.join().expect("the superseded plugin was closed");
+        let (answer, process) = bridge.call_with_process(
+            "editor.state",
+            OperationClass::Read,
+            &json!({}),
+            "state-2",
+            Duration::from_secs(5),
+        );
+        assert!(answer.is_ok(), "{answer:?}");
+        assert_eq!(process, None, "the newer session described no process");
         bridge.stop();
         second.join().expect("the second plugin ended");
     }

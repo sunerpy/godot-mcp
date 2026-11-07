@@ -462,6 +462,7 @@ fn classify_editor_runtime(record: &TransactionRecord) -> (Conclusion, String) {
             receipt_transaction_id,
             receipt_action_id,
             live_state_probe,
+            ..
         }) => {
             let receipt_bound =
                 receipt_transaction_id.as_deref() == Some(record.transaction_id.as_str());

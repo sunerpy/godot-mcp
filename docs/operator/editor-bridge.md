@@ -885,9 +885,12 @@ Every editor mutation ends in exactly one of three states.
   the editor reconnects.
 
 An unresolved change that may have saved a file is quarantined, and writes stay blocked until it
-is resolved; see [Recovery](recovery.md). `editor.scene.save`, `editor.filesystem.scan`,
-`editor.play.start`, `editor.dialog.respond` and `editor.restart` with `save` may also write files
-nobody can list in advance, so their transactions cover the whole project. An unresolved change
+is resolved; see [Recovery](recovery.md). A change the editor never answered can be settled once
+the editor process it was sent to has ended, when the server identified that process; see
+[An editor that ended before it answered](recovery.md#an-editor-that-ended-before-it-answered).
+`editor.scene.save`, `editor.filesystem.scan`, `editor.play.start`, `editor.dialog.respond` and
+`editor.restart` with `save` may also write files nobody can list in advance, so their
+transactions cover the whole project. An unresolved change
 to editor state alone — selection, the open scene, the main screen, an unsaved undo, a stop, a
 closed scene or script tab, a moved camera, an editor setting, a shortcut, a restart without
 `save` — touches no project file, so it blocks nothing.

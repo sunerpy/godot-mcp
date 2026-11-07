@@ -132,6 +132,8 @@ sbom:
 LIVE_SUITES := live_editor_bridge live_authoring live_recipes live_editor_script \
 	live_editor_more live_runtime_control live_runtime_script live_runtime_scenario \
 	script_run insight_engine live_deploy
+# The live suites of the CLI crate, which drive the `godot-mcp` binary itself.
+CLI_LIVE_SUITES := live_editor_exit
 
 ## godot-test: batch Godot fixture command. With no GODOT_ARTIFACT_URL it stays
 ## the stable no-op entry point Todo 1 froze. With GODOT_ARTIFACT_URL and
@@ -142,9 +144,11 @@ LIVE_SUITES := live_editor_bridge live_authoring live_recipes live_editor_script
 ## checks scripts, export templates must match the build, and with
 ## GODOT_DISPLAY_REQUIRED=1 the editor must also run windowed and render. Every
 ## artifact but an export-templates archive is then an editor, and each live
-## suite of LIVE_SUITES (crates/godot-mcp-server/tests/<suite>.rs) runs the
-## shipped add-on, the runtime probe, the script runners and the headless
-## helper in it; with GODOT_DISPLAY_REQUIRED=1 their windowed cases run too. A
+## suite of LIVE_SUITES (crates/godot-mcp-server/tests/<suite>.rs) and of
+## CLI_LIVE_SUITES (crates/godot-mcp-cli/tests/<suite>.rs) runs the shipped
+## add-on, the runtime probe, the script runners, the headless helper and the
+## operator repair command in it; with GODOT_DISPLAY_REQUIRED=1 their windowed
+## cases run too. A
 ## download that does not match the locked digest is a hard failure, so only
 ## hash-verified artifacts are ever cached or executed, and a run in which a
 ## check did not run, or ran fewer cases than it lists, fails too.
@@ -170,15 +174,16 @@ godot-test:
 	case "$$artifact" in \
 		*.tpz) exit 0 ;; \
 	esac; \
-	for suite in $(LIVE_SUITES); do \
-		listing=$$($(CARGO) test -p godot-mcp-server --all-features --test "$$suite" -- \
+	for entry in $(LIVE_SUITES:%=godot-mcp-server/%) $(CLI_LIVE_SUITES:%=godot-mcp-cli/%); do \
+		package=$${entry%%/*}; suite=$${entry#*/}; \
+		listing=$$($(CARGO) test -p "$$package" --all-features --test "$$suite" -- \
 			--ignored --list --format terse) || exit $$?; \
 		expected=$$(printf '%s\n' "$$listing" | grep -c ': test$$'); \
 		[ "$$expected" -gt 0 ] || { \
 			echo "godot-test: FAIL: the live suite $$suite lists no case" >&2; exit 1; }; \
 		output=$$(GODOT_MCP_LOCKED_ARTIFACT="$$artifact" \
 			GODOT_MCP_DISPLAY_REQUIRED="$(GODOT_DISPLAY_REQUIRED)" \
-			$(CARGO) test -p godot-mcp-server --all-features --test "$$suite" -- \
+			$(CARGO) test -p "$$package" --all-features --test "$$suite" -- \
 				--ignored 2>&1); \
 		status=$$?; printf '%s\n' "$$output"; \
 		[ "$$status" -eq 0 ] || exit "$$status"; \

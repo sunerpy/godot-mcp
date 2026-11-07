@@ -36,10 +36,10 @@ pub(crate) use reconcile::{
     reconcile_open_transactions,
 };
 pub(crate) use record::{
-    BoundaryMembership, EffectBoundaryKind, EffectKind, Existence, FileOperation, FileStateEntry,
-    OperationFamily, Phase, ReleaseStatus, RequiredSubproofs, StagedWrite, TerminalOutcome,
-    TouchedObject, TransactionRecord, TransportMode, TypedProof, canonical_request,
-    encode_object_identity, hex_sha256,
+    BoundaryMembership, EditorProcess, EffectBoundaryKind, EffectKind, Existence, FileOperation,
+    FileStateEntry, OperationFamily, Phase, ReleaseStatus, RequiredSubproofs, StagedWrite,
+    TerminalOutcome, TouchedObject, TransactionRecord, TransportMode, TypedProof,
+    canonical_request, encode_object_identity, hex_sha256,
 };
 pub(crate) use store::{LegacyStoreSummary, StoreError, TransactionStore, inspect_legacy_store};
 

@@ -214,6 +214,9 @@ func describe() -> Dictionary:
 		"camera_set": EditorCamera.can_set(),
 		"script_close": ScriptTabs.can_close(),
 		"pid": OS.get_process_id(),
+		# Lets the server check that the process id names this editor, so an
+		# unanswered mutation records which process could still write for it.
+		"executable": OS.get_executable_path(),
 	}
 
 

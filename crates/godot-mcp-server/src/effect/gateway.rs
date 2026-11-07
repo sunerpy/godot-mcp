@@ -431,6 +431,7 @@ impl EffectGateway {
                     live_state_probe: Some(
                         late.digest.clone().unwrap_or_else(|| "answered".to_owned()),
                     ),
+                    editor_process: None,
                 },
                 late.error
                     .as_ref()
@@ -448,6 +449,7 @@ impl EffectGateway {
                     receipt_transaction_id: Some(transaction_id.clone()),
                     receipt_action_id: None,
                     live_state_probe: None,
+                    editor_process: None,
                 },
                 TerminalOutcome::failed(
                     late.error
@@ -1648,6 +1650,11 @@ impl EffectGateway {
                     DerivedDisposition::PostState => {
                         (Phase::CommittedFsynced, Conclusion::ProvenPostState)
                     }
+                    // The files are final, and accepted as the result, but
+                    // neither recorded state is proven.
+                    DerivedDisposition::WriterEnded => {
+                        (Phase::CommittedFsynced, Conclusion::Quarantine)
+                    }
                 };
                 (
                     phase,
@@ -1658,7 +1665,7 @@ impl EffectGateway {
                         derived.disposition.as_str(),
                         record.effect_kind.as_str()
                     ),
-                    Some(derived.proof),
+                    Some((derived.disposition, derived.proof)),
                 )
             }
             (operation, None) => {
@@ -1675,18 +1682,29 @@ impl EffectGateway {
             &format!(
                 "operation={} conclusion={} reason={reason}",
                 permit.operation().as_str(),
-                conclusion.as_str()
+                match &proof {
+                    Some((DerivedDisposition::WriterEnded, _)) => "writer_ended",
+                    _ => conclusion.as_str(),
+                }
             ),
         )?;
 
-        if let Some(proof) = proof {
+        if let Some((disposition, proof)) = proof {
+            // A writer-ended settlement commits what the files hold without
+            // proving it is the effect's result, so a replay of the request
+            // still answers that its outcome is unknown.
+            let terminal = if disposition == DerivedDisposition::WriterEnded {
+                TerminalOutcome::failed(ErrorKind::Uncertain)
+            } else {
+                terminal_outcome_for_repair(phase)
+            };
             if record.phase == Phase::Quarantined {
                 self.store.repair_transition(
                     &record.transaction_id,
                     phase,
                     Some(proof),
                     reason.clone(),
-                    terminal_outcome_for_repair(phase),
+                    terminal,
                 )?;
             } else if record.phase != phase {
                 // The Todo 14 case-4 ambiguous-survivor exception: the record is
@@ -1697,7 +1715,7 @@ impl EffectGateway {
                     phase,
                     Some(proof),
                     Some(reason.clone()),
-                    Some(terminal_outcome_for_repair(phase)),
+                    Some(terminal),
                 )?;
             }
         }
@@ -1729,6 +1747,11 @@ impl EffectGateway {
             RepairOperation::Compensate | RepairOperation::Terminate => {
                 DerivedDisposition::PreState
             }
+            RepairOperation::AcknowledgeSafeState
+                if derived.disposition == DerivedDisposition::WriterEnded =>
+            {
+                DerivedDisposition::WriterEnded
+            }
             RepairOperation::AcknowledgeSafeState => DerivedDisposition::PostState,
             RepairOperation::Reconcile => return Ok(()),
         };
@@ -1748,6 +1771,9 @@ impl EffectGateway {
                 record.effect_kind.as_str()
             )));
         }
+        if derived.disposition == DerivedDisposition::WriterEnded {
+            return check_writer_ended(record, &derived.proof);
+        }
         if record.effect_kind != EffectKind::File {
             return Ok(());
         }
@@ -1756,6 +1782,7 @@ impl EffectGateway {
         let recorded = match derived.disposition {
             DerivedDisposition::PreState => &record.pre_hashes,
             DerivedDisposition::PostState => &record.intended_post_hashes,
+            DerivedDisposition::WriterEnded => return Ok(()),
         };
         let outcome = verify_file_proof(self.proof_source.as_ref(), recorded);
         if outcome != ProofOutcome::Matches {
@@ -1882,6 +1909,11 @@ pub(crate) enum DerivedDisposition {
     PreState,
     /// The recorded intended post-state holds.
     PostState,
+    /// Neither state is proven, but the only process that could write for
+    /// the transaction has ended: the editor an unanswered mutation was sent
+    /// to. The files it left are accepted as the result, which stays
+    /// uncertain.
+    WriterEnded,
 }
 
 impl DerivedDisposition {
@@ -1889,7 +1921,70 @@ impl DerivedDisposition {
         match self {
             Self::PreState => "pre-state",
             Self::PostState => "post-state",
+            Self::WriterEnded => "writer-ended",
         }
+    }
+}
+
+/// Why a writer-ended settlement is refused for a transaction that recorded
+/// no editor process.
+pub(crate) const NO_EDITOR_PROCESS: &str = "this transaction recorded no editor process (the \
+     editor's process could not be proven when it connected, the editor answered without \
+     settling the request, or the record predates editor process records), so the end of its \
+     editor cannot be proven";
+
+/// The gateway's own derivation for a writer-ended settlement: the
+/// transaction is a live-editor mutation that was sent and never answered,
+/// it recorded the editor process it was sent to, the re-derived proof names
+/// that same process, and the process has ended now.
+fn check_writer_ended(record: &TransactionRecord, derived: &TypedProof) -> Result<(), EffectError> {
+    let refuse = |message: String| Err(EffectError::Unauthorized(message));
+    if record.effect_kind != EffectKind::EditorRuntime {
+        return refuse(format!(
+            "a writer-ended proof settles only an editor_runtime transaction, not {}",
+            record.effect_kind.as_str()
+        ));
+    }
+    if record.effect_boundary != EffectBoundaryKind::Editor {
+        return refuse(
+            "a writer-ended proof settles only a mutation sent to the live editor, not a \
+             game-session, debug or managed-session command"
+                .to_owned(),
+        );
+    }
+    let Some(TypedProof::EditorRuntime {
+        bridge_reachable: false,
+        receipt_transaction_id: None,
+        receipt_action_id: None,
+        live_state_probe: None,
+        editor_process,
+    }) = &record.proof
+    else {
+        return refuse(
+            "the editor answered this request, so its answer settles it, not the end of its \
+             editor"
+                .to_owned(),
+        );
+    };
+    let Some(editor) = editor_process else {
+        return refuse(NO_EDITOR_PROCESS.to_owned());
+    };
+    if record.proof.as_ref() != Some(derived) {
+        return refuse(
+            "the re-derived proof does not name the editor process this transaction recorded"
+                .to_owned(),
+        );
+    }
+    match crate::editor::process::has_ended(editor) {
+        Ok(true) => Ok(()),
+        Ok(false) => refuse(format!(
+            "the editor that ran this request is still running (pid {}): wait for it to \
+             answer, or close it",
+            editor.pid
+        )),
+        Err(why) => refuse(format!(
+            "whether the editor that ran this request has ended cannot be observed: {why}"
+        )),
     }
 }
 

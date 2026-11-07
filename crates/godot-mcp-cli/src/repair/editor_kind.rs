@@ -14,6 +14,17 @@
 //! unreachable bridge likewise leaves the transaction `quarantined`, regardless of
 //! any file-level hash on the underlying resource.
 //!
+//! # When the editor never answered
+//!
+//! A mutation the editor never answered has no receipt, and none can ever
+//! come once the editor that ran it has ended. The server records which editor
+//! process it sent the request to, by process id and start time, when the
+//! editor's bridge session proved it. [`derive_writer_ended`] proves from live
+//! process identity that this process has ended: its id names no live process,
+//! or one that started at another time. That proves nothing can still write
+//! for the request, never what it wrote, so `acknowledge-safe-state` commits
+//! the project's files as they are and the request's result stays uncertain.
+//!
 //! # No second protocol
 //!
 //! Every wire step below is Todo 19's frozen contract, used as-is:
@@ -49,7 +60,9 @@ use godot_mcp_bridge::protocol::ws::{
 };
 use godot_mcp_server::operator::{ObservedProof, OperatorSession, RepairTarget};
 
-use super::supplied::{SuppliedEditor, SuppliedHeader};
+use godot_mcp_server::operator::ProvenDisposition;
+
+use super::supplied::{SuppliedEditor, SuppliedHeader, SuppliedWriterEnded};
 use super::{Proven, RepairError, Verdict};
 
 /// The frozen prefix of the authenticated `hello` nonce a repair-time receipt
@@ -218,6 +231,7 @@ pub fn derive(
             receipt_transaction_id: Some(observed_transaction),
             receipt_action_id: Some(observed_action_id.clone()),
             live_state_probe: Some(observed_probe.clone()),
+            editor_process: None,
         },
         detail: format!(
             "the live bridge acknowledges action {observed_action_id} bound to this transaction \
@@ -227,6 +241,94 @@ pub fn derive(
         ),
         live_survivor: None,
     }))
+}
+
+/// Re-derive that the editor an unanswered `editor_runtime` request was sent to
+/// has ended.
+///
+/// The record must hold the proof of a request that reached the editor and was
+/// never answered, naming the editor process it was sent to; a claimed editor
+/// process must be that one; and live process identity must show it ended.
+/// Anything else is a [`Verdict::Refused`] that leaves the transaction
+/// `quarantined`.
+#[must_use]
+pub fn derive_writer_ended(target: &RepairTarget, supplied: &SuppliedWriterEnded) -> Verdict {
+    let refuse = Verdict::Refused;
+    let Some(ObservedProof::EditorRuntime {
+        bridge_reachable,
+        receipt_transaction_id,
+        receipt_action_id,
+        live_state_probe,
+        editor_process,
+    }) = target.recorded_proof.clone()
+    else {
+        return refuse(format!(
+            "transaction {} records no editor_runtime proof, so it names no editor whose end \
+             could settle it",
+            target.transaction_id
+        ));
+    };
+    if bridge_reachable
+        || receipt_transaction_id.is_some()
+        || receipt_action_id.is_some()
+        || live_state_probe.is_some()
+    {
+        return refuse(format!(
+            "transaction {} records an answer from the editor, so its answer settles it, not \
+             the end of its editor",
+            target.transaction_id
+        ));
+    }
+    let Some(recorded) = editor_process else {
+        return refuse(format!(
+            "transaction {} recorded no editor process: the editor's process could not be \
+             proven when it connected (another platform, another pid namespace, or an add-on \
+             that does not report its executable), the editor answered without settling the \
+             request, or the record predates editor process records; so the end of its \
+             editor cannot be proven",
+            target.transaction_id
+        ));
+    };
+    if let Some(claimed) = &supplied.editor_process
+        && (claimed.pid != recorded.pid || claimed.start_time != recorded.start_time)
+    {
+        return refuse(format!(
+            "the proof file claims editor process {} started at {}, and transaction {} \
+             recorded {} started at {}",
+            claimed.pid,
+            claimed.start_time,
+            target.transaction_id,
+            recorded.pid,
+            recorded.start_time
+        ));
+    }
+    match recorded.has_ended() {
+        Ok(true) => Verdict::Proven(Proven {
+            disposition: ProvenDisposition::WriterEnded,
+            detail: format!(
+                "the editor process that ran this request (pid {}, started at {}) has ended, so \
+                 nothing can still write for it; the project's files are accepted as the \
+                 request's result, which stays uncertain",
+                recorded.pid, recorded.start_time
+            ),
+            observed: ObservedProof::EditorRuntime {
+                bridge_reachable: false,
+                receipt_transaction_id: None,
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process: Some(recorded),
+            },
+            live_survivor: None,
+        }),
+        Ok(false) => refuse(format!(
+            "the editor that ran this request is still running (pid {}): wait for it to \
+             answer, or close it",
+            recorded.pid
+        )),
+        Err(why) => refuse(format!(
+            "whether the editor that ran this request has ended cannot be observed: {why}"
+        )),
+    }
 }
 
 /// Ask a live bridge for one transaction's authoritative receipt and live probe.

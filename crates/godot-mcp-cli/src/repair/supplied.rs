@@ -18,6 +18,11 @@
 //!    optional on two variants but the command never accepts absent, and
 //!    `bridge_receipt`/`live_state_probe`, whose null values always fail proof
 //!    for the `editor_runtime` kind by design.
+//!
+//! An `editor_runtime` claim takes one of two forms. A receipt claim names the
+//! receipt and live state a bridge confirms. A `writer-ended` claim says the
+//! editor never answered and its process has ended: it carries no receipt,
+//! claims an unreachable bridge, and may name the editor process it means.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -126,15 +131,36 @@ pub struct SuppliedEditor {
     pub live_state_probe: String,
 }
 
-/// One parsed claim, in exactly the three canonical variants.
+/// An `editor_runtime` claim that the editor an unanswered request was sent
+/// to has ended (`claimed_disposition: writer-ended`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppliedWriterEnded {
+    /// The editor process the claim names, when it names one. The command
+    /// compares it with the process the transaction recorded.
+    pub editor_process: Option<ClaimedEditorProcess>,
+}
+
+/// An editor process a claim names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimedEditorProcess {
+    /// The claimed process id.
+    pub pid: u32,
+    /// The claimed platform-native start time.
+    pub start_time: String,
+}
+
+/// One parsed claim: the three canonical variants, the `editor_runtime` one in
+/// either of its two forms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SuppliedBody {
     /// A `file` claim.
     File(SuppliedFile),
     /// A `process_launch` claim.
     ProcessLaunch(SuppliedProcess),
-    /// An `editor_runtime` claim.
+    /// An `editor_runtime` receipt claim.
     EditorRuntime(SuppliedEditor),
+    /// An `editor_runtime` claim that the request's editor has ended.
+    EditorWriterEnded(SuppliedWriterEnded),
 }
 
 /// The whole parsed claim.
@@ -191,9 +217,19 @@ fn parse(path: &str, value: &Value) -> Result<SuppliedProof, SuppliedError> {
     let claimed_disposition = match value.get("claimed_disposition").and_then(Value::as_str) {
         Some("pre-state") => ProvenDisposition::PreState,
         Some("post-state") => ProvenDisposition::PostState,
+        Some("writer-ended") if effect_kind == ProofKind::EditorRuntime => {
+            ProvenDisposition::WriterEnded
+        }
+        Some("writer-ended") => {
+            return Err(field(format!(
+                "claimed_disposition \"writer-ended\" applies only to an editor_runtime \
+                 transaction, not {}",
+                effect_kind.as_str()
+            )));
+        }
         Some(other) => {
             return Err(field(format!(
-                "claimed_disposition {other:?} is neither pre-state nor post-state"
+                "claimed_disposition {other:?} is neither pre-state, post-state nor writer-ended"
             )));
         }
         None => {
@@ -215,6 +251,9 @@ fn parse(path: &str, value: &Value) -> Result<SuppliedProof, SuppliedError> {
     let body = match effect_kind {
         ProofKind::File => SuppliedBody::File(parse_file(path, value)?),
         ProofKind::ProcessLaunch => SuppliedBody::ProcessLaunch(parse_process(path, value)?),
+        ProofKind::EditorRuntime if claimed_disposition == ProvenDisposition::WriterEnded => {
+            SuppliedBody::EditorWriterEnded(parse_writer_ended(path, value)?)
+        }
         ProofKind::EditorRuntime => SuppliedBody::EditorRuntime(parse_editor(path, value)?),
     };
     Ok(SuppliedProof { header, body })
@@ -389,6 +428,50 @@ fn parse_editor(path: &str, value: &Value) -> Result<SuppliedEditor, SuppliedErr
     })
 }
 
+fn parse_writer_ended(path: &str, value: &Value) -> Result<SuppliedWriterEnded, SuppliedError> {
+    let field = |detail: String| SuppliedError::Field {
+        path: path.to_owned(),
+        detail,
+    };
+    // The claim is that the editor never answered: a reachable bridge, a
+    // receipt or a live state would contradict it.
+    if value.get("bridge_reachable").and_then(Value::as_bool) != Some(false) {
+        return Err(field(
+            "bridge_reachable must be false in a writer-ended claim: the editor never answered"
+                .to_owned(),
+        ));
+    }
+    for answered in ["bridge_receipt", "live_state_probe"] {
+        if value
+            .get(answered)
+            .is_some_and(|claimed| !claimed.is_null())
+        {
+            return Err(field(format!(
+                "{answered} must be absent or null in a writer-ended claim: the editor never \
+                 answered"
+            )));
+        }
+    }
+    let editor_process = match value.get("editor_process") {
+        None | Some(Value::Null) => None,
+        Some(claimed) => Some(ClaimedEditorProcess {
+            pid: claimed
+                .get("pid")
+                .and_then(Value::as_u64)
+                .and_then(|pid| u32::try_from(pid).ok())
+                .filter(|pid| *pid > 0)
+                .ok_or_else(|| field("editor_process.pid is not a process id".to_owned()))?,
+            start_time: claimed
+                .get("start_time")
+                .and_then(Value::as_str)
+                .filter(|start_time| !start_time.is_empty())
+                .ok_or_else(|| field("editor_process.start_time is missing or empty".to_owned()))?
+                .to_owned(),
+        }),
+    };
+    Ok(SuppliedWriterEnded { editor_process })
+}
+
 fn required_str<'a>(path: &str, value: &'a Value, name: &str) -> Result<&'a str, SuppliedError> {
     value
         .get(name)
@@ -549,6 +632,109 @@ mod tests {
         assert!(
             matches!(error, SuppliedError::Schema { .. }),
             "{error} must be a schema refusal"
+        );
+    }
+
+    fn writer_ended_claim() -> Value {
+        serde_json::json!({
+            "effect_kind": "editor_runtime",
+            "transaction_id": "34000000-0000-4000-8000-000000000302",
+            "project_object_identity": format!("project_{}", "a".repeat(64)),
+            "project_generation": 0,
+            "bridge_reachable": false,
+            "claimed_disposition": "writer-ended",
+        })
+    }
+
+    /// The end of the editor an unanswered request was sent to is claimed
+    /// with no receipt, and optionally names that editor's process.
+    #[test]
+    fn a_writer_ended_claim_parses_with_or_without_the_editor_it_names() {
+        let (_dir, path) = write(&writer_ended_claim());
+        let proof = load(&path).expect("a writer-ended claim parses");
+        assert_eq!(proof.header.effect_kind, ProofKind::EditorRuntime);
+        assert_eq!(
+            proof.header.claimed_disposition,
+            ProvenDisposition::WriterEnded
+        );
+        assert_eq!(
+            proof.body,
+            SuppliedBody::EditorWriterEnded(SuppliedWriterEnded {
+                editor_process: None
+            })
+        );
+
+        for editor_process in [
+            serde_json::json!(null),
+            serde_json::json!({ "pid": 4242, "start_time": "12345" }),
+        ] {
+            let mut claim = writer_ended_claim();
+            claim
+                .as_object_mut()
+                .expect("object")
+                .insert("editor_process".to_owned(), editor_process.clone());
+            let (_dir, path) = write(&claim);
+            let proof = load(&path).expect("a writer-ended claim parses");
+            assert_eq!(
+                proof.body,
+                SuppliedBody::EditorWriterEnded(SuppliedWriterEnded {
+                    editor_process: editor_process.as_object().map(|_| ClaimedEditorProcess {
+                        pid: 4242,
+                        start_time: "12345".to_owned(),
+                    }),
+                })
+            );
+        }
+    }
+
+    /// A writer-ended claim says the editor never answered, so it cannot also
+    /// claim a reachable bridge, a receipt or a live state; and only the
+    /// editor_runtime kind has an editor whose end could be claimed.
+    #[test]
+    fn a_writer_ended_claim_that_contradicts_itself_is_refused() {
+        for (field, value) in [
+            ("bridge_reachable", serde_json::json!(true)),
+            ("bridge_receipt", serde_json::json!("editor.script.run")),
+            ("live_state_probe", serde_json::json!("answered")),
+        ] {
+            let mut claim = writer_ended_claim();
+            claim
+                .as_object_mut()
+                .expect("object")
+                .insert(field.to_owned(), value);
+            let (_dir, path) = write(&claim);
+            let error = load(&path).expect_err("a contradictory claim is refused");
+            assert!(
+                matches!(&error, SuppliedError::Field { detail, .. } if detail.contains(field)),
+                "{error} names {field}"
+            );
+        }
+        for editor_process in [
+            serde_json::json!({ "pid": 0, "start_time": "12345" }),
+            serde_json::json!({ "pid": 4242, "start_time": "" }),
+            serde_json::json!({ "pid": 4242 }),
+            serde_json::json!({ "pid": 4242, "start_time": "12345", "argv": [] }),
+        ] {
+            let mut claim = writer_ended_claim();
+            claim
+                .as_object_mut()
+                .expect("object")
+                .insert("editor_process".to_owned(), editor_process);
+            let (_dir, path) = write(&claim);
+            assert!(
+                matches!(load(&path), Err(SuppliedError::Schema { .. })),
+                "an editor process outside the schema is refused"
+            );
+        }
+        let mut claim = file_claim();
+        claim.as_object_mut().expect("object").insert(
+            "claimed_disposition".to_owned(),
+            serde_json::json!("writer-ended"),
+        );
+        let (_dir, path) = write(&claim);
+        assert!(
+            matches!(load(&path), Err(SuppliedError::Schema { .. })),
+            "a file claim cannot claim the end of a writer"
         );
     }
 

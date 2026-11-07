@@ -113,6 +113,14 @@ pub fn derive(
     let recorded = match disposition {
         ProvenDisposition::PreState => &target.pre_hashes,
         ProvenDisposition::PostState => &target.intended_post_hashes,
+        // Only the two recorded file states are ever re-derived above.
+        ProvenDisposition::WriterEnded => {
+            return Ok(Verdict::Refused(
+                "a file transaction is settled by a recorded file state, not by the end of a \
+                 writer"
+                    .to_owned(),
+            ));
+        }
     };
     Ok(Verdict::Proven(Proven {
         disposition,

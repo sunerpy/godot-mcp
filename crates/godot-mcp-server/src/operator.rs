@@ -307,7 +307,47 @@ pub enum ObservedProof {
         receipt_action_id: Option<String>,
         /// The live state-probe answer.
         live_state_probe: Option<String>,
+        /// The editor process an unanswered request was sent to, when the
+        /// server proved which one it was.
+        editor_process: Option<EditorProcess>,
     },
+}
+
+/// One editor process, identified as a durable record can match it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorProcess {
+    /// The process id.
+    pub pid: u32,
+    /// The platform-native start time, which a later process that reuses the
+    /// id does not share.
+    pub start_time: String,
+}
+
+impl EditorProcess {
+    fn from_journal(process: &crate::journal::EditorProcess) -> Self {
+        Self {
+            pid: process.pid,
+            start_time: process.start_time.clone(),
+        }
+    }
+
+    /// Whether this editor process has ended: no live process has its id,
+    /// or the one that does started at another time. The gateway derives the
+    /// same fact again before it settles anything.
+    ///
+    /// # Errors
+    /// Returns why when this platform cannot observe the process, so the
+    /// transaction stays as it is rather than the editor being assumed gone.
+    pub fn has_ended(&self) -> Result<bool, String> {
+        crate::editor::process::has_ended(&self.to_journal())
+    }
+
+    fn to_journal(&self) -> crate::journal::EditorProcess {
+        crate::journal::EditorProcess {
+            pid: self.pid,
+            start_time: self.start_time.clone(),
+        }
+    }
 }
 
 impl ObservedProof {
@@ -363,11 +403,13 @@ impl ObservedProof {
                 receipt_transaction_id,
                 receipt_action_id,
                 live_state_probe,
+                editor_process,
             } => Self::EditorRuntime {
                 bridge_reachable: *bridge_reachable,
                 receipt_transaction_id: receipt_transaction_id.clone(),
                 receipt_action_id: receipt_action_id.clone(),
                 live_state_probe: live_state_probe.clone(),
+                editor_process: editor_process.as_ref().map(EditorProcess::from_journal),
             },
         }
     }
@@ -405,11 +447,13 @@ impl ObservedProof {
                 receipt_transaction_id,
                 receipt_action_id,
                 live_state_probe,
+                editor_process,
             } => TypedProof::EditorRuntime {
                 bridge_reachable: *bridge_reachable,
                 receipt_transaction_id: receipt_transaction_id.clone(),
                 receipt_action_id: receipt_action_id.clone(),
                 live_state_probe: live_state_probe.clone(),
+                editor_process: editor_process.as_ref().map(EditorProcess::to_journal),
             },
         }
     }
@@ -422,6 +466,11 @@ pub enum ProvenDisposition {
     PreState,
     /// The recorded intended post-state holds.
     PostState,
+    /// Neither state is proven, but the editor process an unanswered editor
+    /// mutation was sent to has ended, so nothing can still write for it.
+    /// `acknowledge-safe-state` then accepts the project's files as the
+    /// result, which a replay still reports as uncertain.
+    WriterEnded,
 }
 
 impl ProvenDisposition {
@@ -431,6 +480,7 @@ impl ProvenDisposition {
         match self {
             Self::PreState => "pre-state",
             Self::PostState => "post-state",
+            Self::WriterEnded => "writer-ended",
         }
     }
 
@@ -438,6 +488,7 @@ impl ProvenDisposition {
         match self {
             Self::PreState => DerivedDisposition::PreState,
             Self::PostState => DerivedDisposition::PostState,
+            Self::WriterEnded => DerivedDisposition::WriterEnded,
         }
     }
 }
@@ -713,6 +764,7 @@ mod tests {
         assert_eq!(RecordedExistence::Absent.as_str(), "absent");
         assert_eq!(ProvenDisposition::PreState.as_str(), "pre-state");
         assert_eq!(ProvenDisposition::PostState.as_str(), "post-state");
+        assert_eq!(ProvenDisposition::WriterEnded.as_str(), "writer-ended");
         for release in [
             ObservedRelease::Suspended,
             ObservedRelease::ResumedContained,

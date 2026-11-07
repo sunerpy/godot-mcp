@@ -452,6 +452,7 @@ fn editor_record(transaction: &str, receipt: &bridge::ObservedReceipt) -> Task34
             receipt_transaction_id: receipt.transaction_id.clone(),
             receipt_action_id: receipt.action_id.clone(),
             live_state_probe: receipt.live_state_probe.clone(),
+            editor_process: None,
         },
         required_process_transaction: None,
         terminal_reason: "task-34 fixture: quarantined with an unresolved editor mutation"

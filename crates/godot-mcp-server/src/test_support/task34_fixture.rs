@@ -202,7 +202,19 @@ pub enum Task34Proof {
         receipt_action_id: Option<String>,
         /// A live state-probe result through the bridge.
         live_state_probe: Option<String>,
+        /// The editor process an unanswered request was sent to, when one was
+        /// recorded.
+        editor_process: Option<Task34EditorProcess>,
     },
+}
+
+/// One recorded editor process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Task34EditorProcess {
+    /// The process id.
+    pub pid: u32,
+    /// The platform-native start time.
+    pub start_time: String,
 }
 
 impl Task34Proof {
@@ -240,11 +252,18 @@ impl Task34Proof {
                 receipt_transaction_id,
                 receipt_action_id,
                 live_state_probe,
+                editor_process,
             } => Some(TypedProof::EditorRuntime {
                 bridge_reachable: *bridge_reachable,
                 receipt_transaction_id: receipt_transaction_id.clone(),
                 receipt_action_id: receipt_action_id.clone(),
                 live_state_probe: live_state_probe.clone(),
+                editor_process: editor_process.as_ref().map(|process| {
+                    crate::journal::EditorProcess {
+                        pid: process.pid,
+                        start_time: process.start_time.clone(),
+                    }
+                }),
             }),
         }
     }
@@ -450,6 +469,23 @@ impl Task34FixtureJournal {
             .load(transaction_id)
             .map(|record| record.phase.as_str().to_owned())
             .map_err(|error| HarnessError::Store(error.to_string()))
+    }
+
+    /// One transaction's durable record, as its canonical JSON.
+    ///
+    /// # Errors
+    /// Returns [`HarnessError::Store`] when the transaction is not journaled or
+    /// its record cannot be encoded.
+    pub fn record_json(&self, transaction_id: &str) -> Result<serde_json::Value, HarnessError> {
+        let store = |error: String| HarnessError::Store(error);
+        let record = self
+            .store
+            .load(transaction_id)
+            .map_err(|error| store(error.to_string()))?;
+        let bytes = record
+            .to_canonical_bytes()
+            .map_err(|error| store(error.to_string()))?;
+        serde_json::from_slice(&bytes).map_err(|error| store(error.to_string()))
     }
 
     /// Every quarantined transaction identifier, ascending.

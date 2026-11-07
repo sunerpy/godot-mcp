@@ -41,8 +41,9 @@
 //! 5. **independently re-derive every proof field** for the record's own effect
 //!    kind — descriptor-relative `SafeRoot` observation for `file`, live OS
 //!    process/boundary inspection for `process_launch`, a bridge receipt and
-//!    state-probe round trip for `editor_runtime` — never by trusting the proof
-//!    file's claims;
+//!    state-probe round trip for `editor_runtime`, or, for an editor mutation
+//!    that was never answered, live OS process identity proving the editor it
+//!    was sent to has ended — never by trusting the proof file's claims;
 //! 6. when the record carries `required_subproofs.process_launch_transaction_id`,
 //!    unconditionally load that linked transaction and independently re-derive
 //!    its clean-exit/empty-boundary terminal proof as well; and
@@ -332,8 +333,11 @@ const fn would_be_phase(operation: RepairIntent) -> &'static str {
     }
 }
 
-/// Exactly one disposition satisfies each operation. A `post-state` proof can
-/// never compensate, and a `pre-state` proof can never acknowledge a safe state.
+/// Each operation accepts only the dispositions that settle it. A `post-state`
+/// proof can never compensate, and a `pre-state` proof can never acknowledge a
+/// safe state. `acknowledge-safe-state` also accepts `writer-ended`: the editor
+/// an unanswered request was sent to has ended, so the files it left are
+/// accepted as the result, which stays uncertain.
 fn require_disposition_matches_operation(
     operation: RepairIntent,
     disposition: ProvenDisposition,
@@ -341,6 +345,9 @@ fn require_disposition_matches_operation(
     let required = match operation {
         RepairIntent::Reconcile => return Ok(()),
         RepairIntent::Compensate | RepairIntent::Terminate => ProvenDisposition::PreState,
+        RepairIntent::AcknowledgeSafeState if disposition == ProvenDisposition::WriterEnded => {
+            ProvenDisposition::WriterEnded
+        }
         RepairIntent::AcknowledgeSafeState => ProvenDisposition::PostState,
     };
     if disposition == required {
@@ -424,6 +431,9 @@ fn derive(
         (SuppliedBody::EditorRuntime(body), ProofKind::EditorRuntime) => {
             editor_kind::derive(session, project, target, &supplied.header, body)
         }
+        (SuppliedBody::EditorWriterEnded(body), ProofKind::EditorRuntime) => {
+            Ok(editor_kind::derive_writer_ended(target, body))
+        }
         _ => Err(RepairError::WrongBinding(
             "the proof file's variant does not match the recorded effect kind".to_owned(),
         )),
@@ -477,6 +487,40 @@ mod tests {
             assert!(
                 require_disposition_matches_operation(RepairIntent::Reconcile, disposition).is_ok(),
                 "reconcile records nothing, so it accepts either report"
+            );
+        }
+    }
+
+    /// The end of the editor an unanswered request was sent to proves neither
+    /// recorded state, so it can only acknowledge the files as they are; it
+    /// never compensates or terminates anything.
+    #[test]
+    fn a_writer_ended_proof_settles_only_an_acknowledgement() {
+        assert!(
+            require_disposition_matches_operation(
+                RepairIntent::AcknowledgeSafeState,
+                ProvenDisposition::WriterEnded
+            )
+            .is_ok()
+        );
+        assert!(
+            require_disposition_matches_operation(
+                RepairIntent::Reconcile,
+                ProvenDisposition::WriterEnded
+            )
+            .is_ok()
+        );
+        for operation in [RepairIntent::Compensate, RepairIntent::Terminate] {
+            let error =
+                require_disposition_matches_operation(operation, ProvenDisposition::WriterEnded)
+                    .expect_err("the end of a writer proves no pre-state");
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "the state this operation requires is not proven: {} requires a pre-state \
+                     proof, and the re-derivation proved a writer-ended state",
+                    operation.as_str()
+                )
             );
         }
     }
