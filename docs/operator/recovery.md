@@ -194,8 +194,9 @@ the settled outcome from the journal, and the editor is never asked to run it ag
 answer that arrives while the server is still writing the transaction's unresolved outcome
 is held and applied as soon as that outcome is written.
 
-An editor that exits before it answers sends nothing, so its change stays quarantined until
-an operator resolves it.
+An editor that exits before it answers sends nothing. Its change stays quarantined until an
+operator settles it once that editor has ended
+([An editor that ended before it answered](#an-editor-that-ended-before-it-answered)).
 
 ## Operator repair
 
@@ -210,7 +211,7 @@ repair-proof schema:
 
 | Operation | Effect |
 | --- | --- |
-| `reconcile` | Re-derives and reports the would-be transition. Records nothing. |
+| `reconcile` | Re-derives and reports the would-be transition. Changes no transaction; a proven one is written to the audit log. |
 | `compensate` | Undoes the effect from a proven pre-state. |
 | `terminate` | Terminates a proven, still-contained survivor. `process_launch` only. |
 | `acknowledge-safe-state` | Records a proven post-state as committed. |
@@ -256,8 +257,8 @@ proves what it wrote. What it can prove is that the writer is gone.
 
 When the add-on connects, the server records which editor process it is talking to:
 the process ID and its start time, kept only when the platform reports start times
-(Linux and macOS), the add-on reports the executable it runs, and that process
-really runs that executable. An unanswered request's record names that process. Once
+(Linux and macOS), the add-on reports the executable it runs (add-on 0.4.1 and later),
+and that process really runs that executable. An unanswered request's record names that process. Once
 the process has ended, `acknowledge-safe-state` with a `writer-ended` proof accepts
 the project's files as they are, and the request's own result stays unknown:
 
@@ -284,7 +285,7 @@ value is refused with the value the held lease designates. An optional `editor_p
    refused while a server owns the project.
 3. Check the files the request could have changed. The command proves that nothing
    can still write for the request, not what was written.
-4. Run `reconcile`. It reports `proven-disposition writer-ended` and records nothing.
+4. Run `reconcile`. It reports `proven-disposition writer-ended` and changes no transaction.
 5. Run `acknowledge-safe-state`:
 
    ```sh
@@ -308,7 +309,8 @@ transition. It is refused, and the transaction stays quarantined, when:
 
 * the record names no editor process — the server could not prove the editor's
   process when it connected (Windows, an editor in another PID namespace such as a
-  container or a Flatpak, an add-on that does not report its executable), the editor
+  container or a Flatpak, an add-on older than 0.4.1, which does not report its
+  executable), the editor
   answered without settling the request, or the record predates editor process
   records;
 * the proof file claims a reachable bridge, a bridge receipt, a live state probe, or

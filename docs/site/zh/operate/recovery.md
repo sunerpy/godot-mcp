@@ -30,9 +30,11 @@ godot-mcp serve: write gate open
 
 ## 编辑器迟到的答复
 
-经编辑器做的改动，答复没有按时回来时也会被隔离：例如运行超过了 `deadline_ms`，或者保存时正赶上一次很长的导入。编辑器仍会做完已经开始的改动并给出答复：在同一个连接上；那个连接已经断开时，在它下次打开的连接上，即使服务器已经重启。服务器随后按答复结束这个事务，结果为 `committed`，改动没有开始时为 `compensated`，写入随即恢复。答复说不清发生了什么时，隔离保持不变；编辑器在答复之前关闭时也是如此。
+经编辑器做的改动，答复没有按时回来时也会被隔离：例如运行超过了 `deadline_ms`，或者保存时正赶上一次很长的导入。编辑器仍会做完已经开始的改动并给出答复：在同一个连接上；那个连接已经断开时，在它下次打开的连接上，即使服务器已经重启。服务器随后按答复结束这个事务，结果为 `committed`，改动没有开始时为 `compensated`，写入随即恢复。答复说不清发生了什么时，隔离保持不变。
 
-请让编辑器保持打开，直到它答复。godot-mcp 0.5.0 及更早版本安装的插件只会在同一个连接上答复，用 `editor.addon.update` 把它更新到最新即可。godot-mcp 0.5.0 及更早版本在编辑器答复之后仍让这个改动保持隔离。
+请让编辑器保持打开，直到它答复。godot-mcp 0.5.0 及更早版本安装的插件只会在同一个连接上答复，用 `editor.addon.update` 把它更新到最新即可。
+
+编辑器在答复之前崩溃或被关闭时，不会再有答复。确认那个编辑器已经结束后，停止服务器，用 `godot-mcp transaction repair` 加 `--operation acknowledge-safe-state` 和一份 `writer-ended` 证明：它把项目文件的现状认作这次请求的结果，重试这个请求仍然答复 `uncertain`。那个编辑器还在运行时，或者服务器没能识别编辑器的进程时（例如在 Windows 上），这个命令会拒绝；具体步骤见[恢复参考](../../../operator/recovery.md#an-editor-that-ended-before-it-answered)。godot-mcp 0.5.0 及更早版本会让这样的改动一直保持隔离。
 
 ## 解决隔离
 
@@ -47,7 +49,7 @@ godot-mcp transaction repair \
   --dry-run
 ```
 
-`reconcile` 报告证明所允许的状态转换，什么都不记录；`compensate`、`terminate` 和 `acknowledge-safe-state` 各记录一次状态转换，前提是服务器自己重新推导出证明并且证明成立。先用 `reconcile`，或者在你打算执行的操作上加 `--dry-run`。每种证明和拒绝情况见[恢复参考](../../../operator/recovery.md)。
+`reconcile` 报告证明所允许的状态转换，不记录任何状态转换；`compensate`、`terminate` 和 `acknowledge-safe-state` 各记录一次状态转换，前提是服务器自己重新推导出证明并且证明成立。先用 `reconcile`，或者在你打算执行的操作上加 `--dry-run`。每种证明和拒绝情况见[恢复参考](../../../operator/recovery.md)。
 
 ## 一个项目一个服务器
 

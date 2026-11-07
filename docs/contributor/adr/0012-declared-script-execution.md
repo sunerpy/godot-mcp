@@ -2,8 +2,8 @@
 
 **Status:** accepted for contract 0.4.0; amended by [ADR 0014](0014-open-http-mode.md),
 which accepts the switch with the `open` HTTP mode, and by
-[ADR 0015](0015-late-editor-answers.md), which settles an unanswered run from the editor's
-late answer. It supersedes
+[ADR 0015](0015-unanswered-editor-changes.md), which settles an unanswered run from the editor's
+late answer, or once the editor has ended. It supersedes
 [ADR 0003](0003-no-arbitrary-script-execution.md), keeps `unsafe_script` a reserved name,
 and leaves the typed tools of [ADR 0011](0011-live-editor-operability.md) as they are.
 
@@ -105,7 +105,7 @@ capabilities is refused by the runner too.
 - **In the editor, an unanswered run blocks the project.** The editor may still save scenes and
   resources, so the transaction covers the whole project, as `editor.filesystem.scan` and
   `editor.play.start` do: an `uncertain` run is quarantined and every change is refused until the
-  editor's answer, when the run ends, settles it ([ADR 0015](0015-late-editor-answers.md)), or
+  editor's answer, when the run ends, settles it ([ADR 0015](0015-unanswered-editor-changes.md)), or
   an operator resolves it (see [Recovery](../../operator/recovery.md)). Only closing the editor
   ends the code. While a run awaits, the editor's other requests wait behind it. Code that
   holds the main thread past the run's deadline leaves the editor silent, which can end the

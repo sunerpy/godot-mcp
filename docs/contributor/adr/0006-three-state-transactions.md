@@ -1,7 +1,8 @@
 # 0006 — A durable mutation has exactly three terminal states
 
-**Status:** accepted; amended by [ADR 0015](0015-late-editor-answers.md), which lets an
-editor's late answer settle a quarantined editor change.
+**Status:** accepted; amended by [ADR 0015](0015-unanswered-editor-changes.md), which lets an
+editor's late answer settle a quarantined editor change, and lets an operator commit one whose
+editor has ended, with an `uncertain` outcome, without proving its post-state.
 
 ## Decision
 

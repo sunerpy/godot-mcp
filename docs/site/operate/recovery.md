@@ -40,12 +40,18 @@ a run that outlasted its `deadline_ms`, a save during a long import. The editor 
 what it started and answers, on the same connection or, when that connection ended, on the next
 one it opens, even to a restarted server. The server then ends the transaction the way the
 answer says, `committed`, or `compensated` when the change never started, and writes reopen. An
-answer that cannot say what happened leaves the quarantine in place, and so does an editor that
-closes before it answers.
+answer that cannot say what happened leaves the quarantine in place.
 
 Keep the editor open until it answers. An add-on installed by godot-mcp 0.5.0 or earlier answers
-only on the same connection; `editor.addon.update` brings it up to date. godot-mcp 0.5.0 and
-earlier keep the change quarantined after the editor answers.
+only on the same connection; `editor.addon.update` brings it up to date.
+
+An editor that crashed or was closed before it answered sends nothing. Once that editor has ended,
+stop the server and run `godot-mcp transaction repair` with `--operation acknowledge-safe-state`
+and a `writer-ended` proof: it accepts the project's files as they are, and a retry of the request
+still answers `uncertain`. The command refuses while that editor still runs, and when the server
+could not identify the editor's process, as on Windows; the
+[recovery reference](../../operator/recovery.md#an-editor-that-ended-before-it-answered) has the
+steps. godot-mcp 0.5.0 and earlier keep such a change quarantined for good.
 
 ## Resolving a quarantine
 
@@ -61,7 +67,7 @@ godot-mcp transaction repair \
   --dry-run
 ```
 
-`reconcile` reports the transition the proof would allow and records nothing; `compensate`,
+`reconcile` reports the transition the proof would allow and records no transition; `compensate`,
 `terminate` and `acknowledge-safe-state` record one transition each, and only when the server
 re-derives the proof itself and it holds. Start with `reconcile`, or with `--dry-run` on the
 operation you intend. The [recovery reference](../../operator/recovery.md) describes every proof

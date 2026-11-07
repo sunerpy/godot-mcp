@@ -20,4 +20,4 @@ than only what was decided.
 | [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch (amended by 0014 and 0015) |
 | [0013](0013-editor-restart.md) | The editor is restarted only when nothing it holds can be lost |
 | [0014](0014-open-http-mode.md) | An open HTTP mode for development networks |
-| [0015](0015-late-editor-answers.md) | A quarantined editor change is settled by the editor's late answer |
+| [0015](0015-unanswered-editor-changes.md) | An unanswered editor change is settled by its late answer, or once its editor has ended |

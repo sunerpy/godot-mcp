@@ -105,7 +105,21 @@ pub(crate) fn has_ended(recorded: &EditorProcess) -> Result<bool, String> {
     if !procfs::observations_available() {
         return Err("this platform cannot observe process identity".to_owned());
     }
-    match procfs::process_identity(recorded.pid) {
+    ended(recorded, procfs::process_identity(recorded.pid))
+}
+
+/// Whether `observed`, what the platform reports for the recorded process's
+/// id now, shows that process has ended. A live process whose start time
+/// cannot be read may still be the editor, so it proves nothing.
+fn ended(
+    recorded: &EditorProcess,
+    observed: io::Result<Option<ProcessIdentity>>,
+) -> Result<bool, String> {
+    match observed {
+        Ok(Some(identity)) if identity.start_time.is_none() => Err(format!(
+            "pid {} runs a process whose start time cannot be read",
+            recorded.pid
+        )),
         Ok(Some(identity)) => {
             Ok(!identity.matches_recorded(recorded.pid, Some(&recorded.start_time), None))
         }
@@ -231,6 +245,28 @@ mod tests {
             None,
             "an editor that names no executable is not identified"
         );
+    }
+
+    #[test]
+    fn a_live_process_whose_start_time_cannot_be_read_is_not_taken_for_ended() {
+        let recorded = EditorProcess {
+            pid: 4242,
+            start_time: "1000".to_owned(),
+        };
+        assert!(
+            ended(&recorded, Ok(Some(identity(4242, None)))).is_err(),
+            "a live process the host cannot date may still be the editor"
+        );
+        assert_eq!(
+            ended(&recorded, Ok(Some(identity(4242, Some("1000"))))),
+            Ok(false)
+        );
+        assert_eq!(
+            ended(&recorded, Ok(Some(identity(4242, Some("2000"))))),
+            Ok(true)
+        );
+        assert_eq!(ended(&recorded, Ok(None)), Ok(true));
+        assert!(ended(&recorded, Err(io::Error::other("no process table"))).is_err());
     }
 
     #[test]

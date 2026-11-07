@@ -167,6 +167,12 @@ on this server or on the next one for the project. `health.get` then counts no q
 transaction in its `journal` section. See
 [Late editor answers](recovery.md#late-editor-answers).
 
+When that editor crashed or was closed before it answered, no answer will come. Stop the
+server and settle the transaction with a `writer-ended` proof and
+`--operation acknowledge-safe-state`; the command refuses while the editor process the record
+names still runs. See
+[An editor that ended before it answered](recovery.md#an-editor-that-ended-before-it-answered).
+
 Any other quarantine does not clear itself. Diagnose it, then resolve it deliberately:
 
 ```sh
@@ -178,15 +184,8 @@ godot-mcp transaction repair \
   --dry-run
 ```
 
-Read the report before recording anything. `reconcile` writes nothing. See
+Read the report before recording anything. `reconcile` changes no transaction. See
 [Recovery](recovery.md) for the four operations and what each proves.
-
-When the quarantined transaction is an editor mutation the editor never answered —
-`editor.script.run` past its deadline, or an editor that crashed or was closed
-mid-request — close that editor and stop the server, then settle it with a
-`writer-ended` proof and `--operation acknowledge-safe-state`. The command refuses
-while the editor process the record names still runs. See
-[An editor that ended before it answered](recovery.md#an-editor-that-ended-before-it-answered).
 
 ### `terminate applies only to a process_launch transaction, not ...`
 
