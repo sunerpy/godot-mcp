@@ -111,8 +111,8 @@ game pauses or unpauses the tree ends there with the outcome `interfered`.
 frame, so no frame goes unseen when several run in one idle frame. `input.replay` with
 `schedule: physics_frame` delivers each event so that the game sees it in the physics frame its
 `frame` names: your `_input` receives it at the end of the frame before, and your
-`_physics_process` sees it pressed and just pressed in that frame. A recording gives every event
-its `frame`, so it replays by frame as it is.
+`_physics_process` sees it pressed, with `Input.is_action_just_pressed()` true, in that frame. A
+recording gives every event its `frame`, so it replays by frame as it is.
 
 godot-mcp 0.6.0 and earlier cannot step a game, and sample and replay by time only.
 
