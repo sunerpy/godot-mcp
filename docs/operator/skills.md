@@ -1,6 +1,6 @@
 # Agent Skills
 
-godot-mcp carries three Agent Skills: instruction files an agent loads only when a task
+godot-mcp carries four Agent Skills: instruction files an agent loads only when a task
 needs them, so how a multi-step job is done is in the agent's context while it does that
 job and not otherwise. `godot-mcp skill install` copies them into the skill directories of
 the agents you use. The `skill` commands write only those directories; they read no Godot
@@ -9,6 +9,7 @@ project, start no server and need no Godot build.
 | Skill | The agent loads it when | It covers |
 | --- | --- | --- |
 | `godot-mcp` | reading or changing a Godot project through godot-mcp | what the server is made of, reading before writing, scenes the editor has open, recipes, `call_method` for an AnimationTree state machine, a TileMapLayer and a Theme, typed values, and what each answer means |
+| `godot-mcp-export` | exporting, building or packaging the game | presets and export templates, a project export, a pack or a patch, following an export, reading its outputs, cancelling, and installing an APK on an Android device |
 | `godot-mcp-playtest` | running, playing or testing the game | starting a session, waiting, input, reading the running game, a `test.scenario.run` scenario, captures and image comparisons, game speed, recording and replay, and stopping the session |
 | `godot-mcp-setup` | installing, connecting or diagnosing godot-mcp, before any of its tools exists | the installer and `self-check`, client configuration, profiles, the Godot build, the editor add-on, these skills, the HTTP modes and reading `health.get` |
 
@@ -45,9 +46,10 @@ Every command prints one line per agent and skill, then a total:
 
 ```text
 claude: godot-mcp: installed /path/to/my-game/.claude/skills/godot-mcp
+claude: godot-mcp-export: installed /path/to/my-game/.claude/skills/godot-mcp-export
 claude: godot-mcp-playtest: installed /path/to/my-game/.claude/skills/godot-mcp-playtest
 claude: godot-mcp-setup: installed /path/to/my-game/.claude/skills/godot-mcp-setup
-install: written 3, up to date 0, skipped 0, errors 0
+install: written 4, up to date 0, skipped 0, errors 0
 ```
 
 The exit status is 1 when any skill could not be processed, and 0 otherwise, also when a

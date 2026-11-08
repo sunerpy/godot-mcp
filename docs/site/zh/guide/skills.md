@@ -9,6 +9,7 @@ godot-mcp 的每个工具只说明它自己。几个工具怎样配合完成一�
 | Skill | Agent 在这些时候加载它 |
 | --- | --- |
 | `godot-mcp` | 通过 godot-mcp 读取或修改你的项目 |
+| `godot-mcp-export` | 导出、构建或打包游戏 |
 | `godot-mcp-playtest` | 运行、试玩或测试游戏 |
 | `godot-mcp-setup` | 安装、连接或排查 godot-mcp |
 
@@ -18,7 +19,7 @@ godot-mcp 的每个工具只说明它自己。几个工具怎样配合完成一�
 godot-mcp skill install
 ```
 
-这条命令在你的主目录里查找各个 Agent 的配置目录（例如 Claude Code 的 `~/.claude`），把三个 skill 复制进找到的每个 Agent 的 skill 目录；一个都没找到时，装给 Claude Code。每个 skill 只有一个 `SKILL.md` 文件，由 `godot-mcp` 二进制自带，所以装上的总是与这个二进制同一版本的 skill。
+这条命令在你的主目录里查找各个 Agent 的配置目录（例如 Claude Code 的 `~/.claude`），把四个 skill 复制进找到的每个 Agent 的 skill 目录；一个都没找到时，装给 Claude Code。每个 skill 只有一个 `SKILL.md` 文件，由 `godot-mcp` 二进制自带，所以装上的总是与这个二进制同一版本的 skill。
 
 要指定 Agent，就用 `--target` 写出它们的名字：
 

@@ -80,6 +80,12 @@ pub const SKILL_BUDGETS: &[SkillBudget] = &[
         max_lines: 340,
         max_bytes: 20_500,
     },
+    // Measured at 187 lines and 12,201 bytes.
+    SkillBudget {
+        name: "godot-mcp-export",
+        max_lines: 210,
+        max_bytes: 13_500,
+    },
     // Measured at 233 lines and 13,801 bytes.
     SkillBudget {
         name: "godot-mcp-playtest",

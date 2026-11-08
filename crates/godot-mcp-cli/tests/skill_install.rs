@@ -259,6 +259,20 @@ fn the_embedded_skills_are_exactly_the_repository_skills_directory() {
 }
 
 #[test]
+fn the_binary_carries_four_skills_in_the_order_commands_process_them() {
+    let names: Vec<&str> = SKILLS.iter().map(|skill| skill.name).collect();
+    assert_eq!(
+        names,
+        [
+            "godot-mcp",
+            "godot-mcp-export",
+            "godot-mcp-playtest",
+            "godot-mcp-setup",
+        ]
+    );
+}
+
+#[test]
 fn a_fresh_install_writes_every_skill_and_its_marker() {
     let sandbox = Sandbox::new();
     let before = now();
@@ -296,7 +310,7 @@ fn a_fresh_install_writes_every_skill_and_its_marker() {
         );
     }
     assert!(
-        report.ends_with("install: written 3, up to date 0, skipped 0, errors 0\n"),
+        report.ends_with("install: written 4, up to date 0, skipped 0, errors 0\n"),
         "{report}"
     );
 }
@@ -383,7 +397,7 @@ fn a_changed_skill_is_skipped_and_force_overwrites_it() {
         assert_eq!(
             summary,
             Summary {
-                unchanged: 2,
+                unchanged: 3,
                 skipped: 1,
                 ..Summary::default()
             }
@@ -531,9 +545,9 @@ fn a_skill_md_that_is_not_a_regular_file_is_an_error_even_with_force() {
             assert_eq!(summary.errors, 1, "{kind:?} with {label}:\n{report}");
             assert_eq!(summary.exit_status(), 1);
             if request.action == Action::Uninstall {
-                assert_eq!(summary.removed, 2, "the other skills are still removed");
+                assert_eq!(summary.removed, 3, "the other skills are still removed");
             } else {
-                assert_eq!(summary.written, 2, "the other skills are still written");
+                assert_eq!(summary.written, 3, "the other skills are still written");
             }
             assert_eq!(snapshot(&dir), bad_before, "{kind:?} with {label}");
             assert_eq!(snapshot(&outside), outside_before, "{kind:?} with {label}");
@@ -659,7 +673,7 @@ fn linked_skill_directories_are_followed() {
     .unwrap();
     let (summary, report) = sandbox.run(&forced(Action::Install, "claude"));
     assert_eq!(summary.errors, 2, "{report}");
-    assert_eq!(summary.written, 1);
+    assert_eq!(summary.written, 2);
     assert!(
         line_for(&report, "claude", "godot-mcp")
             .ends_with("is a symbolic link to something that is not a directory")
@@ -750,7 +764,7 @@ fn a_skill_md_that_is_not_utf8_is_skipped_without_force_and_overwritten_with_for
         assert_eq!(
             summary,
             Summary {
-                unchanged: 2,
+                unchanged: 3,
                 skipped: 1,
                 ..Summary::default()
             },
@@ -917,8 +931,8 @@ fn a_matching_skill_gets_its_marker_rewritten() {
 #[test]
 fn update_dry_run_writes_nothing() {
     let sandbox = Sandbox::new();
-    // godot-mcp is absent; godot-mcp-playtest is an older version godot-mcp
-    // wrote; godot-mcp-setup was changed by its user.
+    // godot-mcp and godot-mcp-export are absent; godot-mcp-playtest is an older
+    // version godot-mcp wrote; godot-mcp-setup was changed by its user.
     let older = sandbox.skill_dir("godot-mcp-playtest");
     put_older_version(&older, "An older skill.\n");
     let changed = sandbox.skill_dir("godot-mcp-setup");
@@ -939,7 +953,7 @@ fn update_dry_run_writes_nothing() {
     assert_eq!(
         summary,
         Summary {
-            written: 2,
+            written: 3,
             skipped: 1,
             ..Summary::default()
         }
@@ -949,6 +963,13 @@ fn update_dry_run_writes_nothing() {
         format!(
             "claude: godot-mcp: would install {}",
             sandbox.skill_dir("godot-mcp").display()
+        )
+    );
+    assert_eq!(
+        line_for(&report, "claude", "godot-mcp-export"),
+        format!(
+            "claude: godot-mcp-export: would install {}",
+            sandbox.skill_dir("godot-mcp-export").display()
         )
     );
     assert_eq!(
@@ -966,7 +987,7 @@ fn update_dry_run_writes_nothing() {
     );
     assert!(
         report.ends_with(
-            "update --dry-run wrote nothing: would write 2, up to date 0, would skip 1, errors 0\n"
+            "update --dry-run wrote nothing: would write 3, up to date 0, would skip 1, errors 0\n"
         ),
         "{report}"
     );
@@ -1078,7 +1099,7 @@ fn uninstall_removes_what_godot_mcp_wrote_and_keeps_changed_files() {
     assert_eq!(
         summary,
         Summary {
-            removed: 2,
+            removed: 3,
             kept: 1,
             ..Summary::default()
         }
@@ -1102,6 +1123,13 @@ fn uninstall_removes_what_godot_mcp_wrote_and_keeps_changed_files() {
     );
     assert!(!older.exists(), "the emptied skill directory is removed");
     assert_eq!(
+        line_for(&report, "claude", "godot-mcp-export"),
+        format!(
+            "claude: godot-mcp-export: removed {}",
+            sandbox.skill_dir("godot-mcp-export").display()
+        )
+    );
+    assert_eq!(
         line_for(&report, "claude", "godot-mcp-setup"),
         format!(
             "claude: godot-mcp-setup: removed {}; kept the directory, which holds other files",
@@ -1114,7 +1142,7 @@ fn uninstall_removes_what_godot_mcp_wrote_and_keeps_changed_files() {
         "the agent's skills directory stays"
     );
     assert!(
-        report.ends_with("uninstall: removed 2, kept 1, not installed 0, errors 0\n"),
+        report.ends_with("uninstall: removed 3, kept 1, not installed 0, errors 0\n"),
         "{report}"
     );
 
@@ -1127,7 +1155,7 @@ fn uninstall_removes_what_godot_mcp_wrote_and_keeps_changed_files() {
         summary,
         Summary {
             kept: 1,
-            absent: 2,
+            absent: 3,
             ..Summary::default()
         }
     );
@@ -1148,6 +1176,13 @@ fn uninstall_removes_what_godot_mcp_wrote_and_keeps_changed_files() {
     );
     assert!(!older.exists());
     assert_eq!(
+        line_for(&report, "claude", "godot-mcp-export"),
+        format!(
+            "claude: godot-mcp-export: not installed {}",
+            sandbox.skill_dir("godot-mcp-export").display()
+        )
+    );
+    assert_eq!(
         line_for(&report, "claude", "godot-mcp-setup"),
         format!(
             "claude: godot-mcp-setup: not installed {}",
@@ -1166,10 +1201,10 @@ fn status_reports_each_state_and_changes_nothing() {
     sandbox.run(&request(Action::Install, "claude,codex"));
     let claude = sandbox.claude_skills();
     let codex = sandbox.home.join(".agents").join("skills");
-    // claude: not installed, up to date, update available.
+    // claude: not installed, up to date twice, update available.
     fs::remove_dir_all(claude.join("godot-mcp")).unwrap();
     put_older_version(&claude.join("godot-mcp-setup"), "An older skill.\n");
-    // codex: modified, error, modified without a marker.
+    // codex: modified, up to date, error, modified without a marker.
     fs::write(codex.join("godot-mcp").join(SKILL_FILE), "Mine.\n").unwrap();
     let playtest = codex.join("godot-mcp-playtest").join(SKILL_FILE);
     fs::remove_file(&playtest).unwrap();
@@ -1184,7 +1219,7 @@ fn status_reports_each_state_and_changes_nothing() {
         summary,
         Summary {
             absent: 1,
-            unchanged: 1,
+            unchanged: 3,
             outdated: 1,
             modified: 2,
             errors: 1,
@@ -1196,6 +1231,10 @@ fn status_reports_each_state_and_changes_nothing() {
         format!(
             "claude: godot-mcp: not installed {}",
             claude.join("godot-mcp").display()
+        ),
+        format!(
+            "claude: godot-mcp-export: up to date {} ({VERSION})",
+            claude.join("godot-mcp-export").display()
         ),
         format!(
             "claude: godot-mcp-playtest: up to date {} ({VERSION})",
@@ -1210,6 +1249,10 @@ fn status_reports_each_state_and_changes_nothing() {
             codex.join("godot-mcp").display()
         ),
         format!(
+            "codex: godot-mcp-export: up to date {} ({VERSION})",
+            codex.join("godot-mcp-export").display()
+        ),
+        format!(
             "codex: godot-mcp-playtest: error {}: {} is a directory, not a regular file",
             codex.join("godot-mcp-playtest").display(),
             playtest.display()
@@ -1219,7 +1262,7 @@ fn status_reports_each_state_and_changes_nothing() {
              so godot-mcp cannot tell it wrote it",
             codex.join("godot-mcp-setup").display()
         ),
-        "status: not installed 1, up to date 1, update available 1, modified 2, errors 1"
+        "status: not installed 1, up to date 3, update available 1, modified 2, errors 1"
             .to_owned(),
     ];
     assert_eq!(report.lines().collect::<Vec<_>>(), expected);
