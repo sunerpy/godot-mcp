@@ -20,6 +20,10 @@ mod router_harness;
 mod scheduler_harness;
 mod task34_fixture;
 
+/// Whether a request conforms to the schema a tool advertises, as far as the
+/// partial checker the schema tests use can tell; a keyword it does not know
+/// panics instead of passing.
+pub use crate::schema::conformance::conforms;
 pub use audit_limits_harness::{
     AttemptRefusal, AttemptReport, AttemptSpec, AuditLimitsConfig, AuditLimitsHarness,
     KernelAuditCallReport, LimitGate, NegativeCallReport,

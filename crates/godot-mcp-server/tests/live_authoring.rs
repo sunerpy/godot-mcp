@@ -8,7 +8,8 @@
 //! scene holds; in the editor it also undoes and redoes the edit and checks
 //! the scene digest each time. Like the live-editor suite it needs real
 //! editors, named by `GODOT_MCP_TEST_EDITORS` or `GODOT_MCP_LOCKED_ARTIFACT`,
-//! so every case is ignored on a plain `cargo test`.
+//! so every case is ignored on a plain `cargo test`; only the check that the
+//! requests they send conform to the advertised schemas runs without one.
 
 #![cfg(target_os = "linux")]
 
@@ -18,6 +19,7 @@ mod support;
 
 use std::path::Path;
 
+use godot_mcp_server::test_support::conforms;
 use live::{Editor, digest_of, editors, ok, project_with_addon, wait_connected};
 use serde_json::{Value, json};
 use support::{ProjectTree, Spawn, StdioSession, sha256_hex};
@@ -682,6 +684,32 @@ fn generic_settings() -> Vec<(&'static str, Value)> {
     ]
 }
 
+/// The `set_setting` operations that write [`generic_settings`].
+fn setting_operations() -> Vec<Value> {
+    generic_settings()
+        .into_iter()
+        .map(|(setting, value)| json!({ "op": "set_setting", "setting": setting, "value": value }))
+        .collect()
+}
+
+/// The write the editor applies, which makes it save every setting it holds.
+fn marker_setting() -> Value {
+    json!({
+        "op": "set_setting",
+        "setting": "live/values/marker",
+        "value": tagged("string", json!("saved by the editor"))
+    })
+}
+
+/// A project setting the editor erases and a built-in one it puts back to its
+/// default.
+fn cleared_settings() -> Value {
+    json!([
+        { "op": "clear_setting", "setting": "live/values/table" },
+        { "op": "clear_setting", "setting": "layer_names/2d_physics/layer_1" }
+    ])
+}
+
 /// The tagged value `project.settings.get` answers for each named setting,
 /// with the literal the file holds.
 fn selected(session: &mut StdioSession, id: u64, names: &[&str], context: &str) -> Value {
@@ -729,10 +757,7 @@ fn generic_settings_reach_godot_and_read_back_in(binary: &Path) {
         .as_str()
         .expect("sha256")
         .to_owned();
-    let operations: Vec<Value> = settings
-        .iter()
-        .map(|(setting, value)| json!({ "op": "set_setting", "setting": setting, "value": value }))
-        .collect();
+    let operations = setting_operations();
     let written = ok(
         &session.call_tool(
             ids.next(),
@@ -764,11 +789,7 @@ fn generic_settings_reach_godot_and_read_back_in(binary: &Path) {
             "project.settings.patch",
             json!({
                 "expectedSha256": sha,
-                "operations": [{
-                    "op": "set_setting",
-                    "setting": "live/values/marker",
-                    "value": tagged("string", json!("saved by the editor"))
-                }],
+                "operations": [marker_setting()],
                 "idempotencyId": "generic-editor"
             }),
         ),
@@ -807,10 +828,7 @@ fn generic_settings_reach_godot_and_read_back_in(binary: &Path) {
             "project.settings.patch",
             json!({
                 "expectedSha256": sha,
-                "operations": [
-                    { "op": "clear_setting", "setting": "live/values/table" },
-                    { "op": "clear_setting", "setting": "layer_names/2d_physics/layer_1" }
-                ],
+                "operations": cleared_settings(),
                 "idempotencyId": "generic-clear"
             }),
         ),
@@ -896,6 +914,30 @@ fn bake_operations() -> Vec<Value> {
         json!({ "op": "call_method", "node": "Region", "method": "bake_navigation_mesh" }),
         json!({ "op": "call_method", "node": "Region2D", "method": "bake_navigation_polygon",
                 "arguments": [tagged("bool", json!(false))] }),
+    ]
+}
+
+/// Bakes the helper refuses, each with what its refusal says.
+fn refused_bakes() -> Vec<(Value, &'static str)> {
+    vec![
+        (
+            json!({ "op": "call_method", "node": "Region", "method": "bake_navigation_mesh",
+                    "arguments": [tagged("bool", json!(true))] }),
+            "on_thread must be false",
+        ),
+        (
+            json!({ "op": "call_method", "node": "Region", "method": "bake_navigation_mesh",
+                    "repeat": [[], []] }),
+            "`repeat` does not apply",
+        ),
+        (
+            json!({ "op": "call_method", "node": "Bare", "method": "bake_navigation_mesh" }),
+            "holds no navigation_mesh",
+        ),
+        (
+            json!({ "op": "call_method", "node": "Linked", "method": "bake_navigation_mesh" }),
+            "res://linked.tres",
+        ),
     ]
 }
 
@@ -1003,26 +1045,7 @@ fn navigation_bakes_finish_before_the_batch_goes_on_in(binary: &Path) {
         "{context}: a headless bake ran no project code"
     );
     let saved_sha = sha256_hex(saved.as_bytes());
-    for (operation, why) in [
-        (
-            json!({ "op": "call_method", "node": "Region", "method": "bake_navigation_mesh",
-                    "arguments": [tagged("bool", json!(true))] }),
-            "on_thread must be false",
-        ),
-        (
-            json!({ "op": "call_method", "node": "Region", "method": "bake_navigation_mesh",
-                    "repeat": [[], []] }),
-            "`repeat` does not apply",
-        ),
-        (
-            json!({ "op": "call_method", "node": "Bare", "method": "bake_navigation_mesh" }),
-            "holds no navigation_mesh",
-        ),
-        (
-            json!({ "op": "call_method", "node": "Linked", "method": "bake_navigation_mesh" }),
-            "res://linked.tres",
-        ),
-    ] {
+    for (operation, why) in refused_bakes() {
         let refused = session.call_tool(
             3,
             "scene.batch.apply",
@@ -1128,6 +1151,23 @@ fn navigation_bakes_finish_before_the_batch_goes_on_in(binary: &Path) {
 const BUS_LAYOUT: &str =
     "[gd_resource type=\"AudioBusLayout\" format=3]\n\n[resource]\nbus/0/volume_db = 0.0\n";
 
+/// A second bus, with a level, a send and one enabled effect.
+fn bus_operations() -> Value {
+    json!([
+        { "op": "set_property", "property": "bus/1/name", "value": name("Music") },
+        { "op": "set_property", "property": "bus/1/volume_db", "value": number(-6.0) },
+        { "op": "set_property", "property": "bus/1/send", "value": name("Master") },
+        { "op": "set_subresource", "property": "bus/1/effect/0/effect", "class": "AudioEffectReverb",
+          "properties": { "room_size": number(0.6) } },
+        { "op": "set_property", "property": "bus/1/effect/0/enabled", "value": tagged("bool", json!(true)) },
+    ])
+}
+
+/// A write to a name that is no bus field.
+fn unknown_bus_field() -> Value {
+    json!({ "op": "set_property", "property": "bus/1/loudness", "value": number(1.0) })
+}
+
 #[test]
 #[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
 fn a_bus_layout_gains_buses_and_effects_in_its_file() {
@@ -1142,14 +1182,7 @@ fn a_bus_layout_gains_buses_and_effects_in_its_file_in(binary: &Path) {
     let tree = ProjectTree::new("live-bus-layout");
     tree.write("default_bus_layout.tres", BUS_LAYOUT);
     let mut session = headless(&tree, binary);
-    let operations = json!([
-        { "op": "set_property", "property": "bus/1/name", "value": name("Music") },
-        { "op": "set_property", "property": "bus/1/volume_db", "value": number(-6.0) },
-        { "op": "set_property", "property": "bus/1/send", "value": name("Master") },
-        { "op": "set_subresource", "property": "bus/1/effect/0/effect", "class": "AudioEffectReverb",
-          "properties": { "room_size": number(0.6) } },
-        { "op": "set_property", "property": "bus/1/effect/0/enabled", "value": tagged("bool", json!(true)) },
-    ]);
+    let operations = bus_operations();
     ok(
         &session.call_tool(
             2,
@@ -1184,7 +1217,7 @@ fn a_bus_layout_gains_buses_and_effects_in_its_file_in(binary: &Path) {
         json!({
             "path": "default_bus_layout.tres",
             "expectedSha256": sha256_hex(saved.as_bytes()),
-            "operations": [{ "op": "set_property", "property": "bus/1/loudness", "value": number(1.0) }],
+            "operations": [unknown_bus_field()],
             "idempotencyId": "bus-layout-refused"
         }),
     );
@@ -1274,6 +1307,46 @@ fn read_setup() -> Vec<Value> {
     ]
 }
 
+/// The calls a headless read of the read scene makes, in this order.
+fn scene_read_calls() -> Value {
+    let walk = || json!({ "animation": "walk" });
+    json!([
+        { "node": "Layer", "method": "get_used_cells" },
+        { "node": "Layer", "method": "get_cell_atlas_coords", "arguments": [vector2i(3, 4)] },
+        { "node": "Layer", "method": "get_cell_source_id", "arguments": [vector2i(9, 9)] },
+        { "node": "Line", "method": "get_point_count" },
+        { "node": "Player", "method": "get_animation_list" },
+        { "node": "Player", "resource": walk(), "method": "track_get_key_count", "arguments": [integer(0)] },
+        { "node": "Player", "resource": walk(), "method": "track_get_key_value", "arguments": [integer(0), integer(0)] },
+        { "node": "Player", "resource": walk(), "method": "track_get_key_count", "arguments": [integer(7)] },
+        { "node": "Player", "resource": { "animation": "run" }, "method": "get_length" },
+        { "node": "Region", "resource": { "property": "navigation_polygon" }, "method": "get_polygon_count" },
+        { "node": "Tree", "resource": { "property": "tree_root" }, "method": "get_node_list" },
+        { "node": "Tree", "resource": { "property": "tree_root" }, "method": "get_transition_count" },
+        { "node": "Layer", "method": "get_point_count" },
+        { "node": "Nope", "method": "get_point_count" }
+    ])
+}
+
+/// The calls a read of the curve makes.
+fn curve_read_calls() -> Value {
+    json!([
+        { "method": "get_point_count" },
+        { "method": "get_point_position", "arguments": [integer(1)] },
+        { "method": "sample", "arguments": [number(0.0)] }
+    ])
+}
+
+/// A read of the layer's painted cells alone.
+fn cells_call() -> Value {
+    json!({ "node": "Layer", "method": "get_used_cells" })
+}
+
+/// A call on the root, for a scene that cannot be read.
+fn root_call() -> Value {
+    json!({ "method": "get_used_cells" })
+}
+
 /// The version of Godot `binary` is, as `major.minor.patch`.
 fn version_of(binary: &Path) -> String {
     let output = std::process::Command::new(binary)
@@ -1323,30 +1396,11 @@ fn reads_answer_what_the_engine_holds_in(binary: &Path) {
         &context,
     );
     let painted = std::fs::read(tree.root.join("level.tscn")).expect("scene");
-    let walk = || json!({ "animation": "walk" });
     let answer = ok(
         &session.call_tool(
             3,
             "scene.read",
-            json!({
-                "path": "level.tscn",
-                "calls": [
-                    { "node": "Layer", "method": "get_used_cells" },
-                    { "node": "Layer", "method": "get_cell_atlas_coords", "arguments": [vector2i(3, 4)] },
-                    { "node": "Layer", "method": "get_cell_source_id", "arguments": [vector2i(9, 9)] },
-                    { "node": "Line", "method": "get_point_count" },
-                    { "node": "Player", "method": "get_animation_list" },
-                    { "node": "Player", "resource": walk(), "method": "track_get_key_count", "arguments": [integer(0)] },
-                    { "node": "Player", "resource": walk(), "method": "track_get_key_value", "arguments": [integer(0), integer(0)] },
-                    { "node": "Player", "resource": walk(), "method": "track_get_key_count", "arguments": [integer(7)] },
-                    { "node": "Player", "resource": { "animation": "run" }, "method": "get_length" },
-                    { "node": "Region", "resource": { "property": "navigation_polygon" }, "method": "get_polygon_count" },
-                    { "node": "Tree", "resource": { "property": "tree_root" }, "method": "get_node_list" },
-                    { "node": "Tree", "resource": { "property": "tree_root" }, "method": "get_transition_count" },
-                    { "node": "Layer", "method": "get_point_count" },
-                    { "node": "Nope", "method": "get_point_count" }
-                ]
-            }),
+            json!({ "path": "level.tscn", "calls": scene_read_calls() }),
         ),
         &context,
     );
@@ -1458,14 +1512,7 @@ fn reads_answer_what_the_engine_holds_in(binary: &Path) {
         &session.call_tool(
             4,
             "resource.read",
-            json!({
-                "path": "res://curve.tres",
-                "calls": [
-                    { "method": "get_point_count" },
-                    { "method": "get_point_position", "arguments": [integer(1)] },
-                    { "method": "sample", "arguments": [number(0.0)] }
-                ]
-            }),
+            json!({ "path": "res://curve.tres", "calls": curve_read_calls() }),
         ),
         &context,
     );
@@ -1478,7 +1525,7 @@ fn reads_answer_what_the_engine_holds_in(binary: &Path) {
     let missing = session.call_tool(
         5,
         "scene.read",
-        json!({ "path": "absent.tscn", "calls": [{ "method": "get_used_cells" }] }),
+        json!({ "path": "absent.tscn", "calls": [root_call()] }),
     );
     let message = refusal(&missing);
     assert!(message.contains("absent.tscn"), "{context}: {message}");
@@ -1570,7 +1617,7 @@ fn the_editor_reads_engine_values_as_it_holds_them_in(binary: &Path) {
         &session.call_tool(
             ids.next(),
             "editor.scene.read",
-            json!({ "calls": [{ "node": "Layer", "method": "get_used_cells" }] }),
+            json!({ "calls": [cells_call()] }),
         ),
         &context,
     );
@@ -1750,7 +1797,7 @@ fn the_editor_reads_engine_values_as_it_holds_them_in(binary: &Path) {
         &session.call_tool(
             ids.next(),
             "editor.scene.read",
-            json!({ "calls": [{ "node": "Layer", "method": "get_used_cells" }] }),
+            json!({ "calls": [cells_call()] }),
         ),
         &context,
     );
@@ -1765,7 +1812,7 @@ fn the_editor_reads_engine_values_as_it_holds_them_in(binary: &Path) {
     let closed = session.call_tool(
         ids.next(),
         "editor.scene.read",
-        json!({ "scene": "res://absent.tscn", "calls": [{ "method": "get_used_cells" }] }),
+        json!({ "scene": "res://absent.tscn", "calls": [root_call()] }),
     );
     let message = refusal(&closed);
     assert!(message.contains("absent.tscn"), "{context}: {message}");
@@ -2742,4 +2789,158 @@ fn graph_and_library_removals_land_in(binary: &Path) {
     editor.assert_no_errors_since(mark, "removing graph nodes, animations and cells");
     let _ = session.finish();
     drop(editor);
+}
+
+/// A node handle of the shape `scene.tree.get` gives, standing in for the one
+/// [`several_files_land_together_or_not_at_all_in`] reads.
+const HANDLE: &str = "nh1:0123456789abcdef0123456789abcdef";
+
+/// A 64-digit hash standing in for a file's hash or a scene digest a case
+/// reads at run time.
+const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// Every request the cases above send with operations or calls, built as they
+/// build it; a value a case reads at run time is one of the same shape.
+fn sent_requests() -> Vec<(&'static str, Value)> {
+    let batch = |path: &str, operations: Value| {
+        json!({ "path": path, "expectedSha256": HASH, "operations": operations,
+                "idempotencyId": "schemas" })
+    };
+    let edit = |operations: Value, label: Option<&str>| {
+        let mut arguments =
+            json!({ "expectedDigest": HASH, "operations": operations, "idempotencyId": "schemas" });
+        if let Some(label) = label {
+            arguments["label"] = json!(label);
+        }
+        arguments
+    };
+    let patch = |operations: Value| json!({ "expectedSha256": HASH, "operations": operations, "idempotencyId": "schemas" });
+    let files = |sun_property: &str, theme_sha: &str| json!({ "files": batch_files(HANDLE, sun_property, theme_sha), "idempotencyId": "schemas" });
+    let theme_sha = sha256_hex(BATCH_THEME.as_bytes());
+    let (paths, _) = path_operations();
+    let mut shared = batch("main.tscn", json!([shared_call()]));
+    shared["dryRun"] = json!(true);
+    let mut dry = files("light_energy", &theme_sha);
+    dry["dryRun"] = json!(true);
+    let mut requests = vec![
+        ("scene.batch.apply", batch("main.tscn", json!(paths))),
+        ("editor.scene.edit", edit(json!(paths), Some("paths"))),
+        ("scene.batch.apply", shared),
+        ("editor.scene.edit", edit(json!([shared_call()]), None)),
+        (
+            "scene.batch.apply",
+            batch("main.tscn", json!(class_operations())),
+        ),
+        ("editor.scene.edit", edit(json!(class_operations()), None)),
+        ("project.settings.patch", patch(json!(setting_operations()))),
+        ("project.settings.patch", patch(json!([marker_setting()]))),
+        ("project.settings.patch", patch(cleared_settings())),
+        (
+            "scene.batch.apply",
+            batch("main.tscn", json!(bake_operations())),
+        ),
+        (
+            "editor.scene.edit",
+            edit(json!(bake_operations()), Some("bake")),
+        ),
+        (
+            "resource.batch.apply",
+            batch("default_bus_layout.tres", bus_operations()),
+        ),
+        (
+            "resource.batch.apply",
+            batch("default_bus_layout.tres", json!([unknown_bus_field()])),
+        ),
+        (
+            "scene.batch.apply",
+            batch("level.tscn", json!(read_setup())),
+        ),
+        (
+            "scene.read",
+            json!({ "path": "level.tscn", "calls": scene_read_calls() }),
+        ),
+        (
+            "resource.read",
+            json!({ "path": "res://curve.tres", "calls": curve_read_calls() }),
+        ),
+        (
+            "scene.read",
+            json!({ "path": "absent.tscn", "calls": [root_call()] }),
+        ),
+        ("editor.scene.read", json!({ "calls": [cells_call()] })),
+        (
+            "editor.scene.edit",
+            edit(json!(read_setup()), Some("reads")),
+        ),
+        (
+            "editor.scene.read",
+            json!({ "scene": "res://level.tscn", "calls": editor_read_calls() }),
+        ),
+        (
+            "editor.scene.read",
+            json!({ "scene": "res://absent.tscn", "calls": [root_call()] }),
+        ),
+        ("project.batch.apply", dry),
+        ("project.batch.apply", files("no_such_property", &theme_sha)),
+        (
+            "project.batch.apply",
+            files("light_energy", &"0".repeat(64)),
+        ),
+        ("project.batch.apply", files("light_energy", &theme_sha)),
+        ("scene.batch.apply", batch("main.tscn", unkept_bus())),
+        ("editor.scene.edit", edit(unkept_bus(), Some("unkept"))),
+        (
+            "scene.batch.apply",
+            batch("main.tscn", structure_operations()),
+        ),
+        (
+            "editor.scene.edit",
+            edit(structure_operations(), Some("structure")),
+        ),
+        ("scene.batch.apply", batch("main.tscn", graph_operations())),
+        ("editor.scene.edit", edit(graph_operations(), Some("graph"))),
+    ];
+    for (operation, _) in refused_paths() {
+        requests.push((
+            "scene.batch.apply",
+            batch("main.tscn", json!([operation.clone()])),
+        ));
+        requests.push(("editor.scene.edit", edit(json!([operation]), None)));
+    }
+    for (operation, _) in refused_bakes() {
+        requests.push(("scene.batch.apply", batch("main.tscn", json!([operation]))));
+    }
+    requests
+}
+
+/// Every request the cases above send with operations or calls conforms to
+/// the schema its tool advertises, so a client that checks its arguments
+/// against `tools/list` can send each one as they do. It needs no engine.
+#[test]
+fn every_request_these_cases_send_conforms_to_its_advertised_schema() {
+    let tree = ProjectTree::new("live-authoring-schemas");
+    let mut session = StdioSession::initialized(&Spawn {
+        project: &tree.root,
+        current_dir: None,
+        profile: "full",
+        godot: None,
+    });
+    let listed = session.request(2, "tools/list", json!({}));
+    let _ = session.finish();
+    let tools = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("tools/list must answer: {listed}"));
+    let schema_of = |tool: &str| {
+        tools
+            .iter()
+            .find(|listed| listed["name"] == json!(tool))
+            .map(|listed| &listed["inputSchema"])
+            .unwrap_or_else(|| panic!("the full profile lists {tool}"))
+    };
+    for (index, (tool, arguments)) in sent_requests().iter().enumerate() {
+        assert!(
+            conforms(schema_of(tool), arguments),
+            "request {index}: the {tool} schema refuses {arguments}"
+        );
+    }
 }

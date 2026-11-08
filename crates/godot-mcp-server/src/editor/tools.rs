@@ -46,8 +46,9 @@ use crate::workspace::WorkspaceCoordinator;
 
 /// How long an editor read or mutation may take.
 const EDITOR_TIMEOUT: Duration = Duration::from_secs(30);
-/// Longest node path or class name accepted.
-const MAX_NAME_BYTES: usize = 1024;
+/// Longest node path a node read or a selection takes, in characters:
+/// Unicode scalar values, as a schema's `maxLength` counts them.
+const MAX_NODE_PATH_CHARS: usize = 1024;
 /// Most nodes one selection names.
 const MAX_SELECTION: usize = 256;
 /// Most properties one node read names.
@@ -630,7 +631,7 @@ fn node_argument(arguments: &Map<String, Value>) -> Result<String, OutcomeError>
         }
     };
     if node.is_empty()
-        || node.len() > MAX_NAME_BYTES
+        || node.chars().count() > MAX_NODE_PATH_CHARS
         || node.starts_with('/')
         || node.split('/').any(|part| part.is_empty() || part == "..")
     {
@@ -640,6 +641,124 @@ fn node_argument(arguments: &Map<String, Value>) -> Result<String, OutcomeError>
         ));
     }
     Ok(node.clone())
+}
+
+/// What `editor.node.get` asks the editor: the scene, the node, and the
+/// properties to read when only some are named.
+fn node_read(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let scene = optional_scene(arguments)?;
+    let node = node_argument(arguments)?;
+    let properties = match arguments.get("properties") {
+        None => Value::Null,
+        Some(Value::Array(names))
+            if names.len() <= MAX_PROPERTIES
+                && names.iter().all(|name| {
+                    name.as_str()
+                        .is_some_and(|name| !name.is_empty() && name.chars().count() <= 256)
+                }) =>
+        {
+            Value::Array(names.clone())
+        }
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`properties` names at most {MAX_PROPERTIES} properties"),
+            ));
+        }
+    };
+    Ok(json!({
+        "scene": scene.unwrap_or_default(),
+        "node": node,
+        "properties": properties,
+    }))
+}
+
+/// What `editor.selection.set` asks the editor: the scene and the nodes to
+/// select.
+fn selection_request(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let scene = optional_scene(arguments)?;
+    let nodes: Vec<String> = arguments
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| outcome_error(ErrorKind::InvalidInput, "`nodes` is required"))?
+        .iter()
+        .map(|node| {
+            node.as_str()
+                .filter(|node| !node.is_empty() && node.chars().count() <= MAX_NODE_PATH_CHARS)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    outcome_error(
+                        ErrorKind::InvalidInput,
+                        "every node is a non-empty node path",
+                    )
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    if nodes.len() > MAX_SELECTION {
+        return Err(outcome_error(
+            ErrorKind::InvalidInput,
+            format!("at most {MAX_SELECTION} nodes may be selected"),
+        ));
+    }
+    Ok(json!({ "scene": scene.unwrap_or_default(), "nodes": nodes }))
+}
+
+/// What `editor.scene.edit` asks the editor: the scene, the digest it must
+/// still have, the operations, and the undo action's label, which names
+/// `tool` when the call names none.
+fn edit_request(arguments: &Map<String, Value>, tool: &str) -> Result<Value, OutcomeError> {
+    let scene = optional_scene(arguments)?;
+    let expected = arguments
+        .get("expectedDigest")
+        .and_then(Value::as_str)
+        .filter(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or_else(|| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                "`expectedDigest` is the 64-digit lowercase hex digest of the scene as the \
+                 editor holds it",
+            )
+        })?;
+    let operations = arguments
+        .get("operations")
+        .and_then(Value::as_array)
+        .filter(|operations| !operations.is_empty() && operations.len() <= MAX_EDIT_OPERATIONS)
+        .ok_or_else(|| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`operations` holds between 1 and {MAX_EDIT_OPERATIONS} operations"),
+            )
+        })?;
+    for (index, operation) in operations.iter().enumerate() {
+        crate::engine_plane::authored::validate_live_operation(operation, index)?;
+    }
+    let label = match arguments.get("label") {
+        None => tool.to_owned(),
+        Some(Value::String(label))
+            if !label.is_empty()
+                && label.chars().count() <= MAX_LABEL_CHARS
+                && !label.chars().any(char::is_control) =>
+        {
+            label.clone()
+        }
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`label` is 1 to {MAX_LABEL_CHARS} characters without control characters"),
+            ));
+        }
+    };
+    Ok(json!({
+        "scene": scene.unwrap_or_default(),
+        "expected_digest": expected,
+        "operations": operations,
+        "label": format!("godot-mcp: {label}"),
+    }))
 }
 
 /// A shortcut name, as the shortcut schemas take one.
@@ -1186,7 +1305,8 @@ impl EditorCall for EditorOperation {
                     "node": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": MAX_NAME_BYTES,
+                        "maxLength": MAX_NODE_PATH_CHARS,
+                        "pattern": format!("^{}$", crate::schema::relative_node_path("")),
                         "description": "Node path relative to the scene root (`.` is the root, the \
                                         default); a node inside an instanced scene may be read."
                     },
@@ -1356,7 +1476,7 @@ impl EditorCall for EditorOperation {
                     "nodes": {
                         "type": "array",
                         "maxItems": MAX_SELECTION,
-                        "items": { "type": "string", "minLength": 1, "maxLength": MAX_NAME_BYTES },
+                        "items": { "type": "string", "minLength": 1, "maxLength": MAX_NODE_PATH_CHARS },
                         "description": "Node paths relative to the scene root (`.` is the root); \
                                         empty clears the selection."
                     }
@@ -1388,6 +1508,7 @@ impl EditorCall for EditorOperation {
                         "type": "string",
                         "minLength": 1,
                         "maxLength": MAX_LABEL_CHARS,
+                        "pattern": crate::schema::NO_CONTROL_PATTERN,
                         "description": "Names the undo action, after `godot-mcp: `."
                     }
                 }),
@@ -2304,35 +2425,8 @@ impl KernelToolHandler for EditorHandler {
                         .await
                 }
                 EditorOperation::NodeGet => {
-                    let scene = optional_scene(arguments)?;
-                    let node = node_argument(arguments)?;
-                    let properties = match arguments.get("properties") {
-                        None => Value::Null,
-                        Some(Value::Array(names))
-                            if names.len() <= MAX_PROPERTIES
-                                && names.iter().all(|name| {
-                                    name.as_str()
-                                        .is_some_and(|name| !name.is_empty() && name.len() <= 256)
-                                }) =>
-                        {
-                            Value::Array(names.clone())
-                        }
-                        Some(_) => {
-                            return Err(outcome_error(
-                                ErrorKind::InvalidInput,
-                                format!("`properties` names at most {MAX_PROPERTIES} properties"),
-                            ));
-                        }
-                    };
                     runtime
-                        .ask(
-                            operation.bridge_method(),
-                            json!({
-                                "scene": scene.unwrap_or_default(),
-                                "node": node,
-                                "properties": properties,
-                            }),
-                        )
+                        .ask(operation.bridge_method(), node_read(arguments)?)
                         .await
                 }
                 EditorOperation::TypesSearch => {
@@ -2702,36 +2796,7 @@ impl KernelToolHandler for EditorHandler {
                     EditorScope::state(),
                 )
             }
-            EditorOperation::SelectionSet => {
-                let scene = optional_scene(arguments)?;
-                let nodes: Vec<String> = arguments
-                    .get("nodes")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| outcome_error(ErrorKind::InvalidInput, "`nodes` is required"))?
-                    .iter()
-                    .map(|node| {
-                        node.as_str()
-                            .filter(|node| !node.is_empty() && node.len() <= MAX_NAME_BYTES)
-                            .map(str::to_owned)
-                            .ok_or_else(|| {
-                                outcome_error(
-                                    ErrorKind::InvalidInput,
-                                    "every node is a non-empty node path",
-                                )
-                            })
-                    })
-                    .collect::<Result<_, _>>()?;
-                if nodes.len() > MAX_SELECTION {
-                    return Err(outcome_error(
-                        ErrorKind::InvalidInput,
-                        format!("at most {MAX_SELECTION} nodes may be selected"),
-                    ));
-                }
-                (
-                    json!({ "scene": scene.unwrap_or_default(), "nodes": nodes }),
-                    EditorScope::state(),
-                )
-            }
+            EditorOperation::SelectionSet => (selection_request(arguments)?, EditorScope::state()),
             EditorOperation::Undo | EditorOperation::Redo => {
                 let scene = optional_scene(arguments)?;
                 let save = match arguments.get("save") {
@@ -2761,70 +2826,7 @@ impl KernelToolHandler for EditorHandler {
                     EditorScope::files(files),
                 )
             }
-            EditorOperation::SceneEdit => {
-                let scene = optional_scene(arguments)?;
-                let expected = arguments
-                    .get("expectedDigest")
-                    .and_then(Value::as_str)
-                    .filter(|digest| {
-                        digest.len() == 64
-                            && digest
-                                .bytes()
-                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    })
-                    .ok_or_else(|| {
-                        outcome_error(
-                            ErrorKind::InvalidInput,
-                            "`expectedDigest` is the 64-digit lowercase hex digest of the scene \
-                             as the editor holds it",
-                        )
-                    })?;
-                let operations = arguments
-                    .get("operations")
-                    .and_then(Value::as_array)
-                    .filter(|operations| {
-                        !operations.is_empty() && operations.len() <= MAX_EDIT_OPERATIONS
-                    })
-                    .ok_or_else(|| {
-                        outcome_error(
-                            ErrorKind::InvalidInput,
-                            format!(
-                                "`operations` holds between 1 and {MAX_EDIT_OPERATIONS} operations"
-                            ),
-                        )
-                    })?;
-                for (index, operation) in operations.iter().enumerate() {
-                    crate::engine_plane::authored::validate_live_operation(operation, index)?;
-                }
-                let label = match arguments.get("label") {
-                    None => tool.to_owned(),
-                    Some(Value::String(label))
-                        if !label.is_empty()
-                            && label.chars().count() <= MAX_LABEL_CHARS
-                            && !label.chars().any(char::is_control) =>
-                    {
-                        label.clone()
-                    }
-                    Some(_) => {
-                        return Err(outcome_error(
-                            ErrorKind::InvalidInput,
-                            format!(
-                                "`label` is 1 to {MAX_LABEL_CHARS} characters without control \
-                                 characters"
-                            ),
-                        ));
-                    }
-                };
-                (
-                    json!({
-                        "scene": scene.unwrap_or_default(),
-                        "expected_digest": expected,
-                        "operations": operations,
-                        "label": format!("godot-mcp: {label}"),
-                    }),
-                    EditorScope::state(),
-                )
-            }
+            EditorOperation::SceneEdit => (edit_request(arguments, tool)?, EditorScope::state()),
             EditorOperation::SceneSave => {
                 let scene = optional_scene(arguments)?;
                 let all = match arguments.get("all") {
@@ -3059,6 +3061,113 @@ mod tests {
 
     fn integer(value: i64) -> Value {
         json!({ "type": "integer", "value": value })
+    }
+
+    /// The name cases of `rule`, each as the arguments `wrap` makes of it.
+    fn named(
+        rule: crate::schema::conformance::NameRule,
+        wrap: impl Fn(String) -> Value,
+    ) -> Vec<(Value, bool)> {
+        crate::schema::conformance::name_cases(rule, "", "")
+            .into_iter()
+            .map(|(name, expected)| (wrap(name), expected))
+            .collect()
+    }
+
+    /// A node read's node is 1 to 1024 characters, whatever the bytes each
+    /// takes, and a path relative to the scene root; its property names are
+    /// 1 to 256 characters. The check takes a control character in either,
+    /// so the schema does too.
+    #[test]
+    fn the_node_read_schema_and_its_check_agree() {
+        use crate::schema::conformance::NameRule;
+        let node = NameRule {
+            limit: MAX_NODE_PATH_CHARS,
+            empty: false,
+            control: false,
+        };
+        let property = NameRule { limit: 256, ..node };
+        let mut cases = named(node, |node| json!({ "node": node }));
+        cases.extend(named(property, |name| json!({ "properties": [name] })));
+        for (node, expected) in [
+            (".", true),
+            ("Player/Sprite", true),
+            ("..a/b..", true),
+            ("/root", false),
+            ("a/", false),
+            ("a//b", false),
+            ("..", false),
+            ("../a", false),
+            ("a/../b", false),
+        ] {
+            cases.push((json!({ "node": node }), expected));
+        }
+        cases.extend([
+            (json!({}), true),
+            (json!({ "properties": [] }), true),
+            (json!({ "node": 3 }), false),
+            (json!({ "properties": [3] }), false),
+        ]);
+        agree(EditorOperation::NodeGet, &cases, |arguments| {
+            node_read(arguments).is_ok()
+        });
+    }
+
+    /// A selected node is 1 to 1024 characters, whatever the bytes each
+    /// takes. The check takes any such string, so the schema does too.
+    #[test]
+    fn the_selection_schema_and_its_check_agree() {
+        let rule = crate::schema::conformance::NameRule {
+            limit: MAX_NODE_PATH_CHARS,
+            empty: false,
+            control: false,
+        };
+        let mut cases = named(rule, |node| json!({ "nodes": [node] }));
+        cases.extend([
+            (json!({ "nodes": [] }), true),
+            (json!({ "nodes": vec!["a"; MAX_SELECTION] }), true),
+            (json!({ "nodes": vec!["a"; MAX_SELECTION + 1] }), false),
+            (json!({ "nodes": [3] }), false),
+            (json!({}), false),
+        ]);
+        agree(EditorOperation::SelectionSet, &cases, |arguments| {
+            selection_request(arguments).is_ok()
+        });
+    }
+
+    /// A live edit's label is 1 to 96 characters without a control
+    /// character, and its operations are scene batch operations naming nodes
+    /// by path, signal callbacks included.
+    #[test]
+    fn the_live_edit_schema_and_its_check_agree() {
+        let rule = crate::schema::conformance::NameRule {
+            limit: MAX_LABEL_CHARS,
+            empty: false,
+            control: true,
+        };
+        let digest = "0".repeat(64);
+        let add = json!({ "op": "add_node", "name": "Enemy" });
+        let mut cases = named(
+            rule,
+            |label| json!({ "expectedDigest": digest, "operations": [add], "label": label }),
+        );
+        let connect = json!({ "op": "connect_signal", "from": "Area", "signal": "body_entered",
+                              "to": ".", "method": "_on_body_entered" });
+        cases.extend([
+            (
+                json!({ "expectedDigest": digest, "operations": [add] }),
+                true,
+            ),
+            (
+                json!({ "expectedDigest": digest, "operations": [connect] }),
+                true,
+            ),
+            (json!({ "expectedDigest": digest, "operations": [] }), false),
+            (json!({ "expectedDigest": "0", "operations": [add] }), false),
+        ]);
+        agree(EditorOperation::SceneEdit, &cases, |arguments| {
+            edit_request(arguments, "editor.scene.edit").is_ok()
+        });
     }
 
     #[test]

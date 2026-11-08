@@ -37,6 +37,8 @@ use godot_mcp_engine::validation::outcome::Observed;
 pub(crate) mod authored;
 mod batches;
 mod canonical;
+#[cfg(test)]
+mod documented;
 mod handler;
 mod journal;
 mod process;

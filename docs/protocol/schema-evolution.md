@@ -162,6 +162,32 @@ All of them are additions: a 0.4.0 client loses nothing, and a request it could 
 it meant. A 0.4.0 server refuses a configuration file with `mode = "open"`, as it refuses every
 unknown value.
 
+#### 0.6.0 corrections
+
+Release 0.6.0 corrects places where a tool's advertised schema and its own check disagreed.
+The contract stays 0.5.0: no data-transfer object, error variant or capability manifest changes
+shape.
+
+* In `scene.batch.apply`, `scene.create`, `editor.scene.edit` and `project.batch.apply`, the
+  `method` of `connect_signal` and `disconnect_signal` was advertised as `call_method`'s list of
+  editing methods, so a client that checks its arguments against `tools/list` could not send a
+  callback such as `_on_body_entered`, which the server takes. It is now a name like any other;
+  `call_method` keeps the list.
+* The length limit on a name, a node path or a property path counts characters, as Unicode
+  scalar values, the unit `maxLength` counts in, in `scene.batch.apply`, `scene.create`,
+  `resource.batch.apply`, `resource.create`, `project.batch.apply`, `editor.scene.edit`,
+  `scene.read`, `resource.read`, `editor.scene.read`, `editor.node.get`,
+  `editor.selection.set`, `project.settings.patch` and `project.create`. Their checks counted
+  UTF-8 bytes and refused a value of multi-byte characters that fit its limit in characters;
+  such a value is now taken. The limits themselves are unchanged.
+* Their schemas state the rules those checks already applied: the length limits they lacked,
+  no control character (U+0000 to U+001F and U+007F to U+009F) where the check refuses one, the
+  shape of a relative node path and of a node handle, the extension a scene or script path
+  needs, the characters an input action's name cannot hold, and that a project's name is not
+  white space alone.
+
+No request a 0.5.0 server took is refused.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an
