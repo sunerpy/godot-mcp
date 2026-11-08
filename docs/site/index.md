@@ -270,8 +270,10 @@ home:
     title: The engine, exactly
     intro: Every Godot build the project supports is an exact patch version in one lock, with its official download and digest. Each release has an archive for every platform below, smoke-tested there against the newest build.
     versions:
-      - version: 4.7.1
+      - version: 4.7.2
         detail: Editor check, export templates, display check and the packaged smoke, on Linux, macOS and Windows
+      - version: 4.7.1
+        detail: Editor check and export templates, on Linux
       - version: 4.6.1
         detail: Editor check and export templates, on Linux
       - version: 4.5.1
@@ -331,7 +333,7 @@ home:
           text: A Rust server, not only an editor plugin
           link: /guide/introduction#a-rust-server-not-only-an-editor-plugin
       - q: Which Godot versions does it support?
-        a: Godot 4.4.0 or later. CI checks the exact builds 4.4.1, 4.5.1, 4.6.1 and 4.7.1, and a tool that needs a newer build says so, such as `editor.log.get`, which needs 4.5.1.
+        a: Godot 4.4.0 or later. CI checks the exact builds 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, and a tool that needs a newer build says so, such as `editor.log.get`, which needs 4.5.1.
         guide:
           text: Godot versions
           link: /reference/godot-versions

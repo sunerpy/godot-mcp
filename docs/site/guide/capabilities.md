@@ -40,8 +40,8 @@ every value it used. It turns the recipe into one batch of the operations above,
 checked against the scene's SHA-256, or, when your editor holds the scene, into one undoable
 action. Ten recipes go into scenes: `body-2d`, `body-3d`, `light-3d`, `particles-2d`,
 `navigation-2d`, `audio-2d`, `shader-2d`, `hud`, `gridmap-3d` and `joystick`, the last on
-Godot 4.7.1, where the `VirtualJoystick` class exists. The `theme` recipe makes a resource and
-goes to `resource.create`.
+Godot 4.7.1 and 4.7.2, where the `VirtualJoystick` class exists. The `theme` recipe makes a
+resource and goes to `resource.create`.
 
 ```json
 {

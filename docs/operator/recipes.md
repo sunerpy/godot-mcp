@@ -733,9 +733,9 @@ It becomes these operations:
 ## An on-screen joystick
 
 A `VirtualJoystick` in a bottom corner that drives four input actions. The class exists in
-Godot 4.7.1 and not in 4.4.1, 4.5.1 or 4.6.1: there the recipe is refused, naming the class,
-and nothing is written. On those builds a `TouchScreenButton` per action is the nearest
-built-in node. The scene's root is a `Control`.
+Godot 4.7.1 and 4.7.2 and not in 4.4.1, 4.5.1 or 4.6.1: there the recipe is refused, naming
+the class, and nothing is written. On those builds a `TouchScreenButton` per action is the
+nearest built-in node. The scene's root is a `Control`.
 
 <!-- recipe-call id=joystick path=ui/touch.tscn root=Control since=4.7.1 -->
 ```json
@@ -851,7 +851,7 @@ its current bytes as `expectedSha256`.
 
 ## Verified on
 
-Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds, by
+Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, by
 `crates/godot-mcp-server/tests/live_recipes.rs` through the production MCP server, which reads
 every call, operations block and tuning batch from this page:
 
@@ -875,7 +875,8 @@ every call, operations block and tuning batch from this page:
   reloaded the same way, with no error in the editor's log; the theme's tuning batch goes to
   `resource.batch.apply`.
 
-The joystick call is applied on 4.7.1 and refused on 4.4.1, 4.5.1 and 4.6.1, naming
-`VirtualJoystick`, with the scene left as it was. With a debug build of the server on a
-32-core Intel Xeon 6975P-C running Linux 7.0, the four builds took 138.6 s, 93.9 s, 94.1 s
-and 97.0 s, 423.6 s together. Windows and macOS editors: not measured.
+The joystick call is applied on 4.7.1 and 4.7.2 and refused on 4.4.1, 4.5.1 and 4.6.1,
+naming `VirtualJoystick`, with the scene left as it was. With a debug build of the server on a
+32-core Intel Xeon 6975P-C running Linux 7.0, one build after another, the five builds took
+139.9 s, 96.5 s, 95.8 s, 101.0 s and 100.1 s, 533.3 s together. Windows and macOS editors: not
+measured.

@@ -352,7 +352,12 @@ pub fn bind_host_archive_observation(fixture: &Fixture, archive: &Path) {
         .expect("candidate observations array")
         .iter_mut()
         .find(|entry| {
-            entry.get("name").and_then(Value::as_str) == Some("packaged-smoke-linux-x86_64-4.7.1")
+            // The packaged smoke targets the newest locked release, so its name
+            // carries that version; the lock, not this helper, decides which.
+            entry
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.starts_with("packaged-smoke-linux-x86_64-"))
         })
         .expect("host packaged-smoke observation");
     entry["archive_sha256"] = json!(file_sha256(archive));

@@ -950,7 +950,7 @@ Each of these has another way to it, or is left to you on purpose.
 
 ## Verified on
 
-Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds, by the live suites
+Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, by the live suites
 `crates/godot-mcp-server/tests/live_editor_bridge.rs` and, for property paths, graph-resource
 calls, `repeat`, global script classes, imported models and reading in the editor,
 `crates/godot-mcp-server/tests/live_authoring.rs`, for scripts

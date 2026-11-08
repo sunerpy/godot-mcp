@@ -271,6 +271,11 @@ E2E against Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, each with its own export templa
 driving the executables of the release archive built for that platform from this source
 tree, and the workspace tests.
 
+Godot 4.7.2 joined the lock after that run, and the matrix has not run against it on any
+platform. On Linux x86_64 the live suites `make godot-test` runs passed against its official
+build, headless and windowed under Xvfb; CI runs them too, and smoke-tests every platform's
+archive against it as the newest locked build.
+
 **Linux.** The weak locator, the delegated cgroup and the reference namespace adapter
 have been executed end to end: a one-shot run and a managed session inside a delegated
 cgroup each ran in their own launch cgroup, a server started in another delegated scope
