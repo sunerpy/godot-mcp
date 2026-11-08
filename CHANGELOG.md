@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0](https://github.com/sunerpy/godot-mcp/compare/v0.5.0...v0.6.0) (2026-11-08)
+
+
+### Features
+
+* **cli:** add godot-mcp skill install ([#50](https://github.com/sunerpy/godot-mcp/issues/50)) ([91ca790](https://github.com/sunerpy/godot-mcp/commit/91ca790e8bfb4153f8e6a722a9ca943ecfae48c8))
+* commands a project declares, listed and called through the editor ([#56](https://github.com/sunerpy/godot-mcp/issues/56)) ([c576137](https://github.com/sunerpy/godot-mcp/commit/c576137c60a6f69bf66887a8c1b24cca1d54751f))
+* **engine:** pin Godot 4.7.2 in the release lock ([#48](https://github.com/sunerpy/godot-mcp/issues/48)) ([26334a1](https://github.com/sunerpy/godot-mcp/commit/26334a13c0713b76385f2e9208b3893bc8378cb1))
+* **server:** generate initialize instructions from the profile ([#51](https://github.com/sunerpy/godot-mcp/issues/51)) ([cf23e79](https://github.com/sunerpy/godot-mcp/commit/cf23e79f2403d02eea331c76a56885ac783b03b9))
+
+
+### Bug Fixes
+
+* **editor:** settle unanswered editor changes instead of blocking writes for good ([#53](https://github.com/sunerpy/godot-mcp/issues/53)) ([d658ac3](https://github.com/sunerpy/godot-mcp/commit/d658ac3c64200dd815af32d9fadb3e256b8da8f3))
+* **schema:** align name-like fields with their handler checks ([#49](https://github.com/sunerpy/godot-mcp/issues/49)) ([668646f](https://github.com/sunerpy/godot-mcp/commit/668646f6cf89ad20c8cea6f0d2fd14f2de119817))
+
+
+### Performance Improvements
+
+* **server:** give each tool schema only the definitions it uses ([#52](https://github.com/sunerpy/godot-mcp/issues/52)) ([68607d4](https://github.com/sunerpy/godot-mcp/commit/68607d4cc0b0b7b2826242ee5bf8677d054db93b))
+
 ## [0.5.0](https://github.com/sunerpy/godot-mcp/compare/v0.4.0...v0.5.0) (2026-11-06)
 
 
