@@ -1968,7 +1968,7 @@ fn debug_command_schema() -> Value {
             "type": "string",
             "minLength": 1,
             "maxLength": 1024,
-            "pattern": crate::schema::gdscript_path_pattern(),
+            "pattern": crate::schema::gdscript_path_pattern(""),
             "description": "A project GDScript file, project-relative or res://."
         }),
         "lines" => json!({
@@ -2367,6 +2367,38 @@ mod tests {
                     command("symbols", json!({ "path": "scripts/a.gd" })),
                     true,
                     true,
+                ),
+                // The check takes any character but `/` and `\` in a
+                // segment, line terminators and control characters included,
+                // so the schema does too, whatever ECMA-262's `.` refuses.
+                (
+                    command("symbols", json!({ "path": "a\u{2028}b/c\u{2029}d.gd" })),
+                    true,
+                    true,
+                ),
+                (
+                    command("symbols", json!({ "path": "res://a\nb/c\rd.gd" })),
+                    true,
+                    true,
+                ),
+                (
+                    command("symbols", json!({ "path": "a\u{1F}.gd" })),
+                    true,
+                    true,
+                ),
+                (command("symbols", json!({ "path": ".gd" })), true, true),
+                (command("symbols", json!({ "path": "a/..gd" })), true, true),
+                (command("symbols", json!({ "path": "a.gd/" })), false, false),
+                (command("symbols", json!({ "path": "a/gd" })), false, false),
+                (
+                    command("symbols", json!({ "path": "a/./b.gd" })),
+                    false,
+                    false,
+                ),
+                (
+                    command("symbols", json!({ "path": "res://res://a.gd" })),
+                    false,
+                    false,
                 ),
                 (
                     command(

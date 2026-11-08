@@ -111,10 +111,22 @@ fn project_resource_pattern() -> String {
     format!("^res://{PATH_SEGMENT}(?:/{PATH_SEGMENT})*$")
 }
 
-/// A project GDScript file, project-relative or `res://`: one or more
-/// [`PATH_SEGMENT`]s ending in `.gd`.
-pub(crate) fn gdscript_path_pattern() -> String {
-    format!(r"^(?=.*\.gd$)(?:res://)?{PATH_SEGMENT}(?:/{PATH_SEGMENT})*$")
+/// A [`PATH_SEGMENT`] holding no character of the class body `excluded`
+/// either.
+pub(crate) fn path_segment(excluded: &str) -> String {
+    format!(
+        r"(?:[^/\\.{excluded}][^/\\{excluded}]*|\.[^/\\.{excluded}][^/\\{excluded}]*|\.\.[^/\\{excluded}]+)"
+    )
+}
+
+/// A project GDScript file, project-relative or `res://`: one or more path
+/// segments, the last ending in `.gd`, none holding a character of the class
+/// body `excluded`. The ending is spelled as the last segment rather than a
+/// lookahead over `.*`: ECMA-262's `.` refuses line terminators, which a
+/// segment takes.
+pub(crate) fn gdscript_path_pattern(excluded: &str) -> String {
+    let segment = path_segment(excluded);
+    format!(r"^(?:res://)?(?:{segment}/)*[^/\\{excluded}]*\.gd$")
 }
 
 /// A project PNG image, project-relative or `res://`: [`PATH_SEGMENT`]s whose
@@ -500,6 +512,54 @@ mod tests {
                 u32::from(character)
             );
         }
+    }
+
+    /// A path segment that excludes nothing more is [`PATH_SEGMENT`], so the
+    /// patterns built on either read a segment the same way.
+    #[test]
+    fn a_path_segment_excluding_nothing_is_the_shared_segment() {
+        assert_eq!(path_segment(""), PATH_SEGMENT);
+    }
+
+    /// No advertised pattern spells "any character" as `.`: ECMA-262's `.`
+    /// refuses the line terminators `\n`, `\r`, U+2028 and U+2029, which no
+    /// handler here refuses for being a line terminator.
+    #[test]
+    fn no_advertised_pattern_uses_the_dot() {
+        fn patterns<'a>(value: &'a Value, found: &mut Vec<&'a str>) {
+            match value {
+                Value::Object(keywords) => {
+                    for (keyword, argument) in keywords {
+                        match (keyword.as_str(), argument) {
+                            ("pattern", Value::String(pattern)) => found.push(pattern),
+                            // Instances, not schemas.
+                            ("const" | "enum" | "default" | "examples", _) => {}
+                            _ => patterns(argument, found),
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| patterns(item, found)),
+                _ => {}
+            }
+        }
+        let mut checked = 0;
+        for descriptor in godot_mcp_domain::catalog::TOOL_CATALOG {
+            let schema = Value::Object(crate::kernel::tool_schema(
+                descriptor.name,
+                crate::core::CoreLimits::default(),
+            ));
+            let mut found = Vec::new();
+            patterns(&schema, &mut found);
+            for pattern in found {
+                checked += 1;
+                assert!(
+                    !conformance::has_dot(pattern),
+                    "{}: {pattern}",
+                    descriptor.name
+                );
+            }
+        }
+        assert!(checked > 0, "the walk found no pattern at all");
     }
 
     /// A relative node path is one or more segments, none empty or `..`.
