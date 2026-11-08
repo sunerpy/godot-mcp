@@ -238,6 +238,42 @@ describes, `tools/list` shrinks from 406,072 to 312,424 bytes in the `editor` pr
 231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`, measured before the
 project-command tools were added; `core`, whose tools take no tagged value, stays at 28,044.
 
+### Contract 0.7.0
+
+Contract 0.7.0 adds one tool and the fields that step, sample and replay a running game by
+physics frame ([ADR 0017](../contributor/adr/0017-frame-stepping.md)). The 0.6.0 manifests stay
+frozen in `schemas/domain/profiles/v0.6/`.
+
+* `runtime.frames.step`, in the `runtime` and `full` profiles, advances a managed game session by
+  exactly `frames` physics frames (0 to 600) and holds it paused or lets it run; its answer says
+  which frames advanced, whether the game is held and why the step ended. See
+  [Managed sessions](../operator/managed-sessions.md#stepping-by-physics-frames).
+* `runtime.sample` takes the optional `cadence`: `interval`, the default and what it did before,
+  or `physics_frame`, one sample at the start of every physics frame. Its `time_base` adds
+  `cadence`, and its `interval_ms` is `null` under `physics_frame`.
+* `input.replay` takes the optional `schedule`: `time`, the default and what it did before, or
+  `physics_frame`; an event takes the optional `frame` (0 to 30000). The answer adds `schedule`,
+  `first_physics_frame`, `deliveries`, `scheduled_frames` and `max_lag_frames`, the last two
+  `null` under `time`, as `scheduled_ms` and `max_lag_ms` are under `physics_frame`.
+* `input.recording.start` and `input.recording.stop` answer `first_physics_frame`, and each
+  recorded event its `frame`.
+* The runtime probe, version 0.5.0, implements the bridge method `runtime.frames.step`. With a
+  probe that predates it, the step answers `unsupported`, and so do a sample and a replay that ask
+  for `physics_frame`, before anything is journaled or sent.
+
+The schema of a replayed event no longer requires `t_ms`, and its check requires the field of the
+replay's schedule, which is `t_ms` under the default one: a request a 0.6.0 server took means what
+it meant, and one it refused for a missing `t_ms` is still refused, by the check. A 0.6.0 client
+loses nothing. A 0.6.0 server refuses `cadence`, `schedule` and `frame`, as it refuses every
+unknown field, so a recording a 0.7.0 server answered replays there only without its events'
+`frame`.
+
+Measured as
+[How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
+describes, `tools/list` grows from 193,983 to 197,077 bytes in the `runtime` profile and from
+477,221 to 480,315 in `full`; `core` and `editor`, which hold none of these tools, stay at 28,044
+and 315,484.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an

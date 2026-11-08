@@ -23,7 +23,7 @@ Two words in the table stand for a group of tools:
 | --- | --- | --- |
 | Animation | Edit `AnimationPlayer`, `AnimationLibrary` and `Animation`: `add_animation`, `add_track`, `track_insert_key`, `set_loop_mode`; `SpriteFrames` for frame animations | Read `get_animation_list`, `track_get_key_count`, `track_get_key_value`; in a game, `runtime.signals.get` and `runtime.wait` |
 | AnimationTree | Edit `AnimationNodeStateMachine` (`add_node`, `add_transition`), `AnimationNodeBlendTree` (`connect_node`) and the blend spaces (`add_blend_point`) | Read `get_node_list`, `get_transition_count`, `get_blend_point_count` |
-| Physics | `scene.recipe.apply` with `body-2d` or `body-3d`: a character, rigid, static or area body with its shape; `set_subresource` for any shape; `TileSet` physics layers | `scene.tree.get`; in a game, `runtime.nodes.find` near a point, `runtime.properties.get`, `runtime.sample`, `runtime.time_scale.set` |
+| Physics | `scene.recipe.apply` with `body-2d` or `body-3d`: a character, rigid, static or area body with its shape; `set_subresource` for any shape; `TileSet` physics layers | `scene.tree.get`; in a game, `runtime.nodes.find` near a point, `runtime.properties.get`, `runtime.sample`, `runtime.time_scale.set`, and `runtime.frames.step` frame by frame |
 | 3D | `scene.recipe.apply` with `body-3d`, `light-3d` (sun, lamp, sky, camera) or `gridmap-3d`; edit `GridMap` (`set_cell_item`) and `MeshLibrary` (`create_item`) | Read `get_used_cells`, a mesh's `get_aabb`, a `Skeleton3D`'s bones; `editor.camera.get`, `editor.camera.set`, `editor.screenshot.capture` of a 3D viewport |
 | Particles | `scene.recipe.apply` with `particles-2d` and a preset: fire, smoke, sparks, rain, snow or explosion; `set_subresource` for a `ParticleProcessMaterial` | In a game, `runtime.screenshot.capture`, `runtime.recording.capture`, `runtime.image.compare` |
 | Navigation | `scene.recipe.apply` with `navigation-2d`; edit `NavigationPolygon` (`add_outline`) and bake with the regions' `bake_navigation_polygon` and `bake_navigation_mesh` | Read `get_polygon_count`, `get_vertices`; in a game, `runtime.navigation.path.get` and `runtime.node.move` along a path |
@@ -61,7 +61,7 @@ parameters.
 
 ## Everything else
 
-The [tools reference](../../protocol/tool-inventory.md) lists all 132 tools with their profiles.
+The [tools reference](../../protocol/tool-inventory.md) lists all 133 tools with their profiles.
 A part of Godot with no edit method or recipe here is still reachable: a batch sets a node's
 stored properties with `set_property` and embeds resources in it with `set_subresource`, and,
 once you start the server with `--allow-scripts`, `script.run`, `editor.script.run` and

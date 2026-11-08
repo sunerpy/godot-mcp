@@ -148,6 +148,19 @@ server, which reports every window focused. The answer stops at about 2.5 MB of 
 so in `stopped_by`. Measured as above: samples 100 ms apart were taken 94 to 109 ms apart, and a
 headless session drew 88 frames in 600 ms.
 
+With `cadence` `physics_frame`, `runtime.sample` takes one sample at the start of every physics
+frame instead, before the game's nodes process it, within the same `durationMs` and `maxSamples`;
+it takes no `intervalMs`, and a request that names one is refused with `invalid_input`. Each
+sample sees what the previous physics frame left: a property the game sets in `_physics_process`
+holds the previous frame's value, while a handler of the SceneTree's `physics_frame` signal, which
+Godot runs before any node processes a frame, has already run for this one. Sampling goes on while
+the scene tree is paused, by `runtime.frames.step` or by the game, each sample with `paused`
+true. `time_base` names the `cadence`, with `interval_ms` `null`. Measured by the live suite on
+Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, in headless sessions
+whose idle frames each stalled 35 ms, so that up to three physics frames ran in one idle frame: 60
+samples by physics frame saw 60 consecutive physics frames, while samples 1 ms apart, which are
+taken in idle frames, skipped physics frames between every two of them.
+
 ## Finding and moving nodes
 
 `runtime.nodes.find` answers the game's nodes under `root` that match every given filter:
@@ -228,7 +241,11 @@ buttons and motion, joypad buttons and axes, input actions — with its time fro
 most `maxEvents` (default and limit 3000) for at most `maxDurationMs` (default and limit 30000);
 a session keeps one recording at a time, and a second start is a `conflict`. Each recorded event
 says its `source` — `probe` for an event this server injected, `external` for one the game, the
-window or a device delivered — and which input `actions` it matched. `input.recording.stop` ends
+window or a device delivered — and which input `actions` it matched. It also has its physics
+`frame`, counted from `first_physics_frame`, the physics frame after the recording started, which
+both answers name: the frame in which the game first sees the event, the one in which
+`Input.is_action_just_pressed` or `is_action_just_released` holds for it. An event that arrives
+during a physics frame, or between two, belongs to the next one. `input.recording.stop` ends
 the recording and answers every event it kept with their counts, and keeps the recording as an
 artifact of media type `application/json`, read with `resources/read`. When the artifact cannot be
 kept, the answer still carries the events, with `artifact: null` and the reason in
@@ -244,15 +261,40 @@ recorded 250 ms tap that the game saw held 255 ms was held 261 to 263 ms when it
 event was delivered more than 6 ms late, and a joypad button and an action event each triggered
 the game's input action.
 
+With `schedule` `physics_frame`, `input.replay` delivers each event so that the game sees it in
+the physics frame its `frame` names (0 to 30000, and at most 30 s of physics frames at the game's
+own rate), counted from `first_physics_frame`, the first physics frame after the replay starts.
+Events of one frame keep their order in the list, and a recording replays by frame as it is. Each
+event needs the field of its schedule, `t_ms` by time and `frame` by frame, and the other is
+ignored; an event without it is refused with `invalid_input`. Under either schedule the answer adds
+`schedule`, `first_physics_frame` and `deliveries`: each event's index in the caller's list and the
+physics frame the game sees it in, in delivery order. By frame it answers `scheduled_frames` and
+`max_lag_frames`, how many frames late the latest event landed, and `scheduled_ms` and
+`max_lag_ms` are `null`; by time it is the other way round. While `runtime.frames.step` holds the
+game, a replay by frame is refused with `conflict`.
+
+Measured by the live suite on Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64
+builds, in headless sessions whose idle frames each stalled 35 ms, eight key, action and joypad
+events replayed by frame landed in the frames they named, with `max_lag_frames` 0, as follows:
+
+| Event of frame | The game's `_input` and `_unhandled_input` receive it | Its `_physics_process` sees it |
+| --- | --- | --- |
+| 0 | when the replay starts, between physics frames | pressed and just pressed, or just released, in frame `first_physics_frame` |
+| *k* > 0 | at the end of physics frame `first_physics_frame` + *k* − 1, within it | pressed and just pressed, or just released, in frame `first_physics_frame` + *k* |
+| a press and a release of one action in one frame | both, in list order | just pressed and just released in that frame, and not pressed |
+
+A recording's frames matched the frames in which the game saw its events, and replayed by time,
+every delivery named the frame in which the game saw its event just pressed or just released.
+
 ## Requests that span frames
 
-A wait, a sample, a path query waiting for its map, a walk, a press, a sequence, a replay, an
-image comparison and a stress window each span frames, and the probe answers one request at a
-time: every other request to the same session waits for the one that runs. Commands — replays,
-walks, presses, sequences, property writes, input, comparisons and scenarios — are also serialized
-with every other command of the project in its command lane, so a 30 s replay or walk delays them
-all. Each such request ends at its next frame, with `outcome` `cancelled` or `interrupted` and
-what it did until then:
+A wait, a sample, a path query waiting for its map, a walk, a press, a sequence, a replay, a
+step, an image comparison and a stress window each span frames, and the probe answers one request
+at a time: every other request to the same session waits for the one that runs. Commands —
+replays, steps, walks, presses, sequences, property writes, input, comparisons and scenarios — are
+also serialized with every other command of the project in its command lane, so a 30 s replay or
+walk delays them all. Each such request ends at its next frame, with `outcome` `cancelled` or
+`interrupted` and what it did until then:
 
 * when the client cancels the call (MCP `notifications/cancelled`), which the server passes on to
   the probe;
@@ -328,6 +370,70 @@ clock (`Time.get_ticks_msec()`) does not. Measured on Godot 4.4.1, 4.5.1, 4.6.1 
 official Linux x86_64 builds, in headless sessions, by the live suite: at a scale of 0.25 the
 fixture's game time advanced 0.250 to 0.251 seconds per second of the tick clock, at 3 it advanced
 2.986 to 3.015, and at 0 it did not advance over 300 ms.
+
+## Stepping by physics frames
+
+`runtime.frames.step` advances the game by exactly `frames` physics frames (0 to 600), then holds
+it paused, with `then` `hold` (the default), or lets it run on, with `resume`
+([ADR 0017](../contributor/adr/0017-frame-stepping.md)). The probe holds a game by setting
+`SceneTree.paused` at the start of a physics frame, before the game's nodes process it, and counts
+each frame at its start:
+
+* from a running game, a step counts from the game's next physics frame, and holds it from the
+  frame after the last;
+* from a hold, it releases the hold at the start of its first frame, so the game's nodes process
+  that frame and no idle frame of the game runs before it;
+* `frames` 0 holds a running game at the start of its next physics frame, or keeps a hold; with
+  `resume` it releases a hold and advances nothing.
+
+The answer has the `outcome`, `frames_requested`, `frames_advanced`, the `first_frame` and
+`last_frame` it advanced — the values of `Engine.get_physics_frames()` in those frames, `null`
+when it advanced none — `then`, whether the probe now `held` the game, whether the scene tree is
+`paused`, `elapsed_ms` and `interference`. It is a journaled command and needs an
+`idempotencyId`; `frames`, `then` or `timeoutMs` out of range is refused with `invalid_input`
+before anything is journaled.
+
+| Outcome | The step ended | Afterwards the game is |
+| --- | --- | --- |
+| `completed` | after its `frames` | held, or running with `resume` |
+| `timed_out` | when `timeoutMs` (1 to 30000, default 20000) passed first | held where it stopped |
+| `cancelled` | when the call was withdrawn: the client cancelled it, or `project.run.stop` withdrew it | held where it stopped, until a stop releases it |
+| `interrupted` | when the probe lost its server, so the server answers the call `uncertain` | running |
+| `interfered` | when something else changed the scene tree's pause; `interference` names the physics frame and the new pause | as the game left it |
+
+The probe never changes the game's own pause. A step of any kind is refused with `conflict`
+while the game paused itself — `SceneTree.paused` is true and the probe did not set it — and
+changes nothing. When anything else pauses or unpauses the tree while the probe holds or steps
+the game, the pause is the game's from then on: the probe holds nothing, and a step in flight ends
+at the next frame as `interfered`. A game that sets `SceneTree.paused` to true while the probe
+already holds it changes nothing Godot reports, so the probe cannot tell, and its release then
+unpauses the game.
+
+A hold lasts until the next step, a step of 0 frames with `resume`, `project.run.stop`, which
+releases it before the game quits, or the probe losing its server, which releases it at once.
+While the game is held, reads, samples, property writes and captures work as before, and a replay
+by physics frame is refused with `conflict`: no frame it names would reach the game's nodes.
+
+A hold does not stop what the game keeps running while it is paused. Measured by the live suite
+on Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, in headless sessions,
+over 20 held frames: a node whose `process_mode` is always processed every frame, handlers of the
+SceneTree's `physics_frame` signal ran every frame, and a 50 ms SceneTreeTimer, which processes
+always unless it is created otherwise, fired 5 or 6 times, while the scene's pausable nodes, its
+`Timer` node and its physics body stood still. An autoload at the probe's own physics priority,
+the lowest, comes before the probe in the scene tree and sees a step one frame late: from a hold
+it processed the frames after the first through the one after the last. Rendering, the engine's
+frame counters and its clocks go on. Audio, and animations and tweens set to process always, were
+not measured.
+
+Measured as above, at Godot's default 60 physics frames per second, over three runs of the suite
+on each build: steps of 1, 3, 10 and 60 frames from a hold each advanced exactly that many frames
+of the scene and steps of its physics server, in 20 to 34, 54 to 69, 172 to 187 and 1,000 to
+1,022 ms; a step of 600 frames with `timeoutMs` 200 advanced 12 frames and held the game; and a
+game that paused itself in the fifth frame of a 60-frame step ended it as `interfered` after 5
+frames, in which its physics server took 4 steps, since the pause in the fifth frame stopped the
+server before that frame's step. When the server was killed, the held game ran again within 5 to
+27 ms, as the suite observed it. In a window under Xvfb, a held game was captured without
+advancing.
 
 ## Comparing with a reference image
 

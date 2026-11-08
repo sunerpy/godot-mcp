@@ -22,3 +22,4 @@ than only what was decided.
 | [0014](0014-open-http-mode.md) | An open HTTP mode for development networks |
 | [0015](0015-unanswered-editor-changes.md) | An unanswered editor change is settled by its late answer, or once its editor has ended |
 | [0016](0016-project-commands.md) | Commands a project declares, listed without running anything and called through the editor |
+| [0017](0017-frame-stepping.md) | A running game is stepped by physics frames, sampled per frame and given input in named frames |

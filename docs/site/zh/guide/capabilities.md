@@ -15,7 +15,7 @@ description: godot-mcp 用哪些工具处理动画、AnimationTree、物理、3D
 | --- | --- | --- |
 | 动画 | 编辑 `AnimationPlayer`、`AnimationLibrary` 与 `Animation`：`add_animation`、`add_track`、`track_insert_key`、`set_loop_mode`；逐帧动画用 `SpriteFrames` | 读取 `get_animation_list`、`track_get_key_count`、`track_get_key_value`；游戏运行时用 `runtime.signals.get` 与 `runtime.wait` |
 | AnimationTree | 编辑 `AnimationNodeStateMachine`（`add_node`、`add_transition`）、`AnimationNodeBlendTree`（`connect_node`）和两种混合空间（`add_blend_point`） | 读取 `get_node_list`、`get_transition_count`、`get_blend_point_count` |
-| 物理 | `scene.recipe.apply` 配合 `body-2d` 或 `body-3d`：带碰撞形状的角色体、刚体、静态体或区域；任意形状用 `set_subresource`；`TileSet` 的物理层 | `scene.tree.get`；游戏运行时用 `runtime.nodes.find` 查找某点附近的节点，以及 `runtime.properties.get`、`runtime.sample`、`runtime.time_scale.set` |
+| 物理 | `scene.recipe.apply` 配合 `body-2d` 或 `body-3d`：带碰撞形状的角色体、刚体、静态体或区域；任意形状用 `set_subresource`；`TileSet` 的物理层 | `scene.tree.get`；游戏运行时用 `runtime.nodes.find` 查找某点附近的节点，以及 `runtime.properties.get`、`runtime.sample`、`runtime.time_scale.set` 和逐帧推进游戏的 `runtime.frames.step` |
 | 3D | `scene.recipe.apply` 配合 `body-3d`、`light-3d`（太阳光、点光源、天空、相机）或 `gridmap-3d`；编辑 `GridMap`（`set_cell_item`）与 `MeshLibrary`（`create_item`） | 读取 `get_used_cells`、网格的 `get_aabb`、`Skeleton3D` 的骨骼；`editor.camera.get`、`editor.camera.set`，以及对 3D 视口的 `editor.screenshot.capture` |
 | 粒子 | `scene.recipe.apply` 配合 `particles-2d` 和一种预设：fire、smoke、sparks、rain、snow 或 explosion；`ParticleProcessMaterial` 用 `set_subresource` | 游戏运行时用 `runtime.screenshot.capture`、`runtime.recording.capture`、`runtime.image.compare` |
 | 导航 | `scene.recipe.apply` 配合 `navigation-2d`；编辑 `NavigationPolygon`（`add_outline`），并用导航区域的 `bake_navigation_polygon` 与 `bake_navigation_mesh` 烘焙 | 读取 `get_polygon_count`、`get_vertices`；游戏运行时用 `runtime.navigation.path.get`，并用 `runtime.node.move` 沿路径移动 |
@@ -43,4 +43,4 @@ Agent 不看本页也能找到这些配方：每个配方同时也是一个 MCP 
 
 ## 其他部分
 
-[工具参考](../../../protocol/tool-inventory.md)列出全部 132 个工具及其所属的 profile。表里没有编辑方法或配方的部分，同样可以处理：一批改动可以用 `set_property` 设置节点存储的属性，用 `set_subresource` 在其中嵌入资源；用 `--allow-scripts` 启动服务器之后，`script.run`、`editor.script.run` 和 `runtime.script.run` 可以运行 Agent 自己写的 GDScript。
+[工具参考](../../../protocol/tool-inventory.md)列出全部 133 个工具及其所属的 profile。表里没有编辑方法或配方的部分，同样可以处理：一批改动可以用 `set_property` 设置节点存储的属性，用 `set_subresource` 在其中嵌入资源；用 `--allow-scripts` 启动服务器之后，`script.run`、`editor.script.run` 和 `runtime.script.run` 可以运行 Agent 自己写的 GDScript。

@@ -80,20 +80,20 @@ godot-mcp serve: startup failed: project ownership could not be established: no 
 
 ## 各 profile 的声明面
 
-在契约 0.6.0 的构建上（`godot-mcp version` 第二行为 `server-contract 0.6.0`），用一个直接收发 JSON-RPC 帧的 stdio 客户端，对每个 profile 完成握手后各发一遍 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list`，实测：
+在契约 0.7.0 的构建上（`godot-mcp version` 第二行为 `server-contract 0.7.0`），用一个直接收发 JSON-RPC 帧的 stdio 客户端，对每个 profile 完成握手后各发一遍 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list`，实测：
 
 | profile | tools | `resources/list` 返回的具体资源 | `resources/templates/list` 返回的模板 | `prompts/list` 返回的 prompt |
 | --- | --- | --- | --- | --- |
 | `core` | 22 | 4 | 0 | 1 |
 | `editor` | 84 | 4 | 1 | 12 |
-| `runtime` | 74 | 4 | 1 | 1 |
-| `full` | 132 | 4 | 1 | 12 |
+| `runtime` | 75 | 4 | 1 | 1 |
+| `full` | 133 | 4 | 1 | 12 |
 
 资源的两列相加，等于 [工具与资源清单](../protocol/tool-inventory.md) 里生成的 Resources 列（`core` 为 4，其余三个为 5）：生成清单把资源模板计入总数，而 `resources/list` 不返回模板。那一个模板是 `godot-mcp://artifacts/{artifact_id}`，导出产物与截图都从这里读，见 [Artifacts](artifacts.md)。一个 artifact 只对产生它的那个调用方列出、可读，过期后从列表和读取里一起消失。
 
 每个 profile 都有 `godot-mcp.profile-guide` 这一个 prompt；`editor` 与 `full` 另有 11 个配方 prompt，名字是 `godot-mcp.recipe.<配方名>`，正文给出参数表、调用模板和配方展开成的操作，见 [配方](recipes.md)。prompt 不占工具名额。
 
-**下面四节是 0.1.0 上的一次普查。** 那时 `full` 有 73 个工具（0.1.1、0.1.2 不变，`core`、`editor`、`runtime` 分别为 15、48、44），之后的版本新增的 59 个工具没有用这个方法重测，它们的调用方法见 [编辑器桥](editor-bridge.md)、[托管会话](managed-sessions.md)、[配方](recipes.md)、[项目命令](project-commands.md) 与 [Profiles and tool outcomes](profiles-and-outcomes.md)。在一台配了真实 Godot 4.7.1、supervisor 就位的主机上，把 0.1.0 的 `full` 的 73 个工具按名字顺序、逐个只带内核自己拥有的 `idempotencyId` 串行调一遍（`limits.deadline_ms` 为 30000），实测 20 个给出答案，37 个因为缺参数被拒，15 个拒绝执行，1 个撞上执行超时。顺序有影响：排在前面的调用会改变后面调用看到的状态，下面会点出来。
+**下面四节是 0.1.0 上的一次普查。** 那时 `full` 有 73 个工具（0.1.1、0.1.2 不变，`core`、`editor`、`runtime` 分别为 15、48、44），之后的版本新增的 60 个工具没有用这个方法重测，它们的调用方法见 [编辑器桥](editor-bridge.md)、[托管会话](managed-sessions.md)、[配方](recipes.md)、[项目命令](project-commands.md) 与 [Profiles and tool outcomes](profiles-and-outcomes.md)。在一台配了真实 Godot 4.7.1、supervisor 就位的主机上，把 0.1.0 的 `full` 的 73 个工具按名字顺序、逐个只带内核自己拥有的 `idempotencyId` 串行调一遍（`limits.deadline_ms` 为 30000），实测 20 个给出答案，37 个因为缺参数被拒，15 个拒绝执行，1 个撞上执行超时。顺序有影响：排在前面的调用会改变后面调用看到的状态，下面会点出来。
 
 ## 20 个无需参数就给出答案的调用
 
