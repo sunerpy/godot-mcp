@@ -119,6 +119,13 @@ pub(crate) fn path_segment(excluded: &str) -> String {
     )
 }
 
+/// A project file, project-relative or `res://`: one or more path segments,
+/// none holding a character of the class body `excluded`.
+pub(crate) fn project_path_pattern(excluded: &str) -> String {
+    let segment = path_segment(excluded);
+    format!("^(?:res://)?{segment}(?:/{segment})*$")
+}
+
 /// A project GDScript file, project-relative or `res://`: one or more path
 /// segments, the last ending in `.gd`, none holding a character of the class
 /// body `excluded`. The ending is spelled as the last segment rather than a

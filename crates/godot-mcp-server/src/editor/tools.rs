@@ -57,6 +57,16 @@ const MAX_PROPERTIES: usize = 256;
 const MAX_CLASSES: u64 = 500;
 /// Most log entries one read returns.
 const MAX_LOG_ENTRIES: u64 = 500;
+/// The longest class name `editor.types.get` and `editor.types.search` take,
+/// in characters.
+const MAX_CLASS_CHARS: usize = 256;
+/// The longest text `editor.types.search` looks for, in characters.
+const MAX_QUERY_CHARS: usize = 128;
+/// The longest epoch `editor.log.get` takes, in characters.
+const MAX_EPOCH_CHARS: usize = 64;
+/// The longest project path `editor.script.close` and
+/// `editor.resource.preview` take, in characters.
+const MAX_PATH_CHARS: usize = 1024;
 /// The main screens every supported editor build names alike.
 const MAIN_SCREENS: [&str; 3] = ["2D", "3D", "Script"];
 /// What a screenshot shows: the editor's whole window, or a main-screen viewport.
@@ -933,15 +943,183 @@ fn camera_move(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
     }))
 }
 
-/// `editor.script.close`'s argument: the `res://` path of a GDScript file.
-fn script_tab(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
-    let path = res_path(
+/// Whether `name` can name a class: 1 to [`MAX_CLASS_CHARS`] characters
+/// without a control character, which no engine or script class name holds.
+fn is_class_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= MAX_CLASS_CHARS
+        && !name.chars().any(char::is_control)
+}
+
+/// `editor.types.get`'s argument: the class to describe.
+fn types_class(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let class = arguments
+        .get("class")
+        .and_then(Value::as_str)
+        .filter(|class| is_class_name(class))
+        .ok_or_else(|| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                format!(
+                    "`class` names an engine or script class: 1 to {MAX_CLASS_CHARS} characters \
+                     without control characters"
+                ),
+            )
+        })?;
+    Ok(json!({ "class": class }))
+}
+
+/// `editor.types.search`'s arguments: the text a class name contains, the
+/// class the classes inherit, whether they can be instantiated, and how many
+/// to list at most.
+fn types_search(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let query = match arguments.get("query") {
+        None => String::new(),
+        Some(Value::String(query)) if query.chars().count() <= MAX_QUERY_CHARS => query.clone(),
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`query` must be a string of at most {MAX_QUERY_CHARS} characters"),
+            ));
+        }
+    };
+    let base = match arguments.get("base") {
+        None => None,
+        Some(Value::String(base)) if is_class_name(base) => Some(base.clone()),
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!(
+                    "`base` names an engine or script class: 1 to {MAX_CLASS_CHARS} characters \
+                     without control characters"
+                ),
+            ));
+        }
+    };
+    let instantiable = match arguments.get("instantiable") {
+        None => None,
+        Some(Value::Bool(flag)) => Some(*flag),
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                "`instantiable` must be a boolean",
+            ));
+        }
+    };
+    let limit = match arguments.get("limit") {
+        None => 100,
+        Some(value) => value
+            .as_u64()
+            .filter(|limit| (1..=MAX_CLASSES).contains(limit))
+            .ok_or_else(|| {
+                outcome_error(
+                    ErrorKind::InvalidInput,
+                    format!("`limit` must be from 1 to {MAX_CLASSES}"),
+                )
+            })?,
+    };
+    Ok(json!({
+        "query": query,
+        "base": base,
+        "instantiable": instantiable,
+        "limit": limit,
+    }))
+}
+
+/// `editor.log.get`'s arguments: where the read starts, the epoch of the
+/// previous read, how many entries to return at most, and which kinds.
+fn log_read(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let after = match arguments.get("after") {
+        None => 0,
+        Some(value) => value.as_u64().ok_or_else(|| {
+            outcome_error(
+                ErrorKind::InvalidInput,
+                "`after` must be a sequence number, 0 or more",
+            )
+        })?,
+    };
+    let epoch = match arguments.get("epoch") {
+        None => None,
+        // The plugin names an epoch in hexadecimal digits, so one holding a
+        // control character is no epoch it gave.
+        Some(Value::String(epoch))
+            if !epoch.is_empty()
+                && epoch.chars().count() <= MAX_EPOCH_CHARS
+                && !epoch.chars().any(char::is_control) =>
+        {
+            Some(epoch.clone())
+        }
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!(
+                    "`epoch` must be the epoch of a previous read: 1 to {MAX_EPOCH_CHARS} \
+                     characters without control characters"
+                ),
+            ));
+        }
+    };
+    let limit = match arguments.get("limit") {
+        None => 100,
+        Some(value) => value
+            .as_u64()
+            .filter(|limit| (1..=MAX_LOG_ENTRIES).contains(limit))
+            .ok_or_else(|| {
+                outcome_error(
+                    ErrorKind::InvalidInput,
+                    format!("`limit` must be from 1 to {MAX_LOG_ENTRIES}"),
+                )
+            })?,
+    };
+    let kinds = match arguments.get("kinds") {
+        None => Value::Null,
+        Some(Value::Array(kinds))
+            if !kinds.is_empty()
+                && kinds
+                    .iter()
+                    .all(|kind| kind.as_str().is_some_and(|kind| LOG_KINDS.contains(&kind))) =>
+        {
+            Value::Array(kinds.clone())
+        }
+        Some(_) => {
+            return Err(outcome_error(
+                ErrorKind::InvalidInput,
+                format!("`kinds` lists entry kinds from {}", LOG_KINDS.join(", ")),
+            ));
+        }
+    };
+    Ok(json!({ "after": after, "epoch": epoch, "limit": limit, "kinds": kinds }))
+}
+
+/// The `res://` spelling of the `path` of a tool that names one project file:
+/// 1 to [`MAX_PATH_CHARS`] characters without a control character, which the
+/// server refuses in every path it writes or runs, in a spelling
+/// [`res_path`] takes.
+fn project_file(arguments: &Map<String, Value>) -> Result<String, OutcomeError> {
+    res_path(
         arguments
             .get("path")
             .and_then(Value::as_str)
-            .filter(|path| !path.is_empty() && path.len() <= 1024)
-            .ok_or_else(|| outcome_error(ErrorKind::InvalidInput, "`path` is required"))?,
-    )?;
+            .filter(|path| {
+                !path.is_empty()
+                    && path.chars().count() <= MAX_PATH_CHARS
+                    && !path.chars().any(char::is_control)
+            })
+            .ok_or_else(|| {
+                outcome_error(
+                    ErrorKind::InvalidInput,
+                    format!(
+                        "`path` is a project path of 1 to {MAX_PATH_CHARS} characters without \
+                         control characters"
+                    ),
+                )
+            })?,
+    )
+}
+
+/// `editor.script.close`'s argument: the `res://` path of a GDScript file.
+fn script_tab(arguments: &Map<String, Value>) -> Result<Value, OutcomeError> {
+    let path = project_file(arguments)?;
     if !path.ends_with(".gd") {
         return Err(outcome_error(
             ErrorKind::InvalidInput,
@@ -1043,13 +1221,7 @@ fn performance_read(arguments: &Map<String, Value>) -> Result<Value, OutcomeErro
 /// `editor.resource.preview`'s arguments: the resource's `res://` path and
 /// how long the editor may take, in milliseconds.
 fn preview_request(arguments: &Map<String, Value>) -> Result<(String, u64), OutcomeError> {
-    let path = res_path(
-        arguments
-            .get("path")
-            .and_then(Value::as_str)
-            .filter(|path| !path.is_empty() && path.len() <= 1024)
-            .ok_or_else(|| outcome_error(ErrorKind::InvalidInput, "`path` is required"))?,
-    )?;
+    let path = project_file(arguments)?;
     let timeout = bounded(
         arguments,
         "timeoutMs",
@@ -1298,7 +1470,8 @@ impl EditorCall for EditorOperation {
                     "class": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 256,
+                        "maxLength": MAX_CLASS_CHARS,
+                        "pattern": crate::schema::NO_CONTROL_PATTERN,
                         "description": "Engine class name, e.g. CharacterBody2D."
                     }
                 }),
@@ -1328,14 +1501,15 @@ impl EditorCall for EditorOperation {
                 json!({
                     "query": {
                         "type": "string",
-                        "maxLength": 128,
+                        "maxLength": MAX_QUERY_CHARS,
                         "description": "Text the class name contains, in any case; every class \
                                         when omitted or empty."
                     },
                     "base": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 256,
+                        "maxLength": MAX_CLASS_CHARS,
+                        "pattern": crate::schema::NO_CONTROL_PATTERN,
                         "description": "Only classes inheriting this engine or script class."
                     },
                     "instantiable": {
@@ -1363,7 +1537,8 @@ impl EditorCall for EditorOperation {
                     "epoch": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 64,
+                        "maxLength": MAX_EPOCH_CHARS,
+                        "pattern": crate::schema::NO_CONTROL_PATTERN,
                         "description": "The `epoch` of the previous read. When the plugin has \
                                         restarted since, the read starts from the oldest entry \
                                         kept and says `reset`."
@@ -1569,7 +1744,8 @@ impl EditorCall for EditorOperation {
                     "path": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 1024,
+                        "maxLength": MAX_PATH_CHARS,
+                        "pattern": crate::schema::gdscript_path_pattern(crate::schema::CONTROL),
                         "description": "Project-relative or res:// path of the .gd script whose \
                                         tab is closed."
                     }
@@ -1640,7 +1816,8 @@ impl EditorCall for EditorOperation {
                     "path": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 1024,
+                        "maxLength": MAX_PATH_CHARS,
+                        "pattern": crate::schema::project_path_pattern(crate::schema::CONTROL),
                         "description": "Project-relative or res:// path of the resource to \
                                         preview."
                     },
@@ -2475,48 +2652,8 @@ impl KernelToolHandler for EditorHandler {
                         .await
                 }
                 EditorOperation::TypesSearch => {
-                    let text = |key: &str, most: usize| match arguments.get(key) {
-                        None => Ok(None),
-                        Some(Value::String(text)) if text.len() <= most => Ok(Some(text.clone())),
-                        Some(_) => Err(outcome_error(
-                            ErrorKind::InvalidInput,
-                            format!("`{key}` must be a string of at most {most} bytes"),
-                        )),
-                    };
-                    let query = text("query", 128)?.unwrap_or_default();
-                    let base = text("base", 256)?.filter(|base| !base.is_empty());
-                    let instantiable = match arguments.get("instantiable") {
-                        None => None,
-                        Some(Value::Bool(flag)) => Some(*flag),
-                        Some(_) => {
-                            return Err(outcome_error(
-                                ErrorKind::InvalidInput,
-                                "`instantiable` must be a boolean",
-                            ));
-                        }
-                    };
-                    let limit = match arguments.get("limit") {
-                        None => 100,
-                        Some(value) => value
-                            .as_u64()
-                            .filter(|limit| (1..=MAX_CLASSES).contains(limit))
-                            .ok_or_else(|| {
-                                outcome_error(
-                                    ErrorKind::InvalidInput,
-                                    format!("`limit` must be from 1 to {MAX_CLASSES}"),
-                                )
-                            })?,
-                    };
                     runtime
-                        .ask(
-                            operation.bridge_method(),
-                            json!({
-                                "query": query,
-                                "base": base,
-                                "instantiable": instantiable,
-                                "limit": limit,
-                            }),
-                        )
+                        .ask(operation.bridge_method(), types_search(arguments)?)
                         .await
                 }
                 EditorOperation::PreferencesGet => {
@@ -2551,61 +2688,8 @@ impl KernelToolHandler for EditorHandler {
                     {
                         return Err(no_log_capture(&status));
                     }
-                    let after = match arguments.get("after") {
-                        None => 0,
-                        Some(value) => value.as_u64().ok_or_else(|| {
-                            outcome_error(
-                                ErrorKind::InvalidInput,
-                                "`after` must be a sequence number, 0 or more",
-                            )
-                        })?,
-                    };
-                    let epoch = match arguments.get("epoch") {
-                        None => None,
-                        Some(Value::String(epoch)) if !epoch.is_empty() && epoch.len() <= 64 => {
-                            Some(epoch.clone())
-                        }
-                        Some(_) => {
-                            return Err(outcome_error(
-                                ErrorKind::InvalidInput,
-                                "`epoch` must be the epoch of a previous read",
-                            ));
-                        }
-                    };
-                    let limit = match arguments.get("limit") {
-                        None => 100,
-                        Some(value) => value
-                            .as_u64()
-                            .filter(|limit| (1..=MAX_LOG_ENTRIES).contains(limit))
-                            .ok_or_else(|| {
-                                outcome_error(
-                                    ErrorKind::InvalidInput,
-                                    format!("`limit` must be from 1 to {MAX_LOG_ENTRIES}"),
-                                )
-                            })?,
-                    };
-                    let kinds = match arguments.get("kinds") {
-                        None => Value::Null,
-                        Some(Value::Array(kinds))
-                            if !kinds.is_empty()
-                                && kinds.iter().all(|kind| {
-                                    kind.as_str().is_some_and(|kind| LOG_KINDS.contains(&kind))
-                                }) =>
-                        {
-                            Value::Array(kinds.clone())
-                        }
-                        Some(_) => {
-                            return Err(outcome_error(
-                                ErrorKind::InvalidInput,
-                                format!("`kinds` lists entry kinds from {}", LOG_KINDS.join(", ")),
-                            ));
-                        }
-                    };
                     runtime
-                        .ask(
-                            operation.bridge_method(),
-                            json!({ "after": after, "epoch": epoch, "limit": limit, "kinds": kinds }),
-                        )
+                        .ask(operation.bridge_method(), log_read(arguments)?)
                         .await
                 }
                 EditorOperation::CameraGet => {
@@ -2632,15 +2716,8 @@ impl KernelToolHandler for EditorHandler {
                     super::scene_read::answer(&calls, &answer)
                 }
                 _ => {
-                    let class = arguments
-                        .get("class")
-                        .and_then(Value::as_str)
-                        .filter(|class| !class.is_empty() && class.len() <= 256)
-                        .ok_or_else(|| {
-                            outcome_error(ErrorKind::InvalidInput, "`class` names an engine class")
-                        })?;
                     runtime
-                        .ask(operation.bridge_method(), json!({ "class": class }))
+                        .ask(operation.bridge_method(), types_class(arguments)?)
                         .await
                 }
             };
@@ -3648,17 +3725,53 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::InvalidInput, "{error:?}");
     }
 
-    /// Which path names a script is the handler's to check, as for
-    /// editor.script.open.
+    /// A script to close is named by a project path of 1 to 1024 characters,
+    /// whatever the bytes each takes, without a control character, whose
+    /// segments are neither empty, `.` nor `..` and whose last segment ends
+    /// in `.gd`; the schema holds the shape the check holds.
     #[test]
     fn the_script_close_schema_and_its_check_agree() {
-        let cases = [
+        use crate::schema::conformance::{NameRule, name_cases};
+        let mut cases = vec![
             (json!({ "path": "player.gd" }), true),
             (json!({ "path": "res://levels/one.gd" }), true),
             (json!({ "path": "" }), false),
             (json!({ "path": 3 }), false),
             (json!({}), false),
         ];
+        let rule = NameRule {
+            limit: 1024,
+            empty: false,
+            control: true,
+        };
+        for prefix in ["", "res://", "levels/"] {
+            cases.extend(
+                name_cases(rule, prefix, ".gd")
+                    .into_iter()
+                    .map(|(path, expected)| (json!({ "path": path }), expected)),
+            );
+        }
+        for (path, expected) in [
+            (".gd", true),
+            ("a/..gd", true),
+            ("..a/b.gd", true),
+            ("res://a b/c.gd", true),
+            ("a\u{2028}b/c\u{2029}d.gd", true),
+            ("player.txt", false),
+            ("a.gd/", false),
+            ("a//b.gd", false),
+            ("/a.gd", false),
+            ("res:///a.gd", false),
+            ("a/./b.gd", false),
+            ("a/../b.gd", false),
+            ("../a.gd", false),
+            ("a\\b.gd", false),
+            ("res://", false),
+            ("res://res://a.gd", false),
+            ("a\nb.gd", false),
+        ] {
+            cases.push((json!({ "path": path }), expected));
+        }
         agree(EditorOperation::ScriptClose, &cases, |arguments| {
             script_tab(arguments).is_ok()
         });
@@ -3784,10 +3897,14 @@ mod tests {
         });
     }
 
-    /// Which path names a project file is the handler's to check.
+    /// A resource to preview is named by a project path of 1 to 1024
+    /// characters, whatever the bytes each takes, without a control
+    /// character, whose segments are neither empty, `.` nor `..`; the schema
+    /// holds the shape the check holds.
     #[test]
     fn the_preview_schema_and_its_check_agree() {
-        let cases = [
+        use crate::schema::conformance::{NameRule, name_cases};
+        let mut cases = vec![
             (json!({ "path": "icon.svg" }), true),
             (json!({ "path": "res://box.tres", "timeoutMs": 100 }), true),
             (json!({ "path": "a.png", "timeoutMs": 60_000 }), true),
@@ -3796,8 +3913,118 @@ mod tests {
             (json!({ "path": "" }), false),
             (json!({}), false),
         ];
+        let rule = NameRule {
+            limit: 1024,
+            empty: false,
+            control: true,
+        };
+        for prefix in ["", "res://", "art/"] {
+            cases.extend(
+                name_cases(rule, prefix, "")
+                    .into_iter()
+                    .map(|(path, expected)| (json!({ "path": path }), expected)),
+            );
+        }
+        for (path, expected) in [
+            ("...", true),
+            (".a/..b", true),
+            ("res://a b/c.png", true),
+            ("a\u{2028}b/c\u{2029}d.png", true),
+            ("a/", false),
+            ("a//b", false),
+            ("/a", false),
+            ("res:///a", false),
+            ("a/./b", false),
+            ("a/../b", false),
+            ("..", false),
+            ("a\\b", false),
+            ("res://", false),
+            ("res://res://a", false),
+            ("a\nb", false),
+        ] {
+            cases.push((json!({ "path": path }), expected));
+        }
         agree(EditorOperation::ResourcePreview, &cases, |arguments| {
             preview_request(arguments).is_ok()
+        });
+    }
+
+    /// A class to describe is 1 to 256 characters, whatever the bytes each
+    /// takes, without a control character: no engine or script class name
+    /// holds one.
+    #[test]
+    fn the_types_get_schema_and_its_check_agree() {
+        use crate::schema::conformance::NameRule;
+        let class = NameRule {
+            limit: 256,
+            empty: false,
+            control: true,
+        };
+        let mut cases = named(class, |class| json!({ "class": class }));
+        cases.extend([
+            (json!({ "class": "CharacterBody2D" }), true),
+            (json!({ "class": 3 }), false),
+            (json!({}), false),
+        ]);
+        agree(EditorOperation::TypesGet, &cases, |arguments| {
+            types_class(arguments).is_ok()
+        });
+    }
+
+    /// A search's text is at most 128 characters and may be empty or hold a
+    /// control character, as free text may; the base class is 1 to 256
+    /// characters without a control character, as a class to describe is.
+    #[test]
+    fn the_types_search_schema_and_its_check_agree() {
+        use crate::schema::conformance::NameRule;
+        let query = NameRule {
+            limit: 128,
+            empty: true,
+            control: false,
+        };
+        let base = NameRule {
+            limit: 256,
+            empty: false,
+            control: true,
+        };
+        let mut cases = named(query, |query| json!({ "query": query }));
+        cases.extend(named(base, |base| json!({ "base": base })));
+        cases.extend([
+            (json!({}), true),
+            (
+                json!({ "query": "body", "base": "Node2D", "instantiable": true, "limit": 500 }),
+                true,
+            ),
+            (json!({ "query": 3 }), false),
+            (json!({ "base": 3 }), false),
+            (json!({ "limit": 501 }), false),
+        ]);
+        agree(EditorOperation::TypesSearch, &cases, |arguments| {
+            types_search(arguments).is_ok()
+        });
+    }
+
+    /// The epoch of a previous read is 1 to 64 characters, whatever the bytes
+    /// each takes, without a control character: the plugin names an epoch in
+    /// hexadecimal digits.
+    #[test]
+    fn the_log_read_schema_and_its_check_agree() {
+        use crate::schema::conformance::NameRule;
+        let epoch = NameRule {
+            limit: 64,
+            empty: false,
+            control: true,
+        };
+        let mut cases = named(epoch, |epoch| json!({ "epoch": epoch }));
+        cases.extend([
+            (json!({}), true),
+            (json!({ "after": 3, "limit": 10, "epoch": "5f3a" }), true),
+            (json!({ "epoch": 3 }), false),
+            (json!({ "after": -1 }), false),
+            (json!({ "limit": 0 }), false),
+        ]);
+        agree(EditorOperation::LogGet, &cases, |arguments| {
+            log_read(arguments).is_ok()
         });
     }
 }
