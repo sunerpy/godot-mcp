@@ -268,11 +268,60 @@ loses nothing. A 0.6.0 server refuses `cadence`, `schedule` and `frame`, as it r
 unknown field, so a recording a 0.7.0 server answered replays there only without its events'
 `frame`.
 
+#### 0.7.0 corrections
+
+Contract 0.7.0 also corrects further places where a tool's advertised schema and its own check
+disagreed. For these, no data-transfer object, error variant or capability manifest changes
+shape, and no field is added, renamed or retyped.
+
+* The length limit counts characters, as Unicode scalar values, the unit `maxLength` counts in,
+  in fields whose checks counted UTF-8 bytes: `editor.types.get` `class`, `editor.types.search`
+  `query` and `base`, `editor.log.get` `epoch`, the `path` of `editor.script.close`,
+  `editor.resource.preview`, `scene.read`, `resource.read` and `shader.check`, the `action` and
+  `key` of `input.action.send`, `input.key.send` and the input steps of `input.sequence.send` and
+  `test.scenario.run`, `runtime.performance.get` `monitors`, a text value of
+  `project.settings.patch` `set_value`, `project.search` `query`, `project.signals.get` `signal`,
+  `scene.exports.get` `node`, the `type`, `group`, `name`, `property` and `value` of
+  `scene.nodes.find`, the `include` and `exclude` globs of `project.dependencies.audit`,
+  `project.metrics.get`, `project.search` and `scene.nodes.find`, and `project.files.list` `glob`.
+  A value of multi-byte characters that fits its limit in characters is now taken. The limits are
+  unchanged; a read's `path` is measured whole, its `res://` prefix included, as its schema
+  always measured it.
+* These refuse a control character (U+0000 to U+001F and U+007F to U+009F), and their schemas
+  say so: the class names, the epoch and the two paths of the editor tools above, and the action
+  and key names of the input tools above and of `input.replay` events (`action`, `key` and
+  `physical`). None could name what the field names: no engine or script class name holds one,
+  the plugin names an epoch in hexadecimal digits, the server writes and runs no path that holds
+  one, the project settings the server writes refuse one in an action name and Godot's input-map
+  editor one below U+0020, and Godot's `OS.find_keycode_from_string` knows no key name holding
+  one. A search's text, a setting's text value, a monitor name and the analysis tools' names and
+  globs still take one.
+* `editor.types.search` `base` and the `name` of `remove_autoload` and `remove_input_action` were
+  advertised with `minLength` 1 while their checks took the empty string; the checks now refuse
+  it.
+* The schemas state rules their checks already applied: the shape of the `path` of
+  `editor.script.close` and `editor.resource.preview` (segments neither empty, `.` nor `..`, and a
+  `.gd` ending for a script), the project-relative spelling and the extension, in any letter
+  case, of the `path` of `scene.read`, `resource.read` and `shader.check`, and the `uid://` form
+  of `project.uid.get` `uid`.
+* No pattern spells "any character" as `.`, which ECMA-262 reads as any character but a line
+  terminator (`\n`, `\r`, U+2028 and U+2029). The project-relative path pattern of every engine
+  path field, `project.test`'s selection and `debug.command`'s GDScript path name the
+  characters they take instead. A strict client now takes a path holding U+2028 or U+2029, as
+  the checks always did, and `debug.command` a path holding `\n` or `\r` too. It still refuses a
+  `project.test` selection with `,` or `;` after U+2028 or U+2029, as the check does: the
+  selection's own lookahead now refuses it, where the path pattern refused every line terminator
+  before.
+
+Some requests a 0.6.0 server took are refused: a control character in the fields of the second
+point, an empty `base` or removed name, and a `res://`-prefixed read path of 1,025 to 1,030
+characters. Of these, only the control characters met the 0.6.0 schemas.
+
 Measured as
 [How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
-describes, `tools/list` grows from 193,983 to 197,077 bytes in the `runtime` profile and from
-477,221 to 480,315 in `full`; `core` and `editor`, which hold none of these tools, stay at 28,044
-and 315,484.
+describes, the frame fields and the corrections together grow `tools/list` from 28,044 to
+28,074 bytes in the `core` profile, from 315,484 to 316,607 in `editor`, from 193,983 to
+198,347 in `runtime` and from 477,221 to 482,678 in `full`.
 
 ## Bridge protocol
 

@@ -51,7 +51,8 @@ const MAX_READ_BYTES: u64 = 512 * 1024 * 1024;
 /// Most globs in one `include` or `exclude` list.
 const MAX_GLOBS: usize = 32;
 
-/// Longest name, pattern or value argument, in bytes.
+/// Longest name, pattern or value argument, in characters: Unicode scalar
+/// values, as a schema's `maxLength` counts them.
 const MAX_NAME_LENGTH: usize = 1024;
 
 /// Most roots, dynamic loads, broken references or UID claims listed beside
@@ -244,6 +245,7 @@ pub(super) fn argument_schema(key: &str) -> Option<Value> {
             "type": "string",
             "minLength": 7,
             "maxLength": MAX_UID_LENGTH,
+            "pattern": "^uid://[a-z0-9]+$",
             "description": "A `uid://` handle to look up as a project path."
         }),
         "path" => name("A project-relative path (or `res://` URI) to look up the UID of."),
@@ -430,8 +432,8 @@ impl Request<'_, '_> {
         let Some(value) = self.values.get(key).and_then(Value::as_str) else {
             return Ok(None);
         };
-        if value.len() > max {
-            return Err(invalid(format!("`{key}` must not exceed {max} bytes")));
+        if value.chars().count() > max {
+            return Err(invalid(format!("`{key}` must not exceed {max} characters")));
         }
         Ok(Some(value))
     }

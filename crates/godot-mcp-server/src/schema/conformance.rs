@@ -24,12 +24,14 @@ pub(crate) fn pattern_matches(pattern: &str, text: &str) -> bool {
 /// The rule one name-like string field follows: at most `limit` characters,
 /// empty only when `empty` allows it, and without a control character
 /// ([`char::is_control`]) when `control` refuses them.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct NameRule {
-    pub(crate) limit: usize,
-    pub(crate) empty: bool,
-    pub(crate) control: bool,
+pub struct NameRule {
+    /// The most characters the field takes.
+    pub limit: usize,
+    /// Whether the field takes the empty string.
+    pub empty: bool,
+    /// Whether the field refuses a control character.
+    pub control: bool,
 }
 
 /// The cases every name-like field is held to, each with the verdict `rule`
@@ -39,8 +41,8 @@ pub(crate) struct NameRule {
 /// string. A value is `prefix`, the varying part and `suffix`, so a field
 /// with a shape of its own (a `res://` path with an extension) can take every
 /// case; the prefix and the suffix count toward the limit.
-#[cfg(test)]
-pub(crate) fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(String, bool)> {
+#[must_use]
+pub fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(String, bool)> {
     let fixed = prefix.chars().count() + suffix.chars().count();
     assert!(
         fixed < rule.limit,
@@ -61,6 +63,24 @@ pub(crate) fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(Str
     cases.push((wrap("a\u{A0}a"), true));
     cases.push((String::new(), rule.empty));
     cases
+}
+
+/// Whether `pattern` holds a `.` outside a class, anywhere in it: ECMA-262's
+/// `.`, which refuses the line terminators `\n`, `\r`, U+2028 and U+2029.
+#[cfg(test)]
+pub(crate) fn has_dot(pattern: &str) -> bool {
+    fn within(alternatives: &[Vec<Item>]) -> bool {
+        alternatives.iter().flatten().any(|item| match &item.atom {
+            Atom::Any => true,
+            Atom::Group(inner)
+            | Atom::Lookahead {
+                alternatives: inner,
+                ..
+            } => within(inner),
+            _ => false,
+        })
+    }
+    within(&Pattern::parse(pattern).alternatives)
 }
 
 /// `schema` with each of the definitions `names` put back wherever a bare
@@ -379,7 +399,12 @@ fn repeat_matches(item: &Item, done: usize, text: &[char], at: usize, rest: Rest
 fn atom_matches(atom: &Atom, text: &[char], at: usize, rest: Rest<'_>) -> bool {
     match atom {
         Atom::Literal(expected) => text.get(at) == Some(expected) && rest(at + 1),
-        Atom::Any => text.get(at).is_some_and(|found| *found != '\n') && rest(at + 1),
+        // ECMA-262's `.` without the `s` flag: anything but a line terminator.
+        Atom::Any => {
+            text.get(at)
+                .is_some_and(|found| !matches!(found, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+                && rest(at + 1)
+        }
         Atom::Class { negated, ranges } => {
             text.get(at).is_some_and(|found| {
                 ranges
@@ -630,6 +655,26 @@ mod tests {
         assert!(pattern_matches(r"^\u540D$", "\u{540D}"));
     }
 
+    /// `.` is ECMA-262's: any character but a line terminator, which is `\n`,
+    /// `\r`, U+2028 or U+2029, as a client that checks a `pattern` reads it.
+    /// U+0085, `\v` and `\f` are not line terminators there, and a
+    /// supplementary character is one character, as with the `u` flag.
+    #[test]
+    fn a_dot_matches_any_character_but_a_line_terminator() {
+        let dot = Pattern::parse("^.$");
+        for character in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            assert_eq!(
+                dot.search(&character.to_string()),
+                !matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}'),
+                "U+{:04X}",
+                u32::from(character)
+            );
+        }
+        assert!(pattern_matches("^a.*b$", "a\u{85}\u{B}\u{C}b"));
+        assert!(!pattern_matches("^a.*b$", "a\u{2028}b"));
+        assert!(!pattern_matches("^a.*b$", "a\rb"));
+    }
+
     /// The engine's own path pattern gives the verdict of the engine's path
     /// check, so this checker reads lookaheads the way a client does.
     #[test]
@@ -656,6 +701,43 @@ mod tests {
                 is_valid_project_relative_path(path),
                 "{path:?}"
             );
+        }
+        // Every character, and the line terminators and their neighbours
+        // wherever they fall beside the rules the check applies: the check
+        // takes U+2028 and U+2029, which are not control characters, so the
+        // pattern has to.
+        let pattern = Pattern::parse(PROJECT_RELATIVE_PATH_PATTERN);
+        for character in (0..=0x10_FFFF).filter_map(char::from_u32) {
+            let path = format!("a{character}b.gd");
+            assert_eq!(
+                pattern.search(&path),
+                is_valid_project_relative_path(&path),
+                "{path:?}"
+            );
+        }
+        let around = [
+            "",
+            "/b.gd",
+            "/../b.gd",
+            "/..",
+            "\\b.gd",
+            "://b.gd",
+            "\u{1F}b.gd",
+        ];
+        for character in ['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}', '\u{FEFF}'] {
+            for rest in around {
+                for path in [
+                    format!("{character}{rest}"),
+                    format!("a{character}{rest}"),
+                    format!("res://a{character}{rest}"),
+                ] {
+                    assert_eq!(
+                        pattern.search(&path),
+                        is_valid_project_relative_path(&path),
+                        "{path:?}"
+                    );
+                }
+            }
         }
     }
 

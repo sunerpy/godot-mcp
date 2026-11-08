@@ -555,6 +555,37 @@ fn every_engine_path_argument_uses_the_same_project_relative_constraint() {
     );
 }
 
+/// A client reads a `pattern` as ECMA-262, whose `.` refuses the line
+/// terminators `\n`, `\r`, U+2028 and U+2029. Every engine path schema gives
+/// the runtime check's verdict on each of them, wherever it falls beside the
+/// rules the check applies: the check takes U+2028 and U+2029, which are not
+/// control characters, and refuses `\n` and `\r`, which are.
+#[test]
+fn every_engine_path_schema_reads_line_terminators_as_the_runtime_does() {
+    let mut paths = Vec::new();
+    for terminator in ['\n', '\r', '\u{2028}', '\u{2029}'] {
+        for rest in [
+            "b.gd", "/b.gd", "/../b.gd", "/..", "\\b.gd", "://b.gd", ",b.gd",
+        ] {
+            paths.push(format!("a{terminator}{rest}"));
+            paths.push(format!("res://{terminator}{rest}"));
+        }
+    }
+    for field in EnginePathField::ALL {
+        let schema = field.advertised_path_schema();
+        for path in &paths {
+            let result = EngineRequest::parse(field.operation(), field.arguments(path));
+            assert_eq!(
+                crate::schema::conformance::conforms(&schema, &json!(path)),
+                result.is_ok(),
+                "{}.{} schema and runtime disagree on {path:?}: runtime={result:?}",
+                field.operation().tool_name(),
+                field.key()
+            );
+        }
+    }
+}
+
 #[test]
 fn published_project_relative_pattern_matches_runtime_for_every_unicode_scalar() {
     let divergences = full_scalar_pattern_divergences();

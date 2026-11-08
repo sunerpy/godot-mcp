@@ -218,3 +218,63 @@ fn files_list_filters_by_glob() {
         exited.stderr
     );
 }
+
+/// The `glob` of `project.files.list` is bounded in characters, as its
+/// schema's `maxLength` counts them, whatever the bytes each takes, and takes
+/// a control character as the analysis tools' globs do: it is matched against
+/// the paths the project holds.
+#[test]
+fn the_glob_of_a_file_list_follows_one_rule_in_the_schema_and_the_check() {
+    use godot_mcp_analysis::insight::glob::MAX_GLOB_LENGTH;
+    use godot_mcp_server::test_support::{NameRule, conforms, name_cases};
+
+    let tree = project();
+    let mut session = StdioSession::initialized(&Spawn {
+        project: &tree.root,
+        current_dir: None,
+        profile: "editor",
+        godot: None,
+    });
+    let listed = session.request(2, "tools/list", json!({}));
+    let schema = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|tool| tool["name"] == json!("project.files.list"))
+        .expect("the editor profile lists project.files.list")["inputSchema"]
+        .clone();
+    let rule = NameRule {
+        limit: MAX_GLOB_LENGTH,
+        empty: false,
+        control: false,
+    };
+    for (id, (glob, expected)) in (3_u64..).zip(name_cases(rule, "", "")) {
+        let arguments = json!({ "glob": glob });
+        let shown: String = arguments.to_string().chars().take(160).collect();
+        assert_eq!(
+            conforms(&schema, &arguments),
+            expected,
+            "the schema's verdict on {shown}"
+        );
+        let answer = session.call_tool(id, "project.files.list", arguments);
+        let accepted =
+            if answer.get("error").is_none() && answer["result"]["isError"] != json!(true) {
+                true
+            } else {
+                assert_eq!(
+                    error_code(&answer),
+                    json!("invalid_input"),
+                    "{shown}: {answer}"
+                );
+                false
+            };
+        assert_eq!(accepted, expected, "the handler's verdict on {shown}");
+    }
+    let exited = session.finish();
+    assert_eq!(
+        exited.code,
+        Some(0),
+        "the server exits cleanly: {}",
+        exited.stderr
+    );
+}

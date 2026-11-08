@@ -540,8 +540,12 @@ fn test_selection_path_pattern() -> String {
     if separator_class.is_empty() {
         return PROJECT_RELATIVE_PATH_PATTERN.to_owned();
     }
+    // Not `.*`, which stops at a line terminator the path may hold: the
+    // characters before a separator are any that are not control characters,
+    // and the rest of the pattern refuses those.
     format!(
-        "^(?!.*[{separator_class}]){}",
+        "^(?![^{}]*[{separator_class}]){}",
+        crate::schema::CONTROL,
         PROJECT_RELATIVE_PATH_PATTERN
             .strip_prefix('^')
             .expect("the shared project-relative pattern is anchored")

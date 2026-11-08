@@ -56,7 +56,11 @@ pub mod suite;
 /// A path may have one `res://` prefix. Its non-empty remainder uses `/` only,
 /// contains no residual URI scheme, is not absolute, option-shaped or
 /// Windows-prefixed, and contains neither parent traversal nor control characters.
-pub const PROJECT_RELATIVE_PATH_PATTERN: &str = r"^(?:res://)?(?!(?:/|-|[A-Za-z]:))(?!(?:\.\.(?:/|$)|.*/\.\.(?:/|$)))(?!.*(?:\\|://|[\x00-\x1F\x7F-\x9F])).+$";
+///
+/// It spells "any character" as the class of characters that are not control
+/// characters, never as `.`: ECMA-262's `.` also refuses `\r`, U+2028 and
+/// U+2029, and [`is_valid_project_relative_path`] takes U+2028 and U+2029.
+pub const PROJECT_RELATIVE_PATH_PATTERN: &str = r"^(?:res://)?(?!(?:/|-|[A-Za-z]:))(?!(?:\.\.(?:/|$)|[^\x00-\x1F\x7F-\x9F]*/\.\.(?:/|$)))(?![^\x00-\x1F\x7F-\x9F]*(?:\\|://|[\x00-\x1F\x7F-\x9F]))[^\x00-\x1F\x7F-\x9F]+$";
 
 /// Return the project-relative spelling of a path that may use Godot's `res://`
 /// prefix. Validation stays with the caller because framework-facing paths keep

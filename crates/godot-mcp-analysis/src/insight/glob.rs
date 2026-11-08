@@ -18,7 +18,8 @@
 
 use regex::Regex;
 
-/// Longest glob a caller may supply, in bytes.
+/// Longest glob a caller may supply, in characters: Unicode scalar values,
+/// as a schema's `maxLength` counts them.
 pub const MAX_GLOB_LENGTH: usize = 1024;
 
 /// A rejected glob, with a message a caller can act on.
@@ -74,9 +75,9 @@ impl PathGlob {
         if trimmed.is_empty() {
             return Err(GlobError::new("a glob must not be empty"));
         }
-        if trimmed.len() > MAX_GLOB_LENGTH {
+        if trimmed.chars().count() > MAX_GLOB_LENGTH {
             return Err(GlobError::new(format!(
-                "a glob must not exceed {MAX_GLOB_LENGTH} bytes"
+                "a glob must not exceed {MAX_GLOB_LENGTH} characters"
             )));
         }
         let unprefixed = trimmed.strip_prefix("res://").unwrap_or(trimmed);
