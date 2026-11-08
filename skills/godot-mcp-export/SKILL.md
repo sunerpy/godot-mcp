@@ -135,7 +135,8 @@ This exports a patch of what changed since a release pack kept in the project:
 - One read returns at most the server's `max_output_bytes` limit, 8 MiB by default. A larger
   file is read in inclusive byte ranges: a `resources/read` whose `_meta` holds
   `{"io.godot-mcp/artifactRange": {"start": 0, "endInclusive": 8388607}}` reads the first 8 MiB,
-  and the next range follows on. Check the joined bytes against `sha256`.
+  and the next range follows on. The last range ends at the output's `bytes` minus 1; one
+  past it is refused. Check the joined bytes against `sha256`.
 - No tool names a host path for an output. To keep a build, read it and write it where the user
   wants it.
 
