@@ -80,6 +80,15 @@ fn tool_name() -> &'static str {
     EngineOperation::ProjectBatch.tool_name()
 }
 
+/// The SHA-256 a file of the batch is edited against.
+fn file_sha256_schema() -> Value {
+    json!({
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "SHA-256 of the file's current bytes; a stale value refuses every file."
+    })
+}
+
 /// The schema of one file of the batch: a scene or a resource.
 fn file_schema(scene: bool) -> Value {
     let (kind, extension) = if scene {
@@ -105,11 +114,7 @@ fn file_schema(scene: bool) -> Value {
                 "maxLength": 1024,
                 "description": format!("Project-relative {extension} path, optionally res://-prefixed.")
             },
-            "expectedSha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$",
-                "description": "SHA-256 of the file's current bytes; a stale value refuses every file."
-            },
+            "expectedSha256": file_sha256_schema(),
             "operations": authored::operations_schema(scene),
         },
         "required": ["kind", "path", "expectedSha256", "operations"],
@@ -147,7 +152,8 @@ pub(super) fn input_schema() -> Map<String, Value> {
     });
     // A scene file's operations and a resource file's, as their own batch
     // tools advertise them.
-    let shared = authored::shared_fields(&[(true, false), (false, false)]);
+    let mut shared = authored::shared_fields(&[(true, false), (false, false)]);
+    shared.push(("FileSha256", file_sha256_schema()));
     crate::schema::define_shared(&mut schema, &shared);
     schema
         .as_object()

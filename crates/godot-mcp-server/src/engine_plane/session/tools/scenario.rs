@@ -165,8 +165,14 @@ fn id_schema() -> Value {
     })
 }
 
+/// The field schemas `test.scenario.run` defines once when it repeats them,
+/// beside those every session tool that takes tagged values shares.
+pub(super) fn shared_fields() -> Vec<(&'static str, Value)> {
+    vec![("StepId", id_schema()), ("ProjectPng", path_schema())]
+}
+
 /// The schema of the `property` named field of one of the mirrored tools'
-/// schemas.
+/// schemas, as that tool writes it, before any definition is shared.
 fn mirrored(operation: SessionOperation, field: &str) -> Value {
     operation.input_schema()["properties"][field].clone()
 }
@@ -178,8 +184,7 @@ fn assert_target_schema() -> Value {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                    "node": node_schema("A node of the running game: an absolute path \
-                                         (/root/...) or a path relative to the current scene."),
+                    "node": super::node_schema(),
                     "property": {
                         "type": "string",
                         "minLength": 1,

@@ -323,6 +323,27 @@ describes, the frame fields and the corrections together grow `tools/list` from 
 28,074 bytes in the `core` profile, from 315,484 to 316,607 in `editor`, from 193,983 to
 198,347 in `runtime` and from 477,221 to 482,678 in `full`.
 
+#### 0.7.0 schema writing
+
+Release 0.7.0 also changes how five more tool schemas are written and nothing they decide: the
+schemas take and refuse exactly the requests they did before.
+
+* Every tool that carries `$defs` now defines in them each field schema it repeats, as the
+  tools that take operations have since 0.6.0. Every field that held the schema holds a `$ref`
+  to it with nothing beside it.
+* `test.scenario.run` shares a step's `id`, a running node, an input's `state` and `holdMs`, a
+  viewport position, a PNG `path` and a node's written `properties`; `runtime.wait` and
+  `runtime.properties.set` share the running node, and `runtime.properties.set` the written
+  `properties` too. `project.settings.patch` shares the `setting` of `set_setting` and
+  `clear_setting`, and `project.batch.apply` a file's `expectedSha256`.
+* The node a `test.scenario.run` assertion reads is described as every other running node is,
+  `.` being the current scene; it always took it.
+
+A tool that takes no tagged value still carries no `$defs`, and writes a field it repeats where
+it is used. Measured the same way, `tools/list` shrinks from 316,607 to 316,228 bytes in
+`editor`, from 198,347 to 193,118 in `runtime` and from 482,678 to 477,070 in `full`; `core`
+stays at 28,074.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an
