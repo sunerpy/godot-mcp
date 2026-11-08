@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0](https://github.com/sunerpy/godot-mcp/compare/v0.6.0...v0.7.0) (2026-11-08)
+
+
+### Features
+
+* add an export skill and correct the shipped skills ([#62](https://github.com/sunerpy/godot-mcp/issues/62)) ([5842ba4](https://github.com/sunerpy/godot-mcp/commit/5842ba4552da2c31dca03ae5adcf60621e1a09e4))
+* step a running game by physics frames ([#60](https://github.com/sunerpy/godot-mcp/issues/60)) ([e9d7e73](https://github.com/sunerpy/godot-mcp/commit/e9d7e735ede0da21465020a9dce2269f9c0ab925))
+
+
+### Bug Fixes
+
+* let a hung editor's session go even while its status waits ([#58](https://github.com/sunerpy/godot-mcp/issues/58)) ([352f2e7](https://github.com/sunerpy/godot-mcp/commit/352f2e796b2e6c82d9d989352cea72c16bcb302e))
+* make the remaining argument checks agree with their schemas ([#59](https://github.com/sunerpy/godot-mcp/issues/59)) ([1002da8](https://github.com/sunerpy/godot-mcp/commit/1002da87f9f53b5bfebca843b9897c1da03f1b33))
+
+
+### Performance Improvements
+
+* **server:** define once each field schema a value-taking tool repeats ([#63](https://github.com/sunerpy/godot-mcp/issues/63)) ([6964d9a](https://github.com/sunerpy/godot-mcp/commit/6964d9a4a30d06fa05e8cc18669693abdce34907))
+
 ## [0.6.0](https://github.com/sunerpy/godot-mcp/compare/v0.5.0...v0.6.0) (2026-11-08)
 
 
