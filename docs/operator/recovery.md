@@ -12,11 +12,16 @@ backed by a re-derived proof, and there is no bypass.
 | --- | --- |
 | `compensated` | The effect was undone from a proven pre-state. The project is as it was. |
 | `committed` | The effect is proven to have landed in its post-state. |
-| `quarantined` | Neither could be proven. Writes are blocked until an operator resolves it. |
+| `quarantined` | Neither could be proven. Writes are blocked until it is resolved: by an operator, or, for an editor change, by the editor's late answer. |
 
 A fourth outcome is not representable. In particular there is no "assume it worked"
 and no "probably fine" — an unprovable state becomes quarantine, which is a
 deliberately loud, blocking condition rather than a warning you can miss.
+
+One kind of `committed` transaction proves no post-state: an editor mutation the
+editor never answered, which an operator commits once that editor has ended
+([An editor that ended before it answered](#an-editor-that-ended-before-it-answered)).
+Its files are accepted as they are, and its result stays `uncertain`.
 
 ## Three effect kinds
 
@@ -68,7 +73,9 @@ godot-mcp serve: write gate open
 
 If a transaction could not be resolved, the gate is closed instead and the reason is
 printed. Read requests still work; writes are refused until the quarantine is
-resolved. A closed gate is not a transient condition that clears itself.
+resolved. A closed gate is not a transient condition that clears itself: only proof
+opens it, an operator's repair or, for an editor change, the answer the editor gives
+later (see [Late editor answers](#late-editor-answers)).
 
 ## Survivors from a previous run
 
@@ -147,7 +154,8 @@ other edit. With the `godot_mcp` editor add-on connected, a `scene.batch.apply` 
 open in the editor is one undo action there, and `editor.undo` / `editor.redo` move through
 that history; see [Editor bridge](editor-bridge.md). An editor change whose answer was lost
 is unresolved: it is never resent, and one that may have saved a file blocks writes until it
-is resolved, like any other quarantined transaction.
+is resolved, like any other quarantined transaction, by the editor's late answer or by an
+operator.
 
 Some editor effects may write files nobody can list in advance: `editor.scene.save` and
 `editor.play.start` save the open scenes with whatever external resources they changed,
@@ -155,12 +163,40 @@ Some editor effects may write files nobody can list in advance: `editor.scene.sa
 `project.settings.patch` carried out by the editor may switch a plugin, whose own code then
 runs. Each of these transactions records the files it names, each with its precondition,
 and one more entry, `*`, that stands for the whole project. A lost answer quarantines it
-like any unresolved effect that touched files, so writes stay blocked until an operator
-resolves it, and a committed one is followed by a full rescan of the workspace.
+like any unresolved effect that touched files, so writes stay blocked until the editor's
+late answer settles it or an operator resolves it, and a committed one is followed by a full
+rescan of the workspace.
 
 Nothing in the shipped planes silently substitutes for it. A durable write on the
 project plane is not undoable through the editor's history — its recovery story is the
 three-state contract above, which is why that contract is strict.
+
+## Late editor answers
+
+The server stops waiting for an editor change at its deadline, two seconds later, or when
+the editor's session ends, but the editor goes on with a change it has started: GDScript
+cannot be stopped part way. When the editor finishes, it answers anyway, on the same session,
+or, when that session ended meanwhile, in a report to the next session it opens, which may
+be a later server's ([Editor bridge protocol](../protocol/bridge-protocol.md#late-mutation-answers)).
+That answer is the bound receipt the quarantined transaction lacked, and it settles the
+transaction:
+
+| The editor's late answer | The transaction |
+| --- | --- |
+| `committed` | ends `committed`, with the answer as its receipt, and the outcome the answer reports: success, or the error the change ended with |
+| `not_started` | ends `compensated`, with the editor's reason |
+| `unresolved` | stays `quarantined`; the answer is recorded in the audit log |
+
+An answer settles only the quarantined live-editor transaction whose transaction ID and
+idempotency ID it names, and the audit log records it before the transaction changes. Writes
+reopen as soon as no transaction is quarantined. A retry of the same request then answers
+the settled outcome from the journal, and the editor is never asked to run it again. An
+answer that arrives while the server is still writing the transaction's unresolved outcome
+is held and applied as soon as that outcome is written.
+
+An editor that exits before it answers sends nothing. Its change stays quarantined until an
+operator settles it once that editor has ended
+([An editor that ended before it answered](#an-editor-that-ended-before-it-answered)).
 
 ## Operator repair
 
@@ -175,7 +211,7 @@ repair-proof schema:
 
 | Operation | Effect |
 | --- | --- |
-| `reconcile` | Re-derives and reports the would-be transition. Records nothing. |
+| `reconcile` | Re-derives and reports the would-be transition. Changes no transaction; a proven one is written to the audit log. |
 | `compensate` | Undoes the effect from a proven pre-state. |
 | `terminate` | Terminates a proven, still-contained survivor. `process_launch` only. |
 | `acknowledge-safe-state` | Records a proven post-state as committed. |
@@ -210,6 +246,76 @@ godot-mcp transaction repair \
 Every refusal — an unproven state, a mismatched proof, the wrong project object or
 generation, a transaction that is not quarantined, an I/O error while re-deriving —
 exits non-zero and leaves the transaction exactly as it was.
+
+### An editor that ended before it answered
+
+An editor mutation that may write project files and that the editor never answered —
+`editor.script.run` past its deadline, or an editor that exited or lost its connection
+mid-request — is quarantined as an `editor_runtime` transaction: the editor may have
+written project files, and it may still be writing them. Nothing the server can read
+proves what it wrote. What it can prove is that the writer is gone.
+
+When the add-on connects, the server records which editor process it is talking to:
+the process ID and its start time, kept only when the platform reports start times
+(Linux and macOS), the add-on reports the executable it runs (add-on 0.4.1 and later),
+and that process really runs that executable. An unanswered request's record names that process. Once
+the process has ended, `acknowledge-safe-state` with a `writer-ended` proof accepts
+the project's files as they are, and the request's own result stays unknown:
+
+```json
+{
+  "effect_kind": "editor_runtime",
+  "transaction_id": "00000000-0000-0000-0000-000000000302",
+  "project_object_identity": "project_…",
+  "project_generation": 0,
+  "bridge_reachable": false,
+  "claimed_disposition": "writer-ended"
+}
+```
+
+`project_object_identity` and `project_generation` are the `object_id` and
+`generation` of the `project` object that `project.info.get` answers, and a wrong
+value is refused with the value the held lease designates. An optional `editor_process` object
+(`pid`, `start_time`) is checked against the record when it is present.
+
+1. Close the editor, or wait for it to end. While the recorded process still runs,
+   `acknowledge-safe-state` is refused and `reconcile` proves no disposition, both
+   with `the editor that ran this request is still running (pid …): wait for it to answer, or close it`.
+2. Stop the server. The command holds the project's lease while it works, so it is
+   refused while a server owns the project.
+3. Check the files the request could have changed. The command proves that nothing
+   can still write for the request, not what was written.
+4. Run `reconcile`. It reports `proven-disposition writer-ended` and changes no transaction.
+5. Run `acknowledge-safe-state`:
+
+   ```sh
+   godot-mcp transaction repair \
+     --project /srv/projects/my-game \
+     --transaction-id 00000000-0000-0000-0000-000000000302 \
+     --operation acknowledge-safe-state \
+     --proof-file ./proof.json
+   ```
+
+   The record moves to `committed_fsynced` with the terminal outcome `uncertain`,
+   and the report names the editor process that ended.
+6. Start the server. Writes are served again. A replay of the request with the same
+   `idempotencyId` and arguments still answers `uncertain`, from the journal, and is
+   not sent to the editor again; like every editor mutation, it is answered only
+   while an editor is connected.
+
+The command re-derives the end of the editor itself, from the operating system's
+process table, and the server's own gateway derives it again before it records the
+transition. It is refused, and the transaction stays quarantined, when:
+
+* the record names no editor process — the server could not prove the editor's
+  process when it connected (Windows, an editor in another PID namespace such as a
+  container or a Flatpak, an add-on older than 0.4.1, which does not report its
+  executable), the editor
+  answered without settling the request, or the record predates editor process
+  records;
+* the proof file claims a reachable bridge, a bridge receipt, a live state probe, or
+  another editor process than the one recorded;
+* the operation is `compensate`: the end of the editor proves no pre-state.
 
 ## Related
 

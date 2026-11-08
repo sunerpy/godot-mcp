@@ -852,6 +852,7 @@ fn unbound() -> TypedProof {
         receipt_transaction_id: None,
         receipt_action_id: None,
         live_state_probe: None,
+        editor_process: None,
     }
 }
 

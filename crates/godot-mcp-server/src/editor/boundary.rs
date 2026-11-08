@@ -26,12 +26,13 @@ use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::contracts::{ArtifactKind, OutcomeError};
 use serde_json::{Map, Value, json};
 
-use super::bridge::{BridgeAnswer, BridgeFailure, EditorBridge, now_unix_ms};
+use super::bridge::{BridgeAnswer, BridgeFailure, EditorBridge, LateAnswer, now_unix_ms};
 use crate::capture::CaptureSink;
 use crate::effect::boundary::{
     BoundaryUnavailable, EditorEffectBoundary, EditorEffectOutcome, EditorMutation, EffectTicket,
 };
-use crate::journal::TypedProof;
+use crate::effect::gateway::LateEditorAnswer;
+use crate::journal::{EditorProcess, TypedProof};
 use crate::router::{HeldPath, LiveEditorView};
 
 /// How long the live-editor view waits for the editor to say what it holds.
@@ -82,6 +83,7 @@ fn unbound_proof() -> TypedProof {
         receipt_transaction_id: None,
         receipt_action_id: None,
         live_state_probe: None,
+        editor_process: None,
     }
 }
 
@@ -103,6 +105,7 @@ pub(crate) fn receipt(ticket: &EffectTicket, action: &str, payload: &Value) -> T
                 .and_then(Value::as_str)
                 .map_or_else(|| "answered".to_owned(), str::to_owned),
         ),
+        editor_process: None,
     }
 }
 
@@ -132,14 +135,14 @@ impl EditorEffectBoundary for BridgeEditorBoundary {
             return self.capture(ticket, mutation);
         }
         let payload: Value = serde_json::from_str(&mutation.payload).unwrap_or_else(|_| json!({}));
-        let answer = self.bridge.call(
+        let (answer, editor_process) = self.bridge.call_with_process(
             &mutation.action,
             OperationClass::Mutation,
             &payload,
             &mutation.idempotency_id,
             mutation.timeout,
         );
-        bridge_outcome(ticket, &mutation.action, answer, "editor")
+        bridge_outcome(ticket, &mutation.action, answer, "editor", editor_process)
     }
 }
 
@@ -362,11 +365,18 @@ fn read(
 /// answer carries its mutation status, a request that reached the peer and
 /// was never answered is `unresolved`, and one that never reached it is
 /// [`BoundaryUnavailable`].
+///
+/// `editor_process` is the editor process the request was sent to, as its
+/// bridge session proved it. Only the proof of a request that reached the
+/// peer and was never answered keeps it: once that process has ended, nothing
+/// can still write for the request, which is what lets an operator settle the
+/// transaction (`transaction repair --operation acknowledge-safe-state`).
 pub(crate) fn bridge_outcome(
     ticket: &EffectTicket,
     action: &str,
     answer: Result<BridgeAnswer, BridgeFailure>,
     boundary: &'static str,
+    editor_process: Option<EditorProcess>,
 ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
     match answer {
         Ok(BridgeAnswer::Result { status, payload }) => Ok(EditorEffectOutcome {
@@ -407,9 +417,49 @@ pub(crate) fn bridge_outcome(
                     failure.message()
                 },
             )),
-            proof: unbound_proof(),
+            proof: TypedProof::EditorRuntime {
+                bridge_reachable: false,
+                receipt_transaction_id: None,
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process,
+            },
         }),
         Err(_) => Err(BoundaryUnavailable { boundary }),
+    }
+}
+
+/// The late answer the bridge bound to a transaction, read as the gateway
+/// settles it: by the rules [`bridge_outcome`] reads an answer in time by.
+pub(crate) fn late_editor_answer(late: LateAnswer) -> LateEditorAnswer {
+    let (status, error, payload) = match late.answer {
+        BridgeAnswer::Result { status, payload } => (status, None, payload),
+        BridgeAnswer::Error {
+            kind,
+            message,
+            status,
+        } => (
+            status.unwrap_or(MutationStatus::NotStarted),
+            Some((kind, message)),
+            json!({}),
+        ),
+    };
+    let text = |key: &str| {
+        payload
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    LateEditorAnswer {
+        transaction_id: late.transaction_id,
+        idempotency_id: late.idempotency_id,
+        method: late.method,
+        sent_here: late.sent_here,
+        status,
+        error,
+        action: text("action"),
+        digest: text("digest"),
     }
 }
 
@@ -514,6 +564,57 @@ mod tests {
                 ("project.godot".to_owned(), None),
             ]
         );
+    }
+
+    /// A late answer is read exactly as one in time: a committed result's
+    /// recorded action and digest are its receipt, and an error that names no
+    /// status did not start the mutation.
+    #[test]
+    fn a_late_answer_reads_as_an_answer_in_time_would() {
+        let late = |answer| LateAnswer {
+            transaction_id: "00000000-0000-4000-8000-000000000601".to_owned(),
+            idempotency_id: "idem-late".to_owned(),
+            method: "editor.scene.save".to_owned(),
+            sent_here: false,
+            answer,
+        };
+        let committed = late_editor_answer(late(BridgeAnswer::Result {
+            status: MutationStatus::Committed,
+            payload: json!({ "action": "godot-mcp: editor.scene.save", "digest": "saved" }),
+        }));
+        assert_eq!(
+            committed,
+            LateEditorAnswer {
+                transaction_id: "00000000-0000-4000-8000-000000000601".to_owned(),
+                idempotency_id: "idem-late".to_owned(),
+                method: "editor.scene.save".to_owned(),
+                sent_here: false,
+                status: MutationStatus::Committed,
+                error: None,
+                action: Some("godot-mcp: editor.scene.save".to_owned()),
+                digest: Some("saved".to_owned()),
+            }
+        );
+        let refused = late_editor_answer(late(BridgeAnswer::Error {
+            kind: ErrorKind::Unavailable,
+            message: "the connection was lost before the request started".to_owned(),
+            status: None,
+        }));
+        assert_eq!(refused.status, MutationStatus::NotStarted);
+        assert_eq!(
+            refused.error,
+            Some((
+                ErrorKind::Unavailable,
+                "the connection was lost before the request started".to_owned()
+            ))
+        );
+        let failed = late_editor_answer(late(BridgeAnswer::Error {
+            kind: ErrorKind::Internal,
+            message: "the script raised an error".to_owned(),
+            status: Some(MutationStatus::Committed),
+        }));
+        assert_eq!(failed.status, MutationStatus::Committed);
+        assert_eq!((failed.action, failed.digest), (None, None));
     }
 
     /// A running editor writes its in-memory project settings back whenever it

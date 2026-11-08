@@ -191,11 +191,79 @@ sent, naming the add-on's version. Adding a method is therefore a compatible cha
 needs no new protocol version; an add-on and a server of different releases agree on the
 methods both have.
 
+An editor add-on's description also names its process ID (`pid`) and the executable it
+runs (`executable`). The server keeps that process's identity — its ID and start time —
+only when the operating system confirms both, and records it with any request the editor
+then leaves unanswered, so that an operator can settle that request once the process has
+ended ([Recovery](../operator/recovery.md#an-editor-that-ended-before-it-answered)). An
+add-on that names no executable is served exactly as before, without that identity.
+
 The server sends `bridge:heartbeat` every 5 seconds and closes a session that stays silent
 for 30. A peer that is running a request whose `deadline_unix_ms` has not passed is not
 silent: an editor runs one request at a time on its main thread and answers no heartbeat
 until it is done, so a long scan is not mistaken for a lost editor. Once the deadline
 passes without an answer the request is unresolved, and the silence rule applies again.
+
+The server's own status request, method bridge.server_status
+([The server's status](#the-servers-status)), is such a request too, and one not answered
+within its 30 seconds is sent again while the add-on has not taken the latest
+status, so a silent session stays open while that status is outstanding. A quarantine changes
+the status. An editor that holds its main thread past a mutation's deadline therefore keeps its
+session when the changed status was sent before the silence reached 30 seconds, and the answer
+comes on that session; otherwise the session closes, and the answer comes in a report to the
+next one ([Late mutation answers](#late-mutation-answers)).
+
+## Late mutation answers
+
+A server stops waiting for a mutation at the request's `deadline_unix_ms` plus a 2-second
+grace, or when the session that carries it ends. The editor still runs a request it has
+started, because GDScript cannot be stopped part way, so its answer can come after the
+server gave up. That answer is the receipt the server's journal lacks, and the server binds
+it to its request in one of two ways:
+
+* a `bridge:result` or `bridge:error` that arrives on the same session after the server
+  stopped waiting, correlated to the request;
+* a `bridge:event` named mutation.late_answer, one for each answer the add-on kept: sent
+  at once when a session is already described, and again to every session once it is
+  described.
+
+The server keeps each mutation request it stopped waiting for whose payload names the
+server's `transaction_id`, at most 64, the oldest dropped first. The add-on keeps the answer
+to a mutation it could not deliver, or delivered after the request's deadline, and records a
+queued mutation dropped with a lost connection as `not_started`. It keeps only answers that
+say what happened, `committed` or `not_started`, for a request whose payload names a
+transaction: at most 16, the oldest dropped first.
+
+The event's payload holds two objects. `request` names the request:
+
+| Field | Value |
+| --- | --- |
+| `session_id` | The server session the request came on. |
+| `message_id` | The request's message ID. |
+| `idempotency_id` | The request's idempotency ID. |
+| `method` | The request's method. |
+| `transaction_id` | The `transaction_id` the request's payload named. |
+
+`answer` says what happened:
+
+| Field | Value |
+| --- | --- |
+| `mutation_status` | `committed` or `not_started`. |
+| `ok` | Whether the request succeeded. |
+| `action`, `digest` | On success, what the add-on recorded and its digest of the state it left, when it said; at most 256 characters each. |
+| `error_kind`, `message` | On failure, the error category and its message, at most 2,048 characters. |
+
+A report that names this server's session must match a kept request exactly, by message ID,
+idempotency ID, method and transaction ID, and binds once: a repeated report, or one naming a
+request this server never sent, is dropped. A report that names an earlier server's session is
+handed on unverified, and only the journal can bind it, by transaction and idempotency ID. The
+add-on sends its reports to every later session too; once the transaction is settled a report
+changes nothing. No report makes the server send a request again. How the journal settles a
+bound answer is in [Recovery](../operator/recovery.md#late-editor-answers).
+
+An add-on older than 0.4.1 sends no report, so only an answer on the same session settles a
+transaction there; a server that does not know the event ignores it, as it ignores every event
+it does not know.
 
 ## The server's status
 

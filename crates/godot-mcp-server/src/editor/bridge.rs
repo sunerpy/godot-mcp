@@ -27,8 +27,19 @@
 //! described, and again whenever what it would say changes. The status comes
 //! from the [`StatusSource`] the server attaches; the runtime probe's bridge
 //! never sends it.
+//!
+//! An answer can still come after the server stopped waiting for it. Once a
+//! [`LateAnswerSink`] is attached, the bridge keeps every mutation request sent
+//! for a transaction that ended [`BridgeFailure::Lost`] or
+//! [`BridgeFailure::TimedOut`], and hands the sink each [`LateAnswer`] that it
+//! can bind exactly to one of them: a `result` or `error` that arrives later on
+//! the same session, or a [`LATE_ANSWER_EVENT`] the peer sends on a later one.
+//! A report about a request another server sent is handed on unverified, to be
+//! bound to its transaction by the journal; one that comes before the sink is
+//! attached waits for it. The bridge itself never resends a request and never
+//! answers a caller twice.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
@@ -48,6 +59,7 @@ use godot_mcp_domain::ErrorKind;
 use serde_json::{Value, json};
 
 use crate::effect::boundary::CancelSignal;
+use crate::journal::EditorProcess;
 
 /// Name of the rendezvous file inside the project's private state root. The
 /// plugin reads it as `res://.godot-mcp/editor-bridge.rendezvous`.
@@ -284,6 +296,60 @@ const ANSWER_GRACE: Duration = Duration::from_secs(2);
 /// How often a caller waiting on an answer looks at its cancellation.
 const CANCEL_POLL: Duration = Duration::from_millis(50);
 
+/// The event a peer sends, once a later session is described, for each
+/// mutation it answered while no server was waiting for the answer: the
+/// session had ended, or the request's deadline had passed.
+pub(crate) const LATE_ANSWER_EVENT: &str = "mutation.late_answer";
+/// How many mutation requests the bridge keeps after it stopped waiting for
+/// their answers; the oldest is forgotten first.
+const MAX_ABANDONED: usize = 64;
+/// The longest error message a late answer keeps, as the add-on caps it.
+const MAX_LATE_MESSAGE_CHARS: usize = 2048;
+/// How many reported late answers the bridge keeps while no sink is attached
+/// yet: the bridge listens before the server attaches one, and a plugin may
+/// connect and report in between. The add-on keeps at most this many.
+const MAX_UNCLAIMED_LATE: usize = 16;
+
+/// Where late mutation answers go: the sink, once the server attached it, and
+/// until then the answers reported meanwhile.
+#[derive(Default)]
+struct LateAnswers {
+    sink: Option<LateAnswerSink>,
+    unclaimed: VecDeque<LateAnswer>,
+}
+
+/// One mutation request, sent for a transaction, that the bridge stopped
+/// waiting for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Abandoned {
+    /// The session generation it was sent on.
+    generation: u64,
+    message_id: String,
+    idempotency_id: String,
+    method: String,
+    /// The transaction its payload named.
+    transaction_id: String,
+}
+
+/// An answer to a mutation request that came after the server stopped
+/// waiting for it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LateAnswer {
+    /// The transaction the request was sent for.
+    pub(crate) transaction_id: String,
+    pub(crate) idempotency_id: String,
+    pub(crate) method: String,
+    /// Whether this server sent the request and bound the answer to it from
+    /// its own record. Otherwise an earlier server sent it, and only the
+    /// peer's report names the transaction.
+    pub(crate) sent_here: bool,
+    pub(crate) answer: BridgeAnswer,
+}
+
+/// Where late answers go once the server attached it. It is called on a
+/// session's reader thread and must not call back into the bridge.
+pub(crate) type LateAnswerSink = Arc<dyn Fn(LateAnswer) + Send + Sync>;
+
 /// One answer from the plugin.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum BridgeAnswer {
@@ -417,6 +483,9 @@ struct Session {
     plugin: PluginIdentity,
     description: Value,
     methods: BTreeSet<String>,
+    /// The editor process the peer runs in, when the host proved it from the
+    /// description ([`super::process::observe`]).
+    editor_process: Option<EditorProcess>,
 }
 
 /// Whether a peer described by `description` is sent the server status: this
@@ -464,6 +533,13 @@ struct Inner {
     current: Mutex<Option<Session>>,
     /// Waiting callers by request message id.
     pending: Mutex<HashMap<String, Pending>>,
+    /// Mutation requests sent for a transaction that the bridge stopped
+    /// waiting for, oldest first, at most [`MAX_ABANDONED`]. Kept only once a
+    /// late-answer sink is attached.
+    abandoned: Mutex<VecDeque<Abandoned>>,
+    /// Where late mutation answers go, once the server attached it, and the
+    /// answers reported before it did.
+    late: Mutex<LateAnswers>,
     next_message: AtomicU64,
     next_generation: AtomicU64,
     counters: Mutex<Counters>,
@@ -475,6 +551,8 @@ struct Pending {
     /// The session generation the request was sent on.
     generation: u64,
     sender: AnswerSender,
+    /// What the bridge keeps of the request if it stops waiting for it.
+    late: Option<Abandoned>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -555,6 +633,8 @@ impl EditorBridge {
             restarting: AtomicUsize::new(0),
             current: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
+            abandoned: Mutex::new(VecDeque::new()),
+            late: Mutex::new(LateAnswers::default()),
             next_message: AtomicU64::new(1),
             next_generation: AtomicU64::new(1),
             counters: Mutex::new(Counters::default()),
@@ -601,6 +681,23 @@ impl EditorBridge {
     /// freed; it reads the server through weak references.
     pub(crate) fn attach_status_source(&self, source: StatusSource) {
         *lock(&self.inner.status_source) = Some(source);
+    }
+
+    /// Hand `sink` every late answer the bridge can bind, from now on: an
+    /// answer to a mutation request sent for a transaction after the bridge
+    /// stopped waiting for it, whether it comes on the same session or is
+    /// reported on a later one. Answers reported before the sink was attached
+    /// are handed to it now. The sink must not hold this bridge; it reads the
+    /// server through weak references.
+    pub(crate) fn attach_late_answers(&self, sink: LateAnswerSink) {
+        let unclaimed = {
+            let mut late = lock(&self.inner.late);
+            late.sink = Some(Arc::clone(&sink));
+            std::mem::take(&mut late.unclaimed)
+        };
+        for answer in unclaimed {
+            sink(answer);
+        }
     }
 
     /// Keep every editor out while the returned exclusion is held: a headless
@@ -660,6 +757,31 @@ impl EditorBridge {
             timeout,
             &CancelSignal::default(),
         )
+        .0
+    }
+
+    /// [`Self::call`], also answering the editor process of the session the
+    /// request was sent on, as that session's description proved it. The
+    /// session is chosen and its process read under one lock, so a newer
+    /// session that supersedes it meanwhile is never named instead. `None`
+    /// when nothing was sent or the session's process was not proven.
+    pub(crate) fn call_with_process(
+        &self,
+        method: &str,
+        class: OperationClass,
+        payload: &Value,
+        idempotency_id: &str,
+        timeout: Duration,
+    ) -> (Result<BridgeAnswer, BridgeFailure>, Option<EditorProcess>) {
+        call(
+            &self.inner,
+            method,
+            class,
+            payload,
+            idempotency_id,
+            timeout,
+            &CancelSignal::default(),
+        )
     }
 
     /// [`Self::call`], withdrawing the request from the peer as soon as
@@ -683,6 +805,7 @@ impl EditorBridge {
             timeout,
             cancellation,
         )
+        .0
     }
 
     /// Stop serving: tell the plugin, close the session and remove the
@@ -759,6 +882,9 @@ fn session_id() -> String {
     format!("bridge-{hex}")
 }
 
+/// Send one request on the current session and wait for its answer, with the
+/// editor process of the session it was sent on. Nothing is sent, and no
+/// process named, when no session takes the request.
 fn call(
     inner: &Arc<Inner>,
     method: &str,
@@ -767,22 +893,22 @@ fn call(
     idempotency_id: &str,
     timeout: Duration,
     cancellation: &CancelSignal,
-) -> Result<BridgeAnswer, BridgeFailure> {
-    let (writer, generation) = {
+) -> (Result<BridgeAnswer, BridgeFailure>, Option<EditorProcess>) {
+    let selected = {
         let current = lock(&inner.current);
-        let session = current.as_ref().ok_or(BridgeFailure::NotConnected)?;
-        if !session.methods.contains(method) {
-            return Err(BridgeFailure::Unsupported(method.to_owned()));
-        }
-        if class == OperationClass::Mutation
-            && method != RESTART_METHOD
-            && inner.restarting.load(Ordering::SeqCst) > 0
-        {
-            return Err(BridgeFailure::Restarting);
-        }
-        (session.writer.clone(), session.generation)
+        select(inner, current.as_ref(), method, class).map(|session| {
+            (
+                session.writer.clone(),
+                session.generation,
+                session.editor_process.clone(),
+            )
+        })
     };
-    send_request(
+    let (writer, generation, editor_process) = match selected {
+        Ok(selected) => selected,
+        Err(failure) => return (Err(failure), None),
+    };
+    let answer = send_request(
         inner,
         &writer,
         generation,
@@ -792,7 +918,28 @@ fn call(
         idempotency_id,
         timeout,
         cancellation,
-    )
+    );
+    (answer, editor_process)
+}
+
+/// The session that takes `method`, or why none does.
+fn select<'a>(
+    inner: &Inner,
+    current: Option<&'a Session>,
+    method: &str,
+    class: OperationClass,
+) -> Result<&'a Session, BridgeFailure> {
+    let session = current.ok_or(BridgeFailure::NotConnected)?;
+    if !session.methods.contains(method) {
+        return Err(BridgeFailure::Unsupported(method.to_owned()));
+    }
+    if class == OperationClass::Mutation
+        && method != RESTART_METHOD
+        && inner.restarting.load(Ordering::SeqCst) > 0
+    {
+        return Err(BridgeFailure::Restarting);
+    }
+    Ok(session)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -824,7 +971,23 @@ fn send_request(
     );
     let (sender, receiver) = mpsc::sync_channel(1);
     let deadline = Instant::now() + timeout + ANSWER_GRACE;
-    lock(&inner.pending).insert(message_id.clone(), Pending { generation, sender });
+    let late = abandonable(
+        inner,
+        generation,
+        &message_id,
+        idempotency_id,
+        method,
+        class,
+        payload,
+    );
+    lock(&inner.pending).insert(
+        message_id.clone(),
+        Pending {
+            generation,
+            sender,
+            late: late.clone(),
+        },
+    );
     if writer.send(&envelope).is_err() {
         // A write that failed delivered no complete frame: nothing can run.
         lock(&inner.pending).remove(&message_id);
@@ -841,9 +1004,8 @@ fn send_request(
     loop {
         let now = Instant::now();
         if now >= deadline {
-            lock(&inner.pending).remove(&message_id);
             withdraw();
-            return Err(BridgeFailure::TimedOut);
+            return give_up(inner, &message_id, &receiver, late, BridgeFailure::TimedOut);
         }
         match receiver.recv_timeout((deadline - now).min(CANCEL_POLL)) {
             Ok(answer) => return answer,
@@ -854,11 +1016,200 @@ fn send_request(
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                lock(&inner.pending).remove(&message_id);
-                return Err(BridgeFailure::Lost);
+                return give_up(inner, &message_id, &receiver, late, BridgeFailure::Lost);
             }
         }
     }
+}
+
+/// Stop waiting for request `message_id` and report `failure`, keeping the
+/// request so that an answer that comes later can still be bound to it.
+///
+/// The request is taken under the lock that delivers answers, so it either
+/// still waits — and is kept before the lock is released, where an answer
+/// arriving the moment after finds it — or its answer, or the loss of its
+/// session, was already delivered to `receiver` and is returned instead.
+fn give_up(
+    inner: &Inner,
+    message_id: &str,
+    receiver: &mpsc::Receiver<Result<BridgeAnswer, BridgeFailure>>,
+    late: Option<Abandoned>,
+    failure: BridgeFailure,
+) -> Result<BridgeAnswer, BridgeFailure> {
+    {
+        let mut pending = lock(&inner.pending);
+        if let Some(waiting) = pending.remove(message_id) {
+            keep_abandoned(inner, waiting.late);
+            return Err(failure);
+        }
+    }
+    match receiver.try_recv() {
+        Ok(answer) => answer,
+        Err(_) => {
+            keep_abandoned(inner, late);
+            Err(failure)
+        }
+    }
+}
+
+/// What the bridge keeps of a request if it stops waiting for it: a mutation
+/// sent for a transaction, so its late answer can still be bound to it. Only a
+/// bridge with a late-answer sink keeps one.
+fn abandonable(
+    inner: &Inner,
+    generation: u64,
+    message_id: &str,
+    idempotency_id: &str,
+    method: &str,
+    class: OperationClass,
+    payload: &Value,
+) -> Option<Abandoned> {
+    if class != OperationClass::Mutation || lock(&inner.late).sink.is_none() {
+        return None;
+    }
+    let transaction_id = payload
+        .get("transaction_id")
+        .and_then(Value::as_str)
+        .filter(|transaction| !transaction.is_empty())?;
+    Some(Abandoned {
+        generation,
+        message_id: message_id.to_owned(),
+        idempotency_id: idempotency_id.to_owned(),
+        method: method.to_owned(),
+        transaction_id: transaction_id.to_owned(),
+    })
+}
+
+/// Keep one abandoned request, dropping the oldest beyond the bound.
+fn keep_abandoned(inner: &Inner, late: Option<Abandoned>) {
+    let Some(late) = late else {
+        return;
+    };
+    let mut abandoned = lock(&inner.abandoned);
+    if abandoned.len() >= MAX_ABANDONED {
+        abandoned.pop_front();
+    }
+    abandoned.push_back(late);
+}
+
+/// Remove and return the abandoned request `matches` selects.
+fn take_abandoned(inner: &Inner, matches: impl Fn(&Abandoned) -> bool) -> Option<Abandoned> {
+    let mut abandoned = lock(&inner.abandoned);
+    let index = abandoned.iter().position(matches)?;
+    abandoned.remove(index)
+}
+
+/// Hand `late` to the sink, or keep it for the sink until one is attached,
+/// dropping the oldest beyond the bound. The sink runs with no bridge lock
+/// held.
+fn hand_late(inner: &Inner, late: LateAnswer) {
+    let sink = {
+        let mut answers = lock(&inner.late);
+        match &answers.sink {
+            Some(sink) => Arc::clone(sink),
+            None => {
+                if answers.unclaimed.len() >= MAX_UNCLAIMED_LATE {
+                    answers.unclaimed.pop_front();
+                }
+                answers.unclaimed.push_back(late);
+                return;
+            }
+        }
+    };
+    sink(late);
+}
+
+/// The answer one `result` or `error` envelope carries.
+fn answer_of(envelope: &Envelope) -> BridgeAnswer {
+    if envelope.kind() == MessageKind::Result {
+        BridgeAnswer::Result {
+            status: envelope
+                .mutation_status()
+                .unwrap_or(MutationStatus::NotStarted),
+            payload: envelope.payload().cloned().unwrap_or_else(|| json!({})),
+        }
+    } else {
+        let body = envelope.error_body();
+        BridgeAnswer::Error {
+            kind: body.map_or(ErrorKind::Internal, |body| body.kind),
+            message: body.map_or_else(String::new, |body| body.message.clone()),
+            status: envelope.mutation_status(),
+        }
+    }
+}
+
+/// The answer a late-answer report carries, or `None` when it does not say
+/// what happened: its mutation status, whether it succeeded and, for a
+/// failure, its error kind. A result keeps only the action and digest a
+/// receipt names.
+fn reported_answer(answer: &Value) -> Option<BridgeAnswer> {
+    let status = MutationStatus::parse(answer.get("mutation_status")?.as_str()?)?;
+    if answer.get("ok")?.as_bool()? {
+        let mut payload = serde_json::Map::new();
+        for key in ["action", "digest"] {
+            if let Some(text) = answer
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+            {
+                payload.insert(key.to_owned(), Value::String(text.to_owned()));
+            }
+        }
+        return Some(BridgeAnswer::Result {
+            status,
+            payload: Value::Object(payload),
+        });
+    }
+    let kind: ErrorKind = serde_json::from_value(answer.get("error_kind")?.clone()).ok()?;
+    let message = answer
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .chars()
+        .take(MAX_LATE_MESSAGE_CHARS)
+        .collect();
+    Some(BridgeAnswer::Error {
+        kind,
+        message,
+        status: Some(status),
+    })
+}
+
+/// The late answer one [`LATE_ANSWER_EVENT`] reports, bound to its request.
+/// A request this server sent must be one it stopped waiting for, named
+/// exactly; one an earlier server sent is handed on for the journal to bind.
+fn reported_late(inner: &Inner, payload: Option<&Value>) -> Option<LateAnswer> {
+    let payload = payload?;
+    let request = payload.get("request")?;
+    let text = |key: &str| {
+        request
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    let session_id = text("session_id")?;
+    let message_id = text("message_id")?;
+    let idempotency_id = text("idempotency_id")?;
+    let method = text("method")?;
+    let transaction_id = text("transaction_id")?;
+    let answer = reported_answer(payload.get("answer")?)?;
+    let sent_here = session_id == inner.server.session_id;
+    if sent_here {
+        take_abandoned(inner, |entry| {
+            entry.message_id == message_id
+                && entry.idempotency_id == idempotency_id
+                && entry.method == method
+                && entry.transaction_id == transaction_id
+        })?;
+    }
+    Some(LateAnswer {
+        transaction_id,
+        idempotency_id,
+        method,
+        sent_here,
+        answer,
+    })
 }
 
 /// Fail every caller waiting on `generation` (every caller, when `None`).
@@ -871,6 +1222,9 @@ fn fail_pending(inner: &Inner, generation: Option<u64>) {
         .collect();
     for id in lost {
         if let Some(waiting) = pending.remove(&id) {
+            // Kept before its caller hears of the loss: its answer may be
+            // reported on the next session.
+            keep_abandoned(inner, waiting.late);
             let _ = waiting.sender.try_send(Err(BridgeFailure::Lost));
         }
     }
@@ -943,6 +1297,7 @@ fn accept_loop(inner: &Arc<Inner>, listener: &BridgeListener, handshake: &Handsh
             })
             .unwrap_or_default();
         let feeds_status = takes_status(inner.status, &description);
+        let editor_process = super::process::observe(&description);
         // An exclusion is checked and the session installed under one lock,
         // so no exclusion is granted between the check and the install.
         let admission = lock(&inner.admission);
@@ -965,6 +1320,7 @@ fn accept_loop(inner: &Arc<Inner>, listener: &BridgeListener, handshake: &Handsh
             plugin,
             description,
             methods,
+            editor_process,
         });
         drop(admission);
         {
@@ -1070,7 +1426,7 @@ fn read_loop(
         match reader.receive_within(READ_WAIT) {
             Ok(Some(envelope)) => {
                 last_heard = Instant::now();
-                if let Some(reason) = deliver(inner, &envelope) {
+                if let Some(reason) = deliver(inner, generation, &envelope) {
                     let _ = writer.close(1002, &reason);
                     break reason;
                 }
@@ -1135,34 +1491,49 @@ fn running_a_request(inner: &Inner, generation: u64) -> bool {
         .any(|waiting| waiting.generation == generation)
 }
 
-/// Hand one plugin message to whoever waits for it. Returns a reason to close
-/// the session when the message has no place in the protocol.
-fn deliver(inner: &Inner, envelope: &Envelope) -> Option<String> {
+/// Hand one message the plugin sent on session `generation` to whoever waits
+/// for it: an answer to its caller, or, when the caller stopped waiting for a
+/// mutation it sent for a transaction, to the late-answer sink, as is a late
+/// answer the plugin reports. Returns a reason to close the session when the
+/// message has no place in the protocol.
+fn deliver(inner: &Inner, generation: u64, envelope: &Envelope) -> Option<String> {
     match envelope.kind() {
         MessageKind::Result | MessageKind::Error => {
             let correlation = envelope.correlation_id()?.to_owned();
-            let waiting = lock(&inner.pending).remove(&correlation);
-            if let Some(Pending { sender, .. }) = waiting {
-                let answer = if envelope.kind() == MessageKind::Result {
-                    BridgeAnswer::Result {
-                        status: envelope
-                            .mutation_status()
-                            .unwrap_or(MutationStatus::NotStarted),
-                        payload: envelope.payload().cloned().unwrap_or_else(|| json!({})),
-                    }
-                } else {
-                    let body = envelope.error_body();
-                    BridgeAnswer::Error {
-                        kind: body.map_or(ErrorKind::Internal, |body| body.kind),
-                        message: body.map_or_else(String::new, |body| body.message.clone()),
-                        status: envelope.mutation_status(),
-                    }
-                };
-                let _ = sender.try_send(Ok(answer));
+            {
+                // Delivered under the lock a caller gives up under, so the
+                // caller either reads the answer or kept its request first.
+                let mut pending = lock(&inner.pending);
+                if let Some(Pending { sender, .. }) = pending.remove(&correlation) {
+                    let _ = sender.try_send(Ok(answer_of(envelope)));
+                    return None;
+                }
+            }
+            if let Some(abandoned) = take_abandoned(inner, |entry| {
+                entry.generation == generation && entry.message_id == correlation
+            }) {
+                hand_late(
+                    inner,
+                    LateAnswer {
+                        transaction_id: abandoned.transaction_id,
+                        idempotency_id: abandoned.idempotency_id,
+                        method: abandoned.method,
+                        sent_here: true,
+                        answer: answer_of(envelope),
+                    },
+                );
             }
             None
         }
-        MessageKind::Heartbeat | MessageKind::Event | MessageKind::Progress => None,
+        MessageKind::Event => {
+            if envelope.event_name() == Some(LATE_ANSWER_EVENT)
+                && let Some(late) = reported_late(inner, envelope.payload())
+            {
+                hand_late(inner, late);
+            }
+            None
+        }
+        MessageKind::Heartbeat | MessageKind::Progress => None,
         other => Some(format!("a plugin may not send {}", other.as_str())),
     }
 }
@@ -1761,6 +2132,7 @@ mod tests {
             Pending {
                 generation: 7,
                 sender,
+                late: None,
             },
         );
         assert!(
@@ -1796,6 +2168,121 @@ mod tests {
             status.methods,
             vec!["editor.scene.tree".to_owned(), "editor.state".to_owned()]
         );
+        bridge.stop();
+        second.join().expect("the second plugin ended");
+    }
+
+    /// A fake editor that reports this test process as the editor: its id and
+    /// the executable it runs, both of which this host can check.
+    fn as_this_process(script: FakePluginScript) -> FakePluginScript {
+        let executable = std::env::current_exe().expect("this test's executable");
+        script
+            .describing("pid", json!(std::process::id()))
+            .describing("executable", json!(executable.display().to_string()))
+    }
+
+    /// This test process as the bridge records it, where the host can observe it.
+    fn this_process() -> Option<EditorProcess> {
+        use godot_mcp_engine::supervision::procfs;
+        procfs::observations_available().then(|| {
+            let start_time = procfs::process_identity(std::process::id())
+                .expect("this process is observable")
+                .expect("this process is live")
+                .start_time
+                .expect("a start time is reported");
+            EditorProcess {
+                pid: std::process::id(),
+                start_time,
+            }
+        })
+    }
+
+    #[test]
+    fn an_unanswered_mutation_names_the_editor_process_its_session_runs_in() {
+        let scratch = Scratch::new("editor-process");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let plugin = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            as_this_process(FakePluginScript::implementing(&["editor.scene.batch"]))
+                .answering("editor.scene.batch", FakeAnswer::Disconnect),
+        );
+        wait_until("the plugin to connect", || bridge.status().connected);
+        let (answer, process) = bridge.call_with_process(
+            "editor.scene.batch",
+            OperationClass::Mutation,
+            &json!({ "path": "res://main.tscn" }),
+            "batch-1",
+            Duration::from_secs(10),
+        );
+        assert_eq!(answer, Err(BridgeFailure::Lost));
+        assert_eq!(process, this_process());
+        plugin.join().expect("the plugin ended");
+        bridge.stop();
+    }
+
+    #[test]
+    fn a_session_whose_editor_cannot_be_checked_names_no_process() {
+        let elsewhere = tempfile::NamedTempFile::new().expect("another file");
+        for script in [
+            // An add-on older than the `executable` field.
+            FakePluginScript::implementing(&["editor.state"])
+                .describing("pid", json!(std::process::id())),
+            // A process that does not run the executable the editor named.
+            FakePluginScript::implementing(&["editor.state"])
+                .describing("pid", json!(std::process::id()))
+                .describing("executable", json!(elsewhere.path().display().to_string())),
+        ] {
+            let scratch = Scratch::new("no-editor-process");
+            let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+            let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
+            wait_until("the plugin to connect", || bridge.status().connected);
+            let (answer, process) = bridge.call_with_process(
+                "editor.state",
+                OperationClass::Read,
+                &json!({}),
+                "state-1",
+                Duration::from_secs(5),
+            );
+            assert!(answer.is_ok(), "{answer:?}");
+            assert_eq!(process, None);
+            bridge.stop();
+            plugin.join().expect("the plugin ended");
+        }
+    }
+
+    #[test]
+    fn a_request_names_the_process_of_the_session_it_was_sent_on() {
+        let scratch = Scratch::new("superseded-process");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let first = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            as_this_process(FakePluginScript::implementing(&["editor.state"])),
+        );
+        wait_until("the first plugin", || bridge.status().sessions_opened == 1);
+        let (answer, process) = bridge.call_with_process(
+            "editor.state",
+            OperationClass::Read,
+            &json!({}),
+            "state-1",
+            Duration::from_secs(5),
+        );
+        assert!(answer.is_ok(), "{answer:?}");
+        assert_eq!(process, this_process());
+        let second = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]),
+        );
+        wait_until("the second plugin", || bridge.status().sessions_opened == 2);
+        first.join().expect("the superseded plugin was closed");
+        let (answer, process) = bridge.call_with_process(
+            "editor.state",
+            OperationClass::Read,
+            &json!({}),
+            "state-2",
+            Duration::from_secs(5),
+        );
+        assert!(answer.is_ok(), "{answer:?}");
+        assert_eq!(process, None, "the newer session described no process");
         bridge.stop();
         second.join().expect("the second plugin ended");
     }
@@ -1999,6 +2486,527 @@ mod tests {
         assert_eq!(asked.load(Ordering::SeqCst), 0);
         bridge.stop();
         probe.join().expect("the probe ended");
+    }
+
+    /// A sink that keeps every late answer it is handed.
+    fn late_sink() -> (LateAnswerSink, Arc<Mutex<Vec<LateAnswer>>>) {
+        let kept = Arc::new(Mutex::new(Vec::new()));
+        let keeping = Arc::clone(&kept);
+        let sink: LateAnswerSink = Arc::new(move |late| lock(&keeping).push(late));
+        (sink, kept)
+    }
+
+    const LATE_TRANSACTION: &str = "00000000-0000-4000-8000-000000000501";
+
+    /// A bridge with a late-answer sink, and a plugin serving `script`.
+    fn late_bridge(
+        label: &str,
+        script: FakePluginScript,
+    ) -> (
+        Scratch,
+        Arc<EditorBridge>,
+        Arc<Mutex<Vec<LateAnswer>>>,
+        FakeEditorPlugin,
+    ) {
+        let scratch = Scratch::new(label);
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let (sink, kept) = late_sink();
+        bridge.attach_late_answers(sink);
+        let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
+        wait_until("the plugin to connect", || bridge.status().connected);
+        (scratch, bridge, kept, plugin)
+    }
+
+    /// A round trip on the session: every frame the plugin sent before it
+    /// answers this read has been delivered once it returns.
+    fn round_trip(bridge: &EditorBridge) {
+        bridge
+            .call(
+                "editor.state",
+                OperationClass::Read,
+                &json!({}),
+                "round-trip",
+                Duration::from_secs(10),
+            )
+            .expect("the round trip is answered");
+    }
+
+    #[test]
+    fn a_mutation_answered_after_the_server_gave_up_reaches_the_sink() {
+        let (_scratch, bridge, kept, plugin) = late_bridge(
+            "late-same",
+            FakePluginScript::implementing(&["editor.state", "editor.scene.batch"]).answering(
+                "editor.scene.batch",
+                FakeAnswer::PayloadAfter {
+                    delay: Duration::from_millis(2800),
+                    payload: json!({ "action": "godot-mcp: scene.batch.apply", "digest": "after" }),
+                },
+            ),
+        );
+        assert_eq!(
+            bridge.call(
+                "editor.scene.batch",
+                OperationClass::Mutation,
+                &json!({ "path": "res://main.tscn", "transaction_id": LATE_TRANSACTION }),
+                "late-1",
+                Duration::from_millis(200),
+            ),
+            Err(BridgeFailure::TimedOut),
+            "the caller's deadline and the grace pass before the answer"
+        );
+        round_trip(&bridge);
+        assert_eq!(
+            *lock(&kept),
+            vec![LateAnswer {
+                transaction_id: LATE_TRANSACTION.to_owned(),
+                idempotency_id: "late-1".to_owned(),
+                method: "editor.scene.batch".to_owned(),
+                sent_here: true,
+                answer: BridgeAnswer::Result {
+                    status: MutationStatus::Committed,
+                    payload: json!({ "action": "godot-mcp: scene.batch.apply", "digest": "after" }),
+                },
+            }]
+        );
+        bridge.stop();
+        plugin.join().expect("the plugin ended");
+    }
+
+    #[test]
+    fn a_late_read_and_a_late_mutation_sent_for_no_transaction_reach_no_sink() {
+        let late = FakeAnswer::PayloadAfter {
+            delay: Duration::from_millis(2800),
+            payload: json!({ "digest": "late" }),
+        };
+        let (_scratch, bridge, kept, plugin) = late_bridge(
+            "late-ignored",
+            FakePluginScript::implementing(&[
+                "editor.state",
+                "editor.scene.tree",
+                "editor.selection.set",
+            ])
+            .answering("editor.scene.tree", late.clone())
+            .answering("editor.selection.set", late),
+        );
+        assert_eq!(
+            bridge.call(
+                "editor.scene.tree",
+                OperationClass::Read,
+                &json!({ "transaction_id": LATE_TRANSACTION }),
+                "late-read",
+                Duration::from_millis(200),
+            ),
+            Err(BridgeFailure::TimedOut)
+        );
+        assert_eq!(
+            bridge.call(
+                "editor.selection.set",
+                OperationClass::Mutation,
+                &json!({ "nodes": [] }),
+                "late-untracked",
+                Duration::from_millis(200),
+            ),
+            Err(BridgeFailure::TimedOut)
+        );
+        round_trip(&bridge);
+        assert!(lock(&kept).is_empty(), "{:?}", lock(&kept));
+        bridge.stop();
+        plugin.join().expect("the plugin ended");
+    }
+
+    /// The editor lost its session while the request waited in its queue,
+    /// reconnected, and reports that the request never started.
+    #[test]
+    fn a_lost_mutation_reported_on_a_later_session_reaches_the_sink_once() {
+        let (scratch, bridge, kept, first) = late_bridge(
+            "late-reported",
+            FakePluginScript::implementing(&["editor.state", "editor.scene.batch"])
+                .answering("editor.scene.batch", FakeAnswer::Disconnect),
+        );
+        assert_eq!(
+            bridge.call(
+                "editor.scene.batch",
+                OperationClass::Mutation,
+                &json!({ "path": "res://main.tscn", "transaction_id": LATE_TRANSACTION }),
+                "lost-1",
+                Duration::from_secs(10),
+            ),
+            Err(BridgeFailure::Lost)
+        );
+        let seen = first
+            .seen()
+            .into_iter()
+            .find(|request| request.method == "editor.scene.batch")
+            .expect("the plugin received the batch");
+        first
+            .join()
+            .expect("the first plugin dropped its connection");
+        wait_until("the session to end", || !bridge.status().connected);
+        let never_started = json!({
+            "mutation_status": "not_started",
+            "ok": false,
+            "error_kind": "unavailable",
+            "message": "the connection was lost before the request started"
+        });
+        let mut unknown = seen.clone();
+        unknown.message_id = "request-999".to_owned();
+        let second = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state", "editor.scene.batch"])
+                .reporting_late(seen.late_report(never_started.clone()))
+                .reporting_late(seen.late_report(never_started.clone()))
+                .reporting_late(unknown.late_report(never_started)),
+        );
+        wait_until("the plugin to reconnect", || bridge.status().connected);
+        round_trip(&bridge);
+        assert_eq!(
+            *lock(&kept),
+            vec![LateAnswer {
+                transaction_id: LATE_TRANSACTION.to_owned(),
+                idempotency_id: "lost-1".to_owned(),
+                method: "editor.scene.batch".to_owned(),
+                sent_here: true,
+                answer: BridgeAnswer::Error {
+                    kind: ErrorKind::Unavailable,
+                    message: "the connection was lost before the request started".to_owned(),
+                    status: Some(MutationStatus::NotStarted),
+                },
+            }],
+            "the request is bound once; a repeated report and one naming a request this \
+             server never sent are dropped"
+        );
+        bridge.stop();
+        second.join().expect("the second plugin ended");
+    }
+
+    #[test]
+    fn a_late_answer_reported_for_an_earlier_server_is_handed_on_unverified() {
+        let report = json!({
+            "request": {
+                "session_id": "bridge-000000000000000000000000",
+                "message_id": "request-7",
+                "idempotency_id": "earlier-1",
+                "method": "editor.scene.save",
+                "transaction_id": LATE_TRANSACTION
+            },
+            "answer": {
+                "mutation_status": "committed",
+                "ok": true,
+                "action": "godot-mcp: editor.scene.save",
+                "digest": "saved"
+            }
+        });
+        let (_scratch, bridge, kept, plugin) = late_bridge(
+            "late-earlier",
+            FakePluginScript::implementing(&["editor.state"]).reporting_late(report),
+        );
+        round_trip(&bridge);
+        assert_eq!(
+            *lock(&kept),
+            vec![LateAnswer {
+                transaction_id: LATE_TRANSACTION.to_owned(),
+                idempotency_id: "earlier-1".to_owned(),
+                method: "editor.scene.save".to_owned(),
+                sent_here: false,
+                answer: BridgeAnswer::Result {
+                    status: MutationStatus::Committed,
+                    payload: json!({ "action": "godot-mcp: editor.scene.save", "digest": "saved" }),
+                },
+            }]
+        );
+        bridge.stop();
+        plugin.join().expect("the plugin ended");
+    }
+
+    #[test]
+    fn a_late_answer_reported_before_the_sink_is_attached_reaches_it_once() {
+        let report = json!({
+            "request": {
+                "session_id": "bridge-000000000000000000000000",
+                "message_id": "request-8",
+                "idempotency_id": "early-1",
+                "method": "editor.filesystem.scan",
+                "transaction_id": LATE_TRANSACTION
+            },
+            "answer": { "mutation_status": "not_started", "ok": false,
+                        "error_kind": "unavailable", "message": "never started" }
+        });
+        let scratch = Scratch::new("late-early");
+        // The server listens before it has a sink: the plugin may connect and
+        // report in between.
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let plugin = FakeEditorPlugin::spawn(
+            &scratch.0.join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&["editor.state"]).reporting_late(report),
+        );
+        wait_until("the plugin to connect", || bridge.status().connected);
+        round_trip(&bridge);
+        let (sink, kept) = late_sink();
+        bridge.attach_late_answers(sink);
+        let expected = vec![LateAnswer {
+            transaction_id: LATE_TRANSACTION.to_owned(),
+            idempotency_id: "early-1".to_owned(),
+            method: "editor.filesystem.scan".to_owned(),
+            sent_here: false,
+            answer: BridgeAnswer::Error {
+                kind: ErrorKind::Unavailable,
+                message: "never started".to_owned(),
+                status: Some(MutationStatus::NotStarted),
+            },
+        }];
+        assert_eq!(*lock(&kept), expected, "the report waited for the sink");
+        let (again, kept_again) = late_sink();
+        bridge.attach_late_answers(again);
+        assert!(lock(&kept_again).is_empty(), "a report is handed on once");
+        bridge.stop();
+        plugin.join().expect("the plugin ended");
+    }
+
+    #[test]
+    fn the_bridge_keeps_only_so_many_reports_for_a_sink_not_yet_attached() {
+        let scratch = Scratch::new("late-unclaimed");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let reported = |index: usize| LateAnswer {
+            transaction_id: LATE_TRANSACTION.to_owned(),
+            idempotency_id: format!("early-{index}"),
+            method: "editor.scene.save".to_owned(),
+            sent_here: false,
+            answer: BridgeAnswer::Result {
+                status: MutationStatus::Committed,
+                payload: json!({}),
+            },
+        };
+        for index in 0..MAX_UNCLAIMED_LATE + 4 {
+            hand_late(&bridge.inner, reported(index));
+        }
+        let (sink, kept) = late_sink();
+        bridge.attach_late_answers(sink);
+        let expected: Vec<LateAnswer> = (4..MAX_UNCLAIMED_LATE + 4).map(reported).collect();
+        assert_eq!(*lock(&kept), expected, "the newest reports, oldest first");
+        hand_late(&bridge.inner, reported(99));
+        assert_eq!(
+            lock(&kept).last(),
+            Some(&reported(99)),
+            "an attached sink takes it at once"
+        );
+        bridge.stop();
+    }
+
+    #[test]
+    fn a_reported_answer_must_say_what_happened() {
+        let committed = json!({ "mutation_status": "committed", "ok": true });
+        assert_eq!(
+            reported_answer(&committed),
+            Some(BridgeAnswer::Result {
+                status: MutationStatus::Committed,
+                payload: json!({}),
+            })
+        );
+        let long = "x".repeat(MAX_LATE_MESSAGE_CHARS + 10);
+        assert_eq!(
+            reported_answer(&json!({
+                "mutation_status": "committed",
+                "ok": false,
+                "error_kind": "internal",
+                "message": long
+            })),
+            Some(BridgeAnswer::Error {
+                kind: ErrorKind::Internal,
+                message: "x".repeat(MAX_LATE_MESSAGE_CHARS),
+                status: Some(MutationStatus::Committed),
+            })
+        );
+        for malformed in [
+            json!({ "ok": true }),
+            json!({ "mutation_status": "done", "ok": true }),
+            json!({ "mutation_status": "committed" }),
+            json!({ "mutation_status": "not_started", "ok": false }),
+            json!({ "mutation_status": "not_started", "ok": false, "error_kind": "gone" }),
+            json!("committed"),
+        ] {
+            assert_eq!(reported_answer(&malformed), None, "{malformed}");
+        }
+    }
+
+    /// The caller's deadline and the answer can meet at one instant. Whichever
+    /// takes the request first wins: the answer reaches the caller, or the
+    /// caller gives up first and the answer reaches the sink. It is never
+    /// dropped between the two.
+    #[test]
+    fn an_answer_that_meets_the_deadline_reaches_the_caller_or_the_sink() {
+        let scratch = Scratch::new("late-race");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let (sink, kept) = late_sink();
+        bridge.attach_late_answers(sink);
+        let request = |id: &str| {
+            abandonable(
+                &bridge.inner,
+                9,
+                id,
+                "idem-race",
+                "editor.scene.batch",
+                OperationClass::Mutation,
+                &json!({ "transaction_id": LATE_TRANSACTION }),
+            )
+        };
+        let plugin = PluginIdentity {
+            plugin_version: godot_mcp_bridge::addon::ADDON_VERSION.to_owned(),
+            protocol_version: PROTOCOL_VERSION.to_owned(),
+            godot_version: "4.4.1.stable".to_owned(),
+        };
+        let answer = |id: &str| {
+            Envelope::result(
+                &plugin,
+                id,
+                MutationStatus::Committed,
+                &json!({ "action": "godot-mcp: scene.batch.apply" }),
+            )
+        };
+
+        // The answer takes the request first: the caller who then gives up
+        // finds it waiting.
+        let (sender, receiver) = mpsc::sync_channel(1);
+        lock(&bridge.inner.pending).insert(
+            "request-first".to_owned(),
+            Pending {
+                generation: 9,
+                sender,
+                late: request("request-first"),
+            },
+        );
+        assert_eq!(deliver(&bridge.inner, 9, &answer("request-first")), None);
+        assert!(
+            matches!(
+                give_up(
+                    &bridge.inner,
+                    "request-first",
+                    &receiver,
+                    request("request-first"),
+                    BridgeFailure::TimedOut
+                ),
+                Ok(BridgeAnswer::Result {
+                    status: MutationStatus::Committed,
+                    ..
+                })
+            ),
+            "the caller reads the answer that arrived as it gave up"
+        );
+        assert!(lock(&kept).is_empty());
+        assert!(lock(&bridge.inner.abandoned).is_empty());
+
+        // The caller gives up first: the answer that then arrives is late.
+        let (sender, receiver) = mpsc::sync_channel(1);
+        lock(&bridge.inner.pending).insert(
+            "request-second".to_owned(),
+            Pending {
+                generation: 9,
+                sender,
+                late: request("request-second"),
+            },
+        );
+        assert!(matches!(
+            give_up(
+                &bridge.inner,
+                "request-second",
+                &receiver,
+                request("request-second"),
+                BridgeFailure::TimedOut
+            ),
+            Err(BridgeFailure::TimedOut)
+        ));
+        assert_eq!(deliver(&bridge.inner, 9, &answer("request-second")), None);
+        assert_eq!(
+            lock(&kept)
+                .iter()
+                .map(|late| (late.transaction_id.as_str(), late.sent_here))
+                .collect::<Vec<_>>(),
+            vec![(LATE_TRANSACTION, true)]
+        );
+
+        // A session that ends keeps the requests it loses, before their
+        // callers hear of the loss.
+        let (sender, receiver) = mpsc::sync_channel(1);
+        lock(&bridge.inner.pending).insert(
+            "request-third".to_owned(),
+            Pending {
+                generation: 9,
+                sender,
+                late: request("request-third"),
+            },
+        );
+        fail_pending(&bridge.inner, Some(9));
+        assert_eq!(
+            lock(&bridge.inner.abandoned)
+                .iter()
+                .map(|entry| entry.message_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["request-third"]
+        );
+        assert!(matches!(receiver.try_recv(), Ok(Err(BridgeFailure::Lost))));
+        bridge.stop();
+    }
+
+    #[test]
+    fn the_bridge_keeps_abandoned_requests_only_for_a_sink_and_only_so_many() {
+        let scratch = Scratch::new("late-bounded");
+        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let payload = |index: usize| json!({ "transaction_id": format!("00000000-0000-4000-8000-{index:012}") });
+        keep_abandoned(
+            &bridge.inner,
+            abandonable(
+                &bridge.inner,
+                1,
+                "request-0",
+                "idem-0",
+                "editor.scene.batch",
+                OperationClass::Mutation,
+                &payload(0),
+            ),
+        );
+        assert!(
+            lock(&bridge.inner.abandoned).is_empty(),
+            "no sink, nothing kept"
+        );
+        let (sink, _) = late_sink();
+        bridge.attach_late_answers(sink);
+        for index in 0..=MAX_ABANDONED {
+            keep_abandoned(
+                &bridge.inner,
+                abandonable(
+                    &bridge.inner,
+                    1,
+                    &format!("request-{index}"),
+                    &format!("idem-{index}"),
+                    "editor.scene.batch",
+                    OperationClass::Mutation,
+                    &payload(index),
+                ),
+            );
+        }
+        keep_abandoned(
+            &bridge.inner,
+            abandonable(
+                &bridge.inner,
+                1,
+                "request-read",
+                "idem-read",
+                "editor.state",
+                OperationClass::Read,
+                &payload(999),
+            ),
+        );
+        let kept = lock(&bridge.inner.abandoned);
+        assert_eq!(kept.len(), MAX_ABANDONED);
+        assert_eq!(
+            kept.front().map(|entry| entry.message_id.as_str()),
+            Some("request-1")
+        );
+        assert_eq!(
+            kept.back().map(|entry| entry.message_id.as_str()),
+            Some(format!("request-{MAX_ABANDONED}").as_str())
+        );
+        drop(kept);
+        bridge.stop();
     }
 
     #[test]

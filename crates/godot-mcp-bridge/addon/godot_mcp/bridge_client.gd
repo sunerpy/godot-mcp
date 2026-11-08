@@ -19,6 +19,15 @@ extends Node
 ## again from a fresh read of the rendezvous file. Requests still queued when a
 ## connection is lost are dropped and never executed later, so the server's
 ## record of an unanswered mutation stays the only one; nothing is replayed.
+##
+## A server stops waiting for an answer at the request's deadline, and a
+## session can end while a request runs. With `report_late_answers` set, the
+## client keeps the answer to every mutation it could not hand to a waiting
+## server, and that a dropped mutation never started, and reports each in a
+## `mutation.late_answer` event: at once to a session already described, and
+## to every session described afterwards. The server binds a report to the
+## request it names or ignores it, so a report changes nothing once its
+## transaction is settled.
 
 const Codec = preload("bridge_codec.gd")
 const CommandQueue = preload("command_queue.gd")
@@ -31,10 +40,17 @@ const RETRY_SECONDS := 1.0
 const REFUSED_RETRY_SECONDS := 5.0
 const HANDSHAKE_SECONDS := 10.0
 const SILENCE_SECONDS := 20.0
-## Where a received request keeps when it arrived, in engine microseconds, and
-## the session it arrived in. Never sent: only the dispatcher and the answer
-## read the request back.
+## Where a received request keeps when it arrived, in engine microseconds, the
+## session it arrived in, and that session's server identity. Never sent: only
+## the dispatcher and the answer read the request back.
 const RECEIVED_KEY := "_godot_mcp_received"
+## The event that reports a mutation answer no server was waiting for.
+const LATE_ANSWER_EVENT := "mutation.late_answer"
+## How many such answers are kept; the oldest is dropped first.
+const MAX_LATE_ANSWERS := 16
+## The longest message, action and digest a late answer keeps.
+const MAX_LATE_MESSAGE_CHARS := 2048
+const MAX_LATE_FIELD_CHARS := 256
 
 signal status_changed(text: String)
 ## The connection ended: closed, refused, lost or silent. Nothing queued runs.
@@ -58,6 +74,9 @@ var client_version := ""
 ## when it is unset, `rendezvous_path`.
 var rendezvous_env := "GODOT_MCP_BRIDGE_RENDEZVOUS"
 var rendezvous_path := "res://.godot-mcp/editor-bridge.rendezvous"
+## Whether mutation answers no server was waiting for are kept and reported to
+## the sessions described afterwards. The editor plugin sets it.
+var report_late_answers := false
 
 static var _raw_control: RegEx = null
 static var _vertical_tab: RegEx = null
@@ -75,6 +94,10 @@ var _status := ""
 ## Counts the sessions opened, so an answer finished after its session ended
 ## is never sent to a later one, even one whose request has the same id.
 var _session_number := 0
+## The late answers kept for the next sessions, oldest first.
+var _late_answers: Array = []
+## Counts the late-answer events sent, so each has its own message id.
+var _late_reports := 0
 
 
 func _ready() -> void:
@@ -221,7 +244,7 @@ func close(reason: String) -> void:
 			_peer.poll()
 		_peer = null
 	if queue != null:
-		queue.drop_all()
+		_keep_dropped(queue.drop_all())
 	var was_serving := _phase != "idle"
 	_phase = "idle"
 	if was_serving:
@@ -240,8 +263,9 @@ func _lost(reason: String, retry: float = RETRY_SECONDS) -> void:
 	if _peer != null:
 		_peer.close(1000, "closing")
 		_peer = null
-	# Nothing queued may run after the server lost sight of it.
-	queue.drop_all()
+	# Nothing queued may run after the server lost sight of it; a later
+	# session hears that the mutations among it never started.
+	_keep_dropped(queue.drop_all())
 	_phase = "idle"
 	_retry_at = _now() + retry
 	_set_status("disconnected: %s" % reason)
@@ -374,7 +398,7 @@ func _on_text(text: String) -> void:
 		"request":
 			if _phase != "ready":
 				return
-			message[RECEIVED_KEY] = [Time.get_ticks_usec(), _session_number]
+			message[RECEIVED_KEY] = [Time.get_ticks_usec(), _session_number, _session_id]
 			_accept_request(message)
 		"cancel":
 			var correlation := str(message.get("correlation_id", ""))
@@ -427,20 +451,29 @@ func _drain() -> void:
 
 ## Answer `request` with `answer` ({"ok", "payload"} or a refusal). An answer
 ## that can no longer be delivered, because the connection or the session it
-## arrived in ended, is dropped: the server already treats an unanswered
-## mutation as unresolved.
+## arrived in ended, is not sent: the server already treats an unanswered
+## mutation as unresolved. A mutation's answer that is not delivered, or comes
+## after its deadline, when the server may have stopped waiting, is also kept
+## for the sessions described afterwards.
 func _reply(request: Dictionary, answer: Dictionary) -> void:
 	var id := str(request.get("message_id", ""))
 	var duration_ms := -1
 	var same_session := false
 	var received = request.get(RECEIVED_KEY)
-	if typeof(received) == TYPE_ARRAY and received.size() == 2:
+	if typeof(received) == TYPE_ARRAY and received.size() >= 2:
 		duration_ms = int((Time.get_ticks_usec() - int(received[0])) / 1000.0)
 		same_session = int(received[1]) == _session_number
+	var mutation := str(request.get("operation_class", "")) == "mutation"
 	if _phase != "ready" or not same_session:
+		if mutation:
+			var kept = _keep_late(request, answer)
+			# A session described since the request arrived hears of it now.
+			if kept != null and _phase == "ready" and _described:
+				_report_late(kept)
 		request_answered.emit(request, answer, duration_ms, false)
 		return
-	var mutation := str(request.get("operation_class", "")) == "mutation"
+	var late := mutation and _past_deadline(request)
+	var describing := false
 	var envelope: Dictionary
 	if answer.get("ok", false):
 		envelope = _blank("result")
@@ -451,6 +484,7 @@ func _reply(request: Dictionary, answer: Dictionary) -> void:
 		envelope["payload"] = answer.get("payload", {})
 		if str(request.get("method", "")) == "bridge.describe_session":
 			_described = true
+			describing = true
 		if _encode(envelope).to_utf8_buffer().size() > MAX_FRAME_BYTES:
 			answer = CommandQueue.refusal("internal", "the answer exceeds the bridge frame limit",
 				str(answer.get("mutation_status", "not_started")))
@@ -463,10 +497,94 @@ func _reply(request: Dictionary, answer: Dictionary) -> void:
 		if mutation:
 			envelope["operation_class"] = "mutation"
 			envelope["mutation_status"] = str(answer.get("mutation_status", "not_started"))
-	request_answered.emit(request, answer, duration_ms, _send(envelope))
+	var delivered := _send(envelope)
+	if mutation and (late or not delivered):
+		_keep_late(request, answer)
+	request_answered.emit(request, answer, duration_ms, delivered)
+	if describing and delivered:
+		_report_late_answers()
 
 
 ## Tell the server something happened, when it is being served.
 func send_event(name: String, payload: Dictionary) -> void:
 	if _phase == "ready":
 		_send(_event_envelope(name, payload))
+
+
+# --- late answers ----------------------------------------------------------------
+
+
+## Whether `request`'s deadline has passed, so its server may have stopped
+## waiting for the answer.
+static func _past_deadline(request: Dictionary) -> bool:
+	var deadline: int = int(str(request.get("deadline_unix_ms", "0")))
+	return deadline > 0 and CommandQueue.now_unix_ms() >= deadline
+
+
+## Keep the mutations among `dropped`, which never started, as answered so.
+func _keep_dropped(dropped: Array) -> void:
+	for request in dropped:
+		if str(request.get("operation_class", "")) == "mutation":
+			_keep_late(request, CommandQueue.refusal("unavailable",
+				"the connection to the server was lost before the request started"))
+
+
+## Keep `answer` to the mutation `request` for the sessions described
+## afterwards, when it says what happened: an answer that is itself
+## unresolved settles nothing. Only a request a server sent for a transaction
+## can be settled, so one whose payload names none is not kept. Returns the
+## report kept, or null.
+func _keep_late(request: Dictionary, answer: Dictionary):
+	if not report_late_answers:
+		return null
+	var status := str(answer.get("mutation_status", "not_started"))
+	if status != "committed" and status != "not_started":
+		return null
+	var received = request.get(RECEIVED_KEY)
+	if typeof(received) != TYPE_ARRAY or received.size() < 3 or str(received[2]) == "":
+		return null
+	var payload = request.get("payload")
+	var transaction = payload.get("transaction_id") if typeof(payload) == TYPE_DICTIONARY else null
+	if typeof(transaction) != TYPE_STRING or transaction == "":
+		return null
+	var ok := bool(answer.get("ok", false))
+	var reported := {"mutation_status": status, "ok": ok}
+	if ok:
+		var result = answer.get("payload")
+		if typeof(result) == TYPE_DICTIONARY:
+			for key in ["action", "digest"]:
+				var value = result.get(key)
+				if typeof(value) == TYPE_STRING and value != "":
+					reported[key] = value.substr(0, MAX_LATE_FIELD_CHARS)
+	else:
+		reported["error_kind"] = str(answer.get("error_kind", "internal"))
+		reported["message"] = str(answer.get("message", "")).substr(0, MAX_LATE_MESSAGE_CHARS)
+	var report := {
+		"answer": reported,
+		"request": {
+			"idempotency_id": str(request.get("idempotency_id", "")),
+			"message_id": str(request.get("message_id", "")),
+			"method": str(request.get("method", "")),
+			"session_id": str(received[2]),
+			"transaction_id": transaction,
+		},
+	}
+	_late_answers.append(report)
+	while _late_answers.size() > MAX_LATE_ANSWERS:
+		_late_answers.pop_front()
+	return report
+
+
+## Report every kept late answer to the session just described. A report is
+## sent to every later session too: the server ignores one it cannot bind, and
+## one whose transaction is settled changes nothing.
+func _report_late_answers() -> void:
+	for report in _late_answers:
+		_report_late(report)
+
+
+func _report_late(report: Dictionary) -> void:
+	_late_reports += 1
+	var event := _event_envelope(LATE_ANSWER_EVENT, report)
+	event["message_id"] = "event-%s-%d" % [LATE_ANSWER_EVENT, _late_reports]
+	_send(event)

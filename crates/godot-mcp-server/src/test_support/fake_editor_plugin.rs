@@ -108,6 +108,9 @@ pub struct FakePluginScript {
     pub godot_version: String,
     /// Further fields of the plugin's `bridge.describe_session` answer.
     pub description: serde_json::Map<String, Value>,
+    /// Payloads of `mutation.late_answer` events sent once the session is
+    /// described, as the add-on reports answers no server was waiting for.
+    pub late_reports: Vec<Value>,
 }
 
 impl FakePluginScript {
@@ -121,6 +124,7 @@ impl FakePluginScript {
             plugin_version: "0.2.0".to_owned(),
             godot_version: "4.7.1.stable.fake".to_owned(),
             description: serde_json::Map::new(),
+            late_reports: Vec::new(),
         }
     }
 
@@ -145,11 +149,51 @@ impl FakePluginScript {
         self.answers.insert(method.to_owned(), answer);
         self
     }
+
+    /// Report `report` in a `mutation.late_answer` event once the session is
+    /// described.
+    #[must_use]
+    pub fn reporting_late(mut self, report: Value) -> Self {
+        self.late_reports.push(report);
+        self
+    }
+}
+
+/// One request as the fake plugin received it, with the server session it
+/// arrived in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeenRequest {
+    /// The server's session identity, from its `capabilities`.
+    pub session_id: Option<String>,
+    pub message_id: String,
+    pub idempotency_id: Option<String>,
+    pub method: String,
+    pub payload: Value,
+}
+
+impl SeenRequest {
+    /// The `mutation.late_answer` report of this request answered with
+    /// `answer` (`mutation_status`, `ok` and the rest), as the add-on sends
+    /// it: the request it answers, named as the server sent it.
+    #[must_use]
+    pub fn late_report(&self, answer: Value) -> Value {
+        json!({
+            "request": {
+                "session_id": self.session_id,
+                "message_id": self.message_id,
+                "idempotency_id": self.idempotency_id,
+                "method": self.method,
+                "transaction_id": self.payload.get("transaction_id"),
+            },
+            "answer": answer,
+        })
+    }
 }
 
 /// A running fake plugin.
 pub struct FakeEditorPlugin {
     received: Arc<Mutex<Vec<(String, Value)>>>,
+    seen: Arc<Mutex<Vec<SeenRequest>>>,
     handle: Option<JoinHandle<Result<(), String>>>,
 }
 
@@ -158,13 +202,26 @@ impl FakeEditorPlugin {
     #[must_use]
     pub fn spawn(rendezvous: &Path, script: FakePluginScript) -> Self {
         let received = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&received);
+        let observed = Arc::clone(&seen);
         let path: PathBuf = rendezvous.to_path_buf();
-        let handle = std::thread::spawn(move || serve(&path, &script, &recorded));
+        let handle = std::thread::spawn(move || serve(&path, &script, &recorded, &observed));
         Self {
             received,
+            seen,
             handle: Some(handle),
         }
+    }
+
+    /// Every request received so far, with its message and idempotency ids
+    /// and the server session it arrived in, in order.
+    #[must_use]
+    pub fn seen(&self) -> Vec<SeenRequest> {
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Every request received so far: its method and payload, in order.
@@ -214,6 +271,7 @@ fn serve(
     rendezvous: &Path,
     script: &FakePluginScript,
     received: &Mutex<Vec<(String, Value)>>,
+    seen: &Mutex<Vec<SeenRequest>>,
 ) -> Result<(), String> {
     let file = read_rendezvous(rendezvous)?;
     let endpoint = file.endpoint();
@@ -248,6 +306,7 @@ fn serve(
             capabilities.kind()
         ));
     }
+    let session_id = capabilities.identity().session_id.clone();
 
     // Requests that arrive while a request awaits its withdrawal wait their
     // turn, as a plugin's command queue holds them.
@@ -281,7 +340,16 @@ fn serve(
                 received
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push((method.clone(), payload));
+                    .push((method.clone(), payload.clone()));
+                seen.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(SeenRequest {
+                        session_id: session_id.clone(),
+                        message_id: message.message_id().to_owned(),
+                        idempotency_id: message.idempotency_id().map(str::to_owned),
+                        method: method.clone(),
+                        payload,
+                    });
                 let mutation = message.operation_class() == Some(OperationClass::Mutation);
                 if method == "bridge.describe_session" {
                     send(
@@ -301,6 +369,17 @@ fn serve(
                             }),
                         ),
                     )?;
+                    for (index, report) in script.late_reports.iter().enumerate() {
+                        send(
+                            &mut stream,
+                            &Envelope::event(
+                                &plugin,
+                                &format!("event-late-{index}"),
+                                "mutation.late_answer",
+                                report,
+                            ),
+                        )?;
+                    }
                     continue;
                 }
                 let mut answer = script
@@ -315,14 +394,14 @@ fn serve(
                 } = answer
                 {
                     // The request just received is the last one recorded.
-                    let seen = received
+                    let triggered = received
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .iter()
                         .rev()
                         .skip(1)
                         .any(|(received, _)| *received == trigger);
-                    answer = if seen { *after } else { *before };
+                    answer = if triggered { *after } else { *before };
                 }
                 match answer {
                     FakeAnswer::Payload(payload) => send(
@@ -500,7 +579,7 @@ fn serve(
                         let _ = stream.flush();
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                         return match then {
-                            Some(then) => serve(rendezvous, &then, received),
+                            Some(then) => serve(rendezvous, &then, received, seen),
                             None => Ok(()),
                         };
                     }

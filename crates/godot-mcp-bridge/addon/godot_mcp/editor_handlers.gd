@@ -22,7 +22,7 @@ const ResourcePreview = preload("resource_preview.gd")
 const ScriptTabs = preload("script_tabs.gd")
 const SceneReader = preload("scene_reader.gd")
 
-const PLUGIN_VERSION := "0.4.0"
+const PLUGIN_VERSION := "0.4.1"
 const MAX_NODES := 2000
 const MAX_PROPERTIES_PER_NODE := 256
 const READS := [
@@ -214,6 +214,9 @@ func describe() -> Dictionary:
 		"camera_set": EditorCamera.can_set(),
 		"script_close": ScriptTabs.can_close(),
 		"pid": OS.get_process_id(),
+		# Lets the server check that the process id names this editor, so an
+		# unanswered mutation records which process could still write for it.
+		"executable": OS.get_executable_path(),
 	}
 
 

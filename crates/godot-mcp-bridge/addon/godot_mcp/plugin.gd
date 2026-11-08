@@ -42,6 +42,7 @@ func _enter_tree() -> void:
 	# The dispatcher asks the panel's pause switch before every mutation.
 	_client.mutation_gate = _state
 	_client.client_version = Handlers.PLUGIN_VERSION
+	_client.report_late_answers = true
 	_client.status_changed.connect(_state.on_status)
 	_client.disconnected.connect(_state.on_disconnected)
 	_client.session_opened.connect(_state.on_session_opened)

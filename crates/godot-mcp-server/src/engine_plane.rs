@@ -323,6 +323,7 @@ impl ProcessEffectBoundary for ProductionProcessBoundary {
             receipt_transaction_id: None,
             receipt_action_id: None,
             live_state_probe: None,
+            editor_process: None,
         };
         let session = serde_json::from_str::<serde_json::Value>(&command.payload)
             .ok()
@@ -392,6 +393,7 @@ impl ProcessEffectBoundary for ProductionProcessBoundary {
             receipt_transaction_id: None,
             receipt_action_id: None,
             live_state_probe: None,
+            editor_process: None,
         };
         let request = serde_json::from_str::<serde_json::Value>(&command.payload)
             .ok()

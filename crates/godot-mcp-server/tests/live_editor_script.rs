@@ -2,8 +2,9 @@
 //! `GODOT_MCP_TEST_EDITORS` or `GODOT_MCP_LOCKED_ARTIFACT` names them): a run
 //! reaches the open project and the editor's own API; what it returns, prints,
 //! fails with and changes comes back; and a run that outlasts its deadline
-//! keeps running in the editor after the server stopped waiting. The add-on's
-//! runner cases run headless in each build too.
+//! keeps running in the editor after the server stopped waiting, and its late
+//! answer settles it, on the same session or reported to the next server. The
+//! add-on's runner cases run headless in each build too.
 
 #[path = "support/live.rs"]
 mod live;
@@ -11,11 +12,24 @@ mod support;
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use live::{Editor, Ids, editors, ok, wait_connected};
 use serde_json::{Value, json};
 use support::{ProjectTree, StdioSession, error_code};
+
+/// The runs that keep an editor or a server busy for tens of seconds take
+/// turns with the run whose answer is timed against its deadline: an editor
+/// starting beside it on a loaded host delays the server's answer, which
+/// that test bounds. The other runs of this suite go on in parallel.
+static TURNS: Mutex<()> = Mutex::new(());
+
+/// A turn among the runs [`TURNS`] orders; a run that failed during its turn
+/// does not stop the next one.
+fn take_turn() -> MutexGuard<'static, ()> {
+    TURNS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A project with the add-on installed and enabled, and a server on it that
 /// runs scripts.
@@ -25,15 +39,7 @@ fn scripting_project(label: &str) -> (ProjectTree, StdioSession, Ids) {
         "project.godot",
         "config_version=5\n\n[application]\n\nconfig/name=\"Scripted\"\n",
     );
-    let mut command = Command::new(env!("CARGO_BIN_EXE_qa-journal-foundation"));
-    command
-        .arg("--project")
-        .arg(&tree.root)
-        .arg("--profile")
-        .arg("full")
-        .arg("--allow-scripts")
-        .env_remove("GODOT_MCP_TEST_LAUNCH_CRASH_STAGE");
-    let mut session = StdioSession::handshake(StdioSession::start_command(command)).0;
+    let mut session = scripting_server(&tree);
     let mut ids = Ids(1);
     let installed = session.call_tool(
         ids.next(),
@@ -42,6 +48,19 @@ fn scripting_project(label: &str) -> (ProjectTree, StdioSession, Ids) {
     );
     assert!(installed.get("error").is_none(), "{installed}");
     (tree, session, ids)
+}
+
+/// A server on `tree` that runs scripts.
+fn scripting_server(tree: &ProjectTree) -> StdioSession {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_qa-journal-foundation"));
+    command
+        .arg("--project")
+        .arg(&tree.root)
+        .arg("--profile")
+        .arg("full")
+        .arg("--allow-scripts")
+        .env_remove("GODOT_MCP_TEST_LAUNCH_CRASH_STAGE");
+    StdioSession::handshake(StdioSession::start_command(command)).0
 }
 
 fn run(session: &mut StdioSession, ids: &mut Ids, arguments: Value, editor: &Editor) -> Value {
@@ -208,6 +227,7 @@ fn a_run_reaches_the_open_project_and_says_what_it_did_in(binary: &Path) {
 fn a_run_that_outlasts_its_deadline_keeps_running_in_the_editor() {
     let (binaries, _unpacked) = editors();
     for binary in &binaries {
+        let _turn = take_turn();
         a_run_that_outlasts_its_deadline_keeps_running_in_the_editor_in(binary);
     }
 }
@@ -215,7 +235,7 @@ fn a_run_that_outlasts_its_deadline_keeps_running_in_the_editor() {
 fn a_run_that_outlasts_its_deadline_keeps_running_in_the_editor_in(binary: &Path) {
     let (tree, mut session, mut ids) = scripting_project("live-editor-script-late");
     let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
-    wait_connected(&mut session, &mut ids, &editor);
+    let before = wait_connected(&mut session, &mut ids, &editor);
     let started = Instant::now();
     let late = session.call_tool(
         ids.next(),
@@ -244,16 +264,7 @@ fn a_run_that_outlasts_its_deadline_keeps_running_in_the_editor_in(binary: &Path
         !tree.root.join("late.txt").exists(),
         "the run had not reached its write when the server stopped waiting"
     );
-    // The editor goes on running the code the server stopped waiting for.
-    let waiting = Instant::now();
-    while !tree.root.join("late.txt").exists() {
-        assert!(
-            waiting.elapsed() < Duration::from_secs(60),
-            "the run never finished in the editor\n{}",
-            editor.context()
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    // While the run's outcome is unknown, no write is allowed.
     let blocked = session.call_tool(
         ids.next(),
         "file.create",
@@ -264,6 +275,220 @@ fn a_run_that_outlasts_its_deadline_keeps_running_in_the_editor_in(binary: &Path
         "a write after an unanswered run is refused: {blocked}"
     );
     assert!(!tree.root.join("after.txt").exists());
+    // The editor goes on running the code the server stopped waiting for.
+    let waiting = Instant::now();
+    while !tree.root.join("late.txt").exists() {
+        assert!(
+            waiting.elapsed() < Duration::from_secs(60),
+            "the run never finished in the editor\n{}",
+            editor.context()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Its answer, on the same session, settles the run and reopens writes.
+    writes_reopen(&mut session, &mut ids, &editor);
+    let after = ok(
+        &session.call_tool(ids.next(), "editor.status.get", json!({})),
+        &editor.context(),
+    );
+    assert_eq!(
+        after["sessions_opened"],
+        before["sessions_opened"],
+        "{}: the answer came on the session the run was sent on\n{}",
+        editor.binary,
+        editor.context()
+    );
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "file.create",
+            json!({ "path": "after.txt", "content": "x\n", "idempotencyId": "after-settled" }),
+        ),
+        &editor.context(),
+    );
+    let replay = run(
+        &mut session,
+        &mut ids,
+        json!({
+            "source": "extends Node\n\nfunc run():\n\tawait get_tree().create_timer(15.0).timeout\n\tvar file := FileAccess.open(\"res://late.txt\", FileAccess.WRITE)\n\tfile.store_string(\"late\")\n\tfile.close()\n\treturn 1\n",
+            "deadline_ms": 1000,
+            "idempotencyId": "late",
+        }),
+        &editor,
+    );
+    assert_eq!(
+        replay["replayed"],
+        json!(true),
+        "{}: {replay}",
+        editor.binary
+    );
+    let _ = session.finish();
+    drop(editor);
+}
+
+/// Wait until the journal holds no quarantined transaction.
+fn writes_reopen(session: &mut StdioSession, ids: &mut Ids, editor: &Editor) {
+    let started = Instant::now();
+    loop {
+        let health = ok(
+            &session.call_tool(ids.next(), "health.get", json!({})),
+            &editor.context(),
+        );
+        if health["journal"]["quarantined"]["total"] == json!(0) {
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "{}: the editor's late answer never settled the run: {}\n{}",
+            editor.binary,
+            health["journal"],
+            editor.context()
+        );
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn a_run_that_outlasts_its_server_is_settled_by_the_next_one() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        let _turn = take_turn();
+        a_run_that_outlasts_its_server_is_settled_by_the_next_one_in(binary);
+    }
+}
+
+/// The server stops while a run it gave up on goes on in the editor. The next
+/// server for the project holds the quarantine its predecessor left; the
+/// editor connects to it, and when the run ends, reports the answer the first
+/// server never received.
+fn a_run_that_outlasts_its_server_is_settled_by_the_next_one_in(binary: &Path) {
+    let (tree, mut session, mut ids) = scripting_project("live-editor-script-restart");
+    let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
+    wait_connected(&mut session, &mut ids, &editor);
+    let started = Instant::now();
+    let source = "extends Node\n\nfunc run():\n\tawait get_tree().create_timer(20.0).timeout\n\tvar file := FileAccess.open(\"res://restarted.txt\", FileAccess.WRITE)\n\tfile.store_string(\"restarted\")\n\tfile.close()\n\treturn 3\n";
+    let arguments = json!({ "source": source, "deadline_ms": 1000, "idempotencyId": "restarted" });
+    let late = session.call_tool(ids.next(), "editor.script.run", arguments.clone());
+    assert_eq!(
+        error_code(&late),
+        json!("uncertain"),
+        "{late}\n{}",
+        editor.context()
+    );
+    let _ = session.finish();
+    assert!(
+        !tree.root.join("restarted.txt").exists(),
+        "{}: the run was still going when the first server stopped",
+        editor.binary
+    );
+
+    let mut session = scripting_server(&tree);
+    let mut ids = Ids(1);
+    writes_reopen(&mut session, &mut ids, &editor);
+    let settled_after = started.elapsed();
+    assert!(
+        tree.root.join("restarted.txt").exists(),
+        "{}: the run finished before its answer settled it",
+        editor.binary
+    );
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "file.create",
+            json!({ "path": "after.txt", "content": "x\n", "idempotencyId": "after-restarted" }),
+        ),
+        &editor.context(),
+    );
+    let replay = run(&mut session, &mut ids, arguments, &editor);
+    assert_eq!(
+        replay["replayed"],
+        json!(true),
+        "{}: {replay}",
+        editor.binary
+    );
+    eprintln!(
+        "{}: next server settled {:.1} s after the call",
+        editor.binary,
+        settled_after.as_secs_f64()
+    );
+    let _ = session.finish();
+    drop(editor);
+}
+
+#[test]
+#[ignore = "needs real Godot editors: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer() {
+    let (binaries, _unpacked) = editors();
+    for binary in &binaries {
+        let _turn = take_turn();
+        a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(binary);
+    }
+}
+
+/// A run holds the editor's main thread past its deadline, which is past the
+/// bridge's 30-second silence window, so the editor answers nothing meanwhile.
+/// When the server stops waiting it awaits nothing else on the session unless
+/// it has just sent a changed status, so it usually closes the silent session;
+/// the editor dials again once the run ends and reports the answer on the new
+/// session. Either way the answer settles the run.
+fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(binary: &Path) {
+    let (tree, mut session, mut ids) = scripting_project("live-editor-script-silent");
+    let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
+    let before = wait_connected(&mut session, &mut ids, &editor);
+    let started = Instant::now();
+    let source = "extends Node\n\nfunc run():\n\tOS.delay_msec(40000)\n\tvar file := FileAccess.open(\"res://silent.txt\", FileAccess.WRITE)\n\tfile.store_string(\"silent\")\n\tfile.close()\n\treturn 2\n";
+    let arguments = json!({ "source": source, "deadline_ms": 29000, "idempotencyId": "silent" });
+    let late = session.call_tool(ids.next(), "editor.script.run", arguments.clone());
+    assert_eq!(
+        error_code(&late),
+        json!("uncertain"),
+        "{late}\n{}",
+        editor.context()
+    );
+    assert!(
+        !tree.root.join("silent.txt").exists(),
+        "{}: the run was still holding the editor when the server stopped waiting",
+        editor.binary
+    );
+    writes_reopen(&mut session, &mut ids, &editor);
+    let settled_after = started.elapsed();
+    assert!(
+        tree.root.join("silent.txt").exists(),
+        "{}: the run finished before its answer settled it",
+        editor.binary
+    );
+    let after = wait_connected(&mut session, &mut ids, &editor);
+    let reconnected = after["sessions_opened"].as_u64() > before["sessions_opened"].as_u64();
+    if reconnected {
+        assert_eq!(
+            after["last_close_reason"],
+            json!("the plugin went silent"),
+            "{}: {after}",
+            editor.binary
+        );
+    }
+    ok(
+        &session.call_tool(
+            ids.next(),
+            "file.create",
+            json!({ "path": "after.txt", "content": "x\n", "idempotencyId": "after-silent" }),
+        ),
+        &editor.context(),
+    );
+    let replay = run(&mut session, &mut ids, arguments, &editor);
+    assert_eq!(
+        replay["replayed"],
+        json!(true),
+        "{}: {replay}",
+        editor.binary
+    );
+    eprintln!(
+        "{}: settled {:.1} s after the call, on {} session",
+        editor.binary,
+        settled_after.as_secs_f64(),
+        if reconnected { "the next" } else { "the same" }
+    );
     let _ = session.finish();
     drop(editor);
 }

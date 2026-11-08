@@ -37,8 +37,9 @@ pub use scheduler_harness::{
     MutationReport, ReadOverlap, RefusalReport, RequestSpec, SchedulerIdempotencyHarness,
 };
 pub use task34_fixture::{
-    FIXTURE_OPENED_AT_UNIX_MS, Task34EffectKind, Task34FileOperation, Task34FileState,
-    Task34FixtureJournal, Task34Held, Task34Proof, Task34RecordSpec, Task34Release,
+    FIXTURE_OPENED_AT_UNIX_MS, Task34EditorProcess, Task34EffectKind, Task34FileOperation,
+    Task34FileState, Task34FixtureJournal, Task34Held, Task34Proof, Task34RecordSpec,
+    Task34Release,
 };
 
 /// Monotonic deterministic clock local to one fixture; no process-global state.

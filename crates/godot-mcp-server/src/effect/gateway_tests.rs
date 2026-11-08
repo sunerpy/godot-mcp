@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use godot_mcp_bridge::protocol::mutation::MutationStatus;
 use godot_mcp_domain::ErrorKind;
 use godot_mcp_domain::contracts::{Capability, ProjectIdentity};
 use godot_mcp_domain::lease::{Lease, LeaseManager};
@@ -18,11 +19,12 @@ use godot_mcp_engine::supervision::protocol::{
 use godot_mcp_engine::validation::outcome::Observed;
 
 use crate::effect::boundary::{
-    BoundaryUnavailable, EditorEffectBoundary, EditorMutation, EffectTicket, FileEffectBoundary,
-    FileWrite, LspDapEffectBoundary, LspDapExchange, ProcessEffectBoundary, ProcessEffectOutcome,
-    ProcessLaunchRequest, ProcessOutputMetadata, RuntimeEffectBoundary, RuntimeOperation,
-    SafeRootFileBoundary, UnavailableBoundaries,
+    BoundaryUnavailable, CancelSignal, EditorEffectBoundary, EditorEffectOutcome, EditorMutation,
+    EffectTicket, FileEffectBoundary, FileWrite, LspDapEffectBoundary, LspDapExchange,
+    ProcessEffectBoundary, ProcessEffectOutcome, ProcessLaunchRequest, ProcessOutputMetadata,
+    RuntimeEffectBoundary, RuntimeOperation, SafeRootFileBoundary, UnavailableBoundaries,
 };
+use crate::effect::gateway::{EditorEffectIntent, LateEditorAnswer, LateSettlement};
 use crate::effect::permit::{
     EffectPermit, LocalLeaseEvidence, OperatorRecoveryAuthority, PermitAuthority, PermitRequest,
     RepairOperation, RepairPermit,
@@ -484,6 +486,7 @@ impl EditorEffectBoundary for BoundaryProbe {
             receipt_transaction_id: Some(ticket.transaction_id().to_owned()),
             receipt_action_id: Some("editor-action".to_owned()),
             live_state_probe: Some("clean".to_owned()),
+            editor_process: None,
         })
     }
 }
@@ -512,6 +515,7 @@ impl RuntimeEffectBoundary for BoundaryProbe {
             receipt_transaction_id: Some(ticket.transaction_id().to_owned()),
             receipt_action_id: Some("runtime-action".to_owned()),
             live_state_probe: Some("running".to_owned()),
+            editor_process: None,
         })
     }
 }
@@ -2114,4 +2118,1083 @@ fn effect_errors_preserve_the_stable_domain_taxonomy() {
         unavailable.message(),
         "file effect failed: publisher unavailable"
     );
+}
+
+/// The live editor of a request it never answered in time: every mutation is
+/// unresolved. With a gate, `apply` says it was entered and then waits for the
+/// test to release it, so the test can act while the record is in flight.
+#[derive(Clone, Default)]
+struct UnansweringEditor {
+    gate: Option<Arc<EditorGate>>,
+}
+
+struct EditorGate {
+    entered: Mutex<std::sync::mpsc::Sender<()>>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl EditorEffectBoundary for UnansweringEditor {
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn mutate(
+        &self,
+        _ticket: &EffectTicket,
+        _mutation: &EditorMutation,
+    ) -> Result<TypedProof, BoundaryUnavailable> {
+        Err(BoundaryUnavailable { boundary: "editor" })
+    }
+
+    fn apply(
+        &self,
+        _ticket: &EffectTicket,
+        _mutation: &EditorMutation,
+    ) -> Result<EditorEffectOutcome, BoundaryUnavailable> {
+        if let Some(gate) = &self.gate {
+            gate.entered
+                .lock()
+                .expect("editor gate lock")
+                .send(())
+                .expect("the test waits for the editor");
+            gate.release
+                .lock()
+                .expect("editor gate lock")
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the test releases the editor");
+        }
+        Ok(EditorEffectOutcome {
+            status: MutationStatus::Unresolved,
+            payload: serde_json::json!({}),
+            error: Some((
+                ErrorKind::Uncertain,
+                "the editor did not answer in time".to_owned(),
+            )),
+            proof: TypedProof::EditorRuntime {
+                bridge_reachable: false,
+                receipt_transaction_id: None,
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process: None,
+            },
+        })
+    }
+}
+
+impl GatewayFixture {
+    fn with_editor(editor: UnansweringEditor) -> Self {
+        Self::new(move |lease| EffectBoundaries {
+            file: Box::new(SafeRootFileBoundary::new(lease.safe_root())),
+            process: Box::new(UnavailableBoundaries),
+            lsp_dap: Box::new(UnavailableBoundaries),
+            editor: Box::new(editor),
+            runtime: Box::new(UnavailableBoundaries),
+        })
+    }
+
+    fn editor_intent(&self, transaction_id: &str) -> EditorEffectIntent {
+        EditorEffectIntent {
+            transaction_id: transaction_id.to_owned(),
+            tool_name: "editor.script.run".to_owned(),
+            operation_family: OperationFamily::EditorMutation,
+            idempotency_id: format!("idem-{transaction_id}"),
+            transport_mode: TransportMode::Stdio,
+            principal: None,
+            session: Some("stdio".to_owned()),
+            arguments: serde_json::json!({ "source": "func run(): pass" }),
+            files: Vec::new(),
+            project_wide: true,
+            observe_all: true,
+            expected_revision: None,
+            opened_at_unix_ms: 1_700_000_000_000,
+        }
+    }
+
+    fn editor_permit(&self, transaction_id: &str) -> EffectPermit {
+        self.permit(
+            transaction_id,
+            Capability::EditorMutate,
+            OperationFamily::EditorMutation,
+            EffectBoundaryKind::Editor,
+        )
+    }
+
+    /// Run one project-wide editor mutation the editor never answers in
+    /// time, which quarantines it.
+    fn quarantine_editor(&self, transaction_id: &str) -> TransactionRecord {
+        self.gateway
+            .open_editor_transaction(&self.editor_intent(transaction_id))
+            .expect("open editor transaction");
+        let outcome = self
+            .gateway
+            .execute_editor_effect(
+                &self.editor_permit(transaction_id),
+                &editor_mutation(transaction_id),
+            )
+            .expect("execute editor mutation");
+        assert_eq!(outcome.status, MutationStatus::Unresolved);
+        let record = self.store.load(transaction_id).expect("editor record");
+        assert_eq!(record.phase, Phase::Quarantined);
+        record
+    }
+
+    fn settle(&self, late: LateEditorAnswer) -> LateSettlement {
+        self.gateway
+            .settle_late_editor_answer(late)
+            .expect("settle the late answer")
+    }
+}
+
+fn editor_mutation(transaction_id: &str) -> EditorMutation {
+    EditorMutation {
+        action: "editor.script.run".to_owned(),
+        payload: serde_json::json!({ "transaction_id": transaction_id }).to_string(),
+        idempotency_id: format!("idem-{transaction_id}"),
+        timeout: Duration::from_secs(1),
+        cancellation: CancelSignal::default(),
+    }
+}
+
+fn late_answer(transaction_id: &str, status: MutationStatus) -> LateEditorAnswer {
+    LateEditorAnswer {
+        transaction_id: transaction_id.to_owned(),
+        idempotency_id: format!("idem-{transaction_id}"),
+        method: "editor.script.run".to_owned(),
+        sent_here: true,
+        status,
+        error: None,
+        action: None,
+        digest: None,
+    }
+}
+
+#[test]
+fn a_late_answer_settles_a_quarantined_editor_transaction_by_what_the_editor_said() {
+    // Contract: the answer the editor gave after the server stopped waiting is
+    // the bound receipt the quarantine lacked. `committed` proves the
+    // post-state, `not_started` the pre-state; either reopens writes, and the
+    // terminal outcome is the one an answer in time would have recorded.
+    let transaction_id = "00000000-0000-4000-8000-00000000b001";
+    let cases = [
+        (
+            MutationStatus::Committed,
+            None,
+            Some("godot-mcp: editor.script.run"),
+            Some("after"),
+            Phase::CommittedFsynced,
+            TerminalOutcome::Succeeded,
+            TypedProof::EditorRuntime {
+                bridge_reachable: true,
+                receipt_transaction_id: Some(transaction_id.to_owned()),
+                receipt_action_id: Some("godot-mcp: editor.script.run".to_owned()),
+                live_state_probe: Some("after".to_owned()),
+                editor_process: None,
+            },
+        ),
+        (
+            MutationStatus::Committed,
+            Some((ErrorKind::Internal, "the script raised an error".to_owned())),
+            None,
+            None,
+            Phase::CommittedFsynced,
+            TerminalOutcome::failed(ErrorKind::Internal),
+            TypedProof::EditorRuntime {
+                bridge_reachable: true,
+                receipt_transaction_id: Some(transaction_id.to_owned()),
+                receipt_action_id: Some("editor.script.run".to_owned()),
+                live_state_probe: Some("answered".to_owned()),
+                editor_process: None,
+            },
+        ),
+        (
+            MutationStatus::NotStarted,
+            Some((
+                ErrorKind::Unavailable,
+                "the connection to the server was lost before the request started".to_owned(),
+            )),
+            None,
+            None,
+            Phase::Compensated,
+            TerminalOutcome::failed(ErrorKind::Unavailable),
+            TypedProof::EditorRuntime {
+                bridge_reachable: true,
+                receipt_transaction_id: Some(transaction_id.to_owned()),
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process: None,
+            },
+        ),
+        (
+            MutationStatus::NotStarted,
+            None,
+            None,
+            None,
+            Phase::Compensated,
+            TerminalOutcome::failed(ErrorKind::Unavailable),
+            TypedProof::EditorRuntime {
+                bridge_reachable: true,
+                receipt_transaction_id: Some(transaction_id.to_owned()),
+                receipt_action_id: None,
+                live_state_probe: None,
+                editor_process: None,
+            },
+        ),
+    ];
+    for (status, error, action, digest, phase, terminal, proof) in cases {
+        let fixture = GatewayFixture::with_editor(UnansweringEditor::default());
+        fixture.quarantine_editor(transaction_id);
+        assert_eq!(
+            fixture
+                .gateway
+                .quarantined_transactions()
+                .expect("quarantine"),
+            vec![transaction_id.to_owned()]
+        );
+
+        let mut late = late_answer(transaction_id, status);
+        late.error = error;
+        late.action = action.map(str::to_owned);
+        late.digest = digest.map(str::to_owned);
+        assert_eq!(fixture.settle(late), LateSettlement::Settled(phase));
+
+        let record = fixture.store.load(transaction_id).expect("settled record");
+        assert_eq!(record.phase, phase, "{status:?}");
+        assert_eq!(record.terminal_outcome, Some(terminal), "{status:?}");
+        assert_eq!(record.proof, Some(proof), "{status:?}");
+        assert!(
+            fixture
+                .gateway
+                .quarantined_transactions()
+                .expect("quarantine")
+                .is_empty(),
+            "the settled transaction no longer blocks writes"
+        );
+        let audit = fixture.store.audit_entries(transaction_id).expect("audit");
+        let settlement = audit
+            .iter()
+            .position(|(event, _)| event == "late_answer_settlement")
+            .expect("the settlement is audited");
+        let transition = audit
+            .iter()
+            .position(|(event, detail)| event == phase.as_str() && detail == "repair transition")
+            .expect("the transition is journaled");
+        assert!(
+            settlement < transition,
+            "the audit entry is written before the transition: {audit:?}"
+        );
+
+        // Writes are open again: an ordinary file effect runs to completion.
+        let file_id = "00000000-0000-4000-8000-00000000b0f1";
+        let intent = fixture.file_intent(
+            file_id,
+            "scenes/after.tscn",
+            FileOperation::Create,
+            Some(b"after\n"),
+        );
+        fixture.open_staged_file(&intent);
+        let permit = fixture.permit(
+            file_id,
+            Capability::ProjectWrite,
+            OperationFamily::ProjectMutation,
+            EffectBoundaryKind::File,
+        );
+        let outcome = fixture
+            .gateway
+            .execute_file_effect(&permit)
+            .expect("the write gate is open");
+        assert_eq!(outcome.phase, Phase::CommittedFsynced);
+    }
+}
+
+#[test]
+fn a_late_unresolved_answer_keeps_the_quarantine() {
+    // Contract: an editor that answers late but still cannot say what happened
+    // proves neither state. The transaction stays quarantined; the answer is
+    // audited.
+    let transaction_id = "00000000-0000-4000-8000-00000000b002";
+    let fixture = GatewayFixture::with_editor(UnansweringEditor::default());
+    let before = fixture.quarantine_editor(transaction_id);
+
+    let settlement = fixture.settle(late_answer(transaction_id, MutationStatus::Unresolved));
+    assert!(
+        matches!(settlement, LateSettlement::Ignored(_)),
+        "{settlement:?}"
+    );
+    assert_eq!(
+        fixture.store.load(transaction_id).expect("record"),
+        before,
+        "the record is unchanged"
+    );
+    assert_eq!(
+        fixture
+            .gateway
+            .quarantined_transactions()
+            .expect("quarantine"),
+        vec![transaction_id.to_owned()]
+    );
+    assert!(
+        fixture
+            .store
+            .audit_entries(transaction_id)
+            .expect("audit")
+            .iter()
+            .any(|(event, _)| event == "late_answer"),
+        "the unresolved answer is audited"
+    );
+}
+
+#[test]
+fn a_late_answer_that_does_not_match_its_transaction_changes_nothing() {
+    // Contract: a late answer settles only the quarantined live-editor
+    // transaction that both its transaction ID and its idempotency ID name.
+    let transaction_id = "00000000-0000-4000-8000-00000000b003";
+    let fixture = GatewayFixture::with_editor(UnansweringEditor::default());
+    let editor = fixture.quarantine_editor(transaction_id);
+
+    let mut other_request = late_answer(transaction_id, MutationStatus::Committed);
+    other_request.idempotency_id = "idem-another-request".to_owned();
+    let unknown = late_answer(
+        "00000000-0000-4000-8000-00000000b0ff",
+        MutationStatus::Committed,
+    );
+    for late in [other_request, unknown] {
+        let settlement = fixture.settle(late);
+        assert!(
+            matches!(settlement, LateSettlement::Ignored(_)),
+            "{settlement:?}"
+        );
+    }
+    assert_eq!(fixture.store.load(transaction_id).expect("record"), editor);
+
+    // A quarantined file transaction and a quarantined game-session command
+    // are no live-editor transactions, whatever the answer says.
+    let file_id = "00000000-0000-4000-8000-00000000b004";
+    let file = fixture.quarantine_file(file_id, "scenes/file.tscn", b"post\n", false, None);
+    let runtime_id = "00000000-0000-4000-8000-00000000b005";
+    let mut intent = fixture.editor_intent(runtime_id);
+    intent.operation_family = OperationFamily::RuntimeExecution;
+    fixture
+        .gateway
+        .open_runtime_transaction(&intent)
+        .expect("open runtime transaction");
+    fixture
+        .store
+        .advance(runtime_id, Phase::EffectStartedFsynced, None, None, None)
+        .expect("start runtime command");
+    let runtime = fixture
+        .store
+        .advance(
+            runtime_id,
+            Phase::Quarantined,
+            None,
+            Some("fixture quarantine".to_owned()),
+            Some(TerminalOutcome::failed(ErrorKind::Uncertain)),
+        )
+        .expect("quarantine runtime command");
+    for (id, before) in [(file_id, file), (runtime_id, runtime)] {
+        let mut late = late_answer(id, MutationStatus::Committed);
+        late.idempotency_id = before.idempotency_id.clone();
+        let settlement = fixture.settle(late);
+        assert!(
+            matches!(settlement, LateSettlement::Ignored(_)),
+            "{settlement:?}"
+        );
+        assert_eq!(fixture.store.load(id).expect("record"), before);
+    }
+}
+
+#[test]
+fn a_second_late_answer_for_a_settled_transaction_changes_nothing() {
+    // Contract: the first answer settles the transaction; one repeated after it,
+    // or contradicting it, is ignored.
+    let transaction_id = "00000000-0000-4000-8000-00000000b006";
+    let fixture = GatewayFixture::with_editor(UnansweringEditor::default());
+    fixture.quarantine_editor(transaction_id);
+    assert_eq!(
+        fixture.settle(late_answer(transaction_id, MutationStatus::Committed)),
+        LateSettlement::Settled(Phase::CommittedFsynced)
+    );
+    let settled = fixture.store.load(transaction_id).expect("record");
+
+    for status in [MutationStatus::Committed, MutationStatus::NotStarted] {
+        let settlement = fixture.settle(late_answer(transaction_id, status));
+        assert!(
+            matches!(settlement, LateSettlement::Ignored(_)),
+            "{settlement:?}"
+        );
+        assert_eq!(fixture.store.load(transaction_id).expect("record"), settled);
+    }
+}
+
+#[test]
+fn a_late_answer_that_arrives_before_the_quarantine_is_written_settles_it() {
+    // Contract: the bridge can hand on an answer while the gateway is still
+    // writing the unresolved outcome. The gateway holds that answer and settles
+    // the transaction as soon as its quarantine is journaled; no answer is lost
+    // to the race.
+    let (entered_sender, entered) = std::sync::mpsc::channel();
+    let (release, release_receiver) = std::sync::mpsc::channel();
+    let editor = UnansweringEditor {
+        gate: Some(Arc::new(EditorGate {
+            entered: Mutex::new(entered_sender),
+            release: Mutex::new(release_receiver),
+        })),
+    };
+    let transaction_id = "00000000-0000-4000-8000-00000000b007";
+    let fixture = GatewayFixture::with_editor(editor);
+    fixture
+        .gateway
+        .open_editor_transaction(&fixture.editor_intent(transaction_id))
+        .expect("open editor transaction");
+    let permit = fixture.editor_permit(transaction_id);
+
+    std::thread::scope(|scope| {
+        let running = scope.spawn(|| {
+            fixture
+                .gateway
+                .execute_editor_effect(&permit, &editor_mutation(transaction_id))
+        });
+        entered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the mutation reaches the editor");
+        assert_eq!(
+            fixture.store.load(transaction_id).expect("record").phase,
+            Phase::EffectStartedFsynced
+        );
+        assert_eq!(
+            fixture.settle(late_answer(transaction_id, MutationStatus::Committed)),
+            LateSettlement::Held
+        );
+        release.send(()).expect("release the editor");
+        let outcome = running
+            .join()
+            .expect("the mutation thread")
+            .expect("execute editor mutation");
+        assert_eq!(outcome.status, MutationStatus::Unresolved);
+    });
+
+    let record = fixture.store.load(transaction_id).expect("record");
+    assert_eq!(record.phase, Phase::CommittedFsynced);
+    assert_eq!(record.terminal_outcome, Some(TerminalOutcome::Succeeded));
+    assert!(
+        fixture
+            .gateway
+            .quarantined_transactions()
+            .expect("quarantine")
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_gateway_holds_one_late_answer_per_transaction_and_only_so_many() {
+    // Contract: a late answer for a transaction still in flight is held only
+    // until that transaction's outcome is written; the gateway holds at most
+    // one per transaction and a bounded number in all.
+    let fixture = GatewayFixture::with_editor(UnansweringEditor::default());
+    let ids: Vec<String> = (0..40)
+        .map(|index| format!("00000000-0000-4000-8000-0000000c{index:04x}"))
+        .collect();
+    for id in &ids {
+        fixture
+            .gateway
+            .open_editor_transaction(&fixture.editor_intent(id))
+            .expect("open editor transaction");
+        fixture
+            .store
+            .advance(id, Phase::EffectStartedFsynced, None, None, None)
+            .expect("start editor mutation");
+    }
+    for _ in 0..2 {
+        assert_eq!(
+            fixture.settle(late_answer(&ids[0], MutationStatus::Committed)),
+            LateSettlement::Held
+        );
+    }
+    assert_eq!(fixture.gateway.held_late_answers(), 1);
+    for id in &ids {
+        assert_eq!(
+            fixture.settle(late_answer(id, MutationStatus::Committed)),
+            LateSettlement::Held
+        );
+    }
+    assert_eq!(
+        fixture.gateway.held_late_answers(),
+        crate::effect::gateway::MAX_HELD_LATE_ANSWERS
+    );
+
+    // An answer from an earlier server cannot be for a request in flight here.
+    let mut earlier = late_answer(&ids[1], MutationStatus::Committed);
+    earlier.sent_here = false;
+    assert!(matches!(
+        fixture.settle(earlier),
+        LateSettlement::Ignored(_)
+    ));
+}
+
+/// The editor bridge, served for real by a fake plugin, behind the gateway.
+#[cfg(feature = "test-hooks")]
+mod editor_process {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use godot_mcp_bridge::protocol::envelope::ProjectClaim;
+    use godot_mcp_bridge::protocol::mutation::MutationStatus;
+    use godot_mcp_domain::ErrorKind;
+    use godot_mcp_domain::contracts::Capability;
+    use godot_mcp_engine::supervision::procfs;
+    use serde_json::json;
+
+    use super::GatewayFixture;
+    use crate::editor::boundary::BridgeEditorBoundary;
+    use crate::editor::bridge::{EditorBridge, RENDEZVOUS_FILE};
+    use crate::effect::boundary::{
+        CancelSignal, EditorMutation, SafeRootFileBoundary, UnavailableBoundaries,
+    };
+    use crate::effect::gateway::EditorEffectIntent;
+    use crate::effect::{EffectBoundaries, WritePrecondition};
+    use crate::journal::{
+        EditorProcess, EffectBoundaryKind, OperationFamily, Phase, TerminalOutcome, TransportMode,
+        TypedProof,
+    };
+    use crate::test_support::fake_editor_plugin::{FakeAnswer, FakeEditorPlugin, FakePluginScript};
+
+    const SAVE: &str = "editor.scene.save";
+
+    /// A gateway whose editor boundary is a live bridge, and a fake editor on
+    /// it that reports this test process as the editor.
+    struct Served {
+        fixture: GatewayFixture,
+        bridge: Arc<EditorBridge>,
+        plugin: FakeEditorPlugin,
+        _scratch: tempfile::TempDir,
+    }
+
+    /// [`Served`], with the fake editor answering a save with `answer`.
+    fn served(answer: FakeAnswer) -> Served {
+        let scratch = tempfile::tempdir().expect("bridge state directory");
+        let claim = ProjectClaim {
+            object_identity: format!("project_{}", "c".repeat(64)),
+            root_object: "unix:dev=1,ino=30".to_owned(),
+            file_object: "unix:dev=1,ino=31".to_owned(),
+            generation: 0,
+        };
+        let bridge = EditorBridge::start(scratch.path(), claim, false).expect("start the bridge");
+        let executable = std::env::current_exe().expect("this test's executable");
+        let plugin = FakeEditorPlugin::spawn(
+            &scratch.path().join(RENDEZVOUS_FILE),
+            FakePluginScript::implementing(&[SAVE])
+                .describing("pid", json!(std::process::id()))
+                .describing("executable", json!(executable.display().to_string()))
+                .answering(SAVE, answer),
+        );
+        let started = std::time::Instant::now();
+        while !bridge.status().connected {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "timed out waiting for the fake editor to connect"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let fixture = GatewayFixture::new({
+            let bridge = Arc::clone(&bridge);
+            move |lease| EffectBoundaries {
+                file: Box::new(SafeRootFileBoundary::new(lease.safe_root())),
+                process: Box::new(UnavailableBoundaries),
+                lsp_dap: Box::new(UnavailableBoundaries),
+                editor: Box::new(BridgeEditorBoundary::new(bridge)),
+                runtime: Box::new(UnavailableBoundaries),
+            }
+        });
+        Served {
+            fixture,
+            bridge,
+            plugin,
+            _scratch: scratch,
+        }
+    }
+
+    /// Save the open scene through the gateway: a mutation that may write
+    /// any project file.
+    fn save(fixture: &GatewayFixture, transaction_id: &str) -> MutationStatus {
+        let intent = EditorEffectIntent {
+            transaction_id: transaction_id.to_owned(),
+            tool_name: SAVE.to_owned(),
+            operation_family: OperationFamily::EditorMutation,
+            idempotency_id: format!("idem-{transaction_id}"),
+            transport_mode: TransportMode::Stdio,
+            principal: None,
+            session: Some("stdio".to_owned()),
+            arguments: json!({}),
+            files: vec![("project.godot".to_owned(), WritePrecondition::Observed)],
+            project_wide: true,
+            observe_all: true,
+            expected_revision: None,
+            opened_at_unix_ms: 1_700_000_000_000,
+        };
+        fixture
+            .gateway
+            .open_editor_transaction(&intent)
+            .expect("journal the save");
+        let permit = fixture.permit(
+            transaction_id,
+            Capability::EditorMutate,
+            OperationFamily::EditorMutation,
+            EffectBoundaryKind::Editor,
+        );
+        fixture
+            .gateway
+            .execute_editor_effect(
+                &permit,
+                &EditorMutation {
+                    action: SAVE.to_owned(),
+                    payload: "{}".to_owned(),
+                    idempotency_id: intent.idempotency_id,
+                    timeout: Duration::from_secs(2),
+                    cancellation: CancelSignal::default(),
+                },
+            )
+            .expect("the save reached the editor")
+            .status
+    }
+
+    /// This test process as the bridge records it, where the host can observe it.
+    fn this_process() -> Option<EditorProcess> {
+        procfs::observations_available().then(|| EditorProcess {
+            pid: std::process::id(),
+            start_time: procfs::process_identity(std::process::id())
+                .expect("this process is observable")
+                .expect("this process is live")
+                .start_time
+                .expect("a start time is reported"),
+        })
+    }
+
+    #[test]
+    fn an_unanswered_save_records_the_editor_process_it_was_sent_to() {
+        for (transaction_id, answer) in [
+            // The editor's connection ends before it answers.
+            (
+                "00000000-0000-4000-8000-00000000b001",
+                FakeAnswer::Disconnect,
+            ),
+            // The editor never answers before the deadline.
+            ("00000000-0000-4000-8000-00000000b002", FakeAnswer::Ignore),
+        ] {
+            let served = served(answer);
+            assert_eq!(
+                save(&served.fixture, transaction_id),
+                MutationStatus::Unresolved
+            );
+            let record = served
+                .fixture
+                .store
+                .load(transaction_id)
+                .expect("the save record");
+            assert_eq!(record.phase, Phase::Quarantined);
+            assert_eq!(
+                record.terminal_outcome,
+                Some(TerminalOutcome::failed(ErrorKind::Uncertain))
+            );
+            assert_eq!(
+                record.proof,
+                Some(TypedProof::EditorRuntime {
+                    bridge_reachable: false,
+                    receipt_transaction_id: None,
+                    receipt_action_id: None,
+                    live_state_probe: None,
+                    editor_process: this_process(),
+                }),
+                "{transaction_id} names the editor process the save was sent to"
+            );
+            served.bridge.stop();
+            let _ = served.plugin.join();
+        }
+    }
+
+    #[test]
+    fn an_answered_save_records_no_editor_process() {
+        let transaction_id = "00000000-0000-4000-8000-00000000b003";
+        let served = served(FakeAnswer::Error(
+            ErrorKind::InvalidInput,
+            MutationStatus::NotStarted,
+        ));
+        assert_eq!(
+            save(&served.fixture, transaction_id),
+            MutationStatus::NotStarted
+        );
+        let record = served
+            .fixture
+            .store
+            .load(transaction_id)
+            .expect("the save record");
+        assert_eq!(record.phase, Phase::Compensated);
+        assert!(
+            matches!(
+                record.proof,
+                Some(TypedProof::EditorRuntime {
+                    editor_process: None,
+                    ..
+                })
+            ),
+            "an answer settles the save; no editor process is kept: {:?}",
+            record.proof
+        );
+        served.bridge.stop();
+        served.plugin.join().expect("the plugin ended");
+    }
+}
+
+/// Settling an editor mutation that was never answered, once the editor
+/// process it was sent to has ended (`acknowledge-safe-state` on a
+/// `writer-ended` proof).
+mod writer_ended {
+    use godot_mcp_domain::ErrorKind;
+    use godot_mcp_domain::contracts::Capability;
+    use godot_mcp_engine::supervision::procfs;
+    use serde_json::json;
+
+    use super::GatewayFixture;
+    use crate::effect::gateway::EditorEffectIntent;
+    use crate::effect::permit::RepairOperation;
+    use crate::effect::{DerivedDisposition, DerivedTerminal, EffectError, WritePrecondition};
+    use crate::journal::{
+        Conclusion, EditorProcess, EffectBoundaryKind, OperationFamily, Phase, TerminalOutcome,
+        TransportMode, TypedProof,
+    };
+
+    /// The proof of an editor mutation sent to `editor_process` and never
+    /// answered.
+    const fn unanswered(editor_process: Option<EditorProcess>) -> TypedProof {
+        TypedProof::EditorRuntime {
+            bridge_reachable: false,
+            receipt_transaction_id: None,
+            receipt_action_id: None,
+            live_state_probe: None,
+            editor_process,
+        }
+    }
+
+    /// Journal an editor mutation that may write any project file, sent and
+    /// quarantined with `proof`, as the gateway leaves an unanswered one.
+    fn quarantine_editor(fixture: &GatewayFixture, transaction_id: &str, proof: TypedProof) {
+        fixture
+            .gateway
+            .open_editor_transaction(&EditorEffectIntent {
+                transaction_id: transaction_id.to_owned(),
+                tool_name: "editor.script.run".to_owned(),
+                operation_family: OperationFamily::EditorMutation,
+                idempotency_id: format!("idem-{transaction_id}"),
+                transport_mode: TransportMode::Stdio,
+                principal: None,
+                session: Some("stdio".to_owned()),
+                arguments: json!({ "source": "func run(): pass" }),
+                files: vec![("project.godot".to_owned(), WritePrecondition::Observed)],
+                project_wide: true,
+                observe_all: true,
+                expected_revision: None,
+                opened_at_unix_ms: 1_700_000_000_000,
+            })
+            .expect("journal the editor mutation");
+        fixture
+            .store
+            .advance(
+                transaction_id,
+                Phase::EffectStartedFsynced,
+                None,
+                None,
+                None,
+            )
+            .expect("the mutation was sent");
+        fixture
+            .store
+            .advance(
+                transaction_id,
+                Phase::Quarantined,
+                Some(proof),
+                Some("the editor mutation is unresolved".to_owned()),
+                Some(TerminalOutcome::failed(ErrorKind::Uncertain)),
+            )
+            .expect("quarantine the unanswered mutation");
+    }
+
+    fn acknowledge(
+        fixture: &GatewayFixture,
+        transaction_id: &str,
+        operation: RepairOperation,
+        proof: TypedProof,
+    ) -> Result<crate::effect::EffectOutcome, EffectError> {
+        let permit = fixture.repair_permit(transaction_id, operation);
+        fixture.gateway.apply_operator_repair(
+            &permit,
+            Some(DerivedTerminal {
+                disposition: DerivedDisposition::WriterEnded,
+                proof,
+            }),
+        )
+    }
+
+    fn refusal(result: Result<crate::effect::EffectOutcome, EffectError>) -> String {
+        match result {
+            Err(EffectError::Unauthorized(message)) => message,
+            other => panic!("expected an unauthorized repair, got {other:?}"),
+        }
+    }
+
+    /// This test process, as an editor process record names it.
+    fn own_process() -> EditorProcess {
+        EditorProcess {
+            pid: std::process::id(),
+            start_time: procfs::process_identity(std::process::id())
+                .expect("this process is observable")
+                .expect("this process is live")
+                .start_time
+                .expect("a start time is reported"),
+        }
+    }
+
+    /// A process id that no longer names a live process: a reaped child's.
+    fn ended_process() -> EditorProcess {
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("a short-lived child");
+        let pid = child.id();
+        child.wait().expect("the child exits");
+        EditorProcess {
+            pid,
+            start_time: "1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_unanswered_editor_mutation_settles_as_uncertain_once_its_editor_has_ended() {
+        if !procfs::observations_available() {
+            return;
+        }
+        let fixture = GatewayFixture::with_defaults();
+        let own = own_process();
+        for (transaction_id, editor) in [
+            // The editor's process id now names a later process.
+            (
+                "00000000-0000-4000-8000-00000000b010",
+                EditorProcess {
+                    pid: own.pid,
+                    start_time: format!("{}0", own.start_time),
+                },
+            ),
+            // No live process has the editor's id.
+            ("00000000-0000-4000-8000-00000000b011", ended_process()),
+        ] {
+            let proof = unanswered(Some(editor));
+            quarantine_editor(&fixture, transaction_id, proof.clone());
+            let outcome = acknowledge(
+                &fixture,
+                transaction_id,
+                RepairOperation::AcknowledgeSafeState,
+                proof.clone(),
+            )
+            .expect("the ended editor settles the mutation");
+            assert_eq!(outcome.phase, Phase::CommittedFsynced);
+            assert_eq!(
+                outcome.conclusion,
+                Conclusion::Quarantine,
+                "neither recorded state is proven"
+            );
+            let record = fixture.store.load(transaction_id).expect("the record");
+            assert_eq!(record.phase, Phase::CommittedFsynced);
+            assert_eq!(
+                record.terminal_outcome,
+                Some(TerminalOutcome::failed(ErrorKind::Uncertain)),
+                "a replay still answers that the result is unknown"
+            );
+            assert_eq!(
+                record.proof,
+                Some(proof),
+                "the ended editor stays on record"
+            );
+            assert!(
+                !fixture
+                    .store
+                    .quarantined_transactions()
+                    .expect("quarantine list")
+                    .contains(&transaction_id.to_owned())
+            );
+            let audit = fixture.store.audit_entries(transaction_id).expect("audit");
+            let settled = audit
+                .iter()
+                .position(|(event, detail)| {
+                    event == "repair_proof_outcome"
+                        && detail.starts_with(
+                            "operation=acknowledge-safe-state conclusion=writer_ended reason=",
+                        )
+                })
+                .expect("the settlement is audited");
+            let transition = audit
+                .iter()
+                .position(|(event, detail)| {
+                    event == "committed_fsynced" && detail == "repair transition"
+                })
+                .expect("the transition is journaled");
+            assert!(settled < transition, "the audit precedes the transition");
+        }
+        // Writes resume once nothing is quarantined.
+        let next = "00000000-0000-4000-8000-00000000b012";
+        let intent = fixture.file_intent(
+            next,
+            "scenes/after.tscn",
+            crate::journal::FileOperation::Create,
+            Some(b"after\n"),
+        );
+        fixture.open_staged_file(&intent);
+        fixture.permit(
+            next,
+            Capability::ProjectWrite,
+            OperationFamily::ProjectMutation,
+            EffectBoundaryKind::File,
+        );
+    }
+
+    #[test]
+    fn the_end_of_an_editor_is_proven_or_nothing_is_settled() {
+        let fixture = GatewayFixture::with_defaults();
+        let running = "00000000-0000-4000-8000-00000000b020";
+        if procfs::observations_available() {
+            let proof = unanswered(Some(own_process()));
+            quarantine_editor(&fixture, running, proof.clone());
+            let message = refusal(acknowledge(
+                &fixture,
+                running,
+                RepairOperation::AcknowledgeSafeState,
+                proof,
+            ));
+            assert!(
+                message.starts_with("the editor that ran this request is still running (pid "),
+                "{message}"
+            );
+            assert!(
+                message.ends_with("): wait for it to answer, or close it"),
+                "{message}"
+            );
+        }
+
+        // No editor process was recorded: an older record, or a platform
+        // that cannot prove which process the editor ran in.
+        let unidentified = "00000000-0000-4000-8000-00000000b021";
+        quarantine_editor(&fixture, unidentified, unanswered(None));
+        assert_eq!(
+            refusal(acknowledge(
+                &fixture,
+                unidentified,
+                RepairOperation::AcknowledgeSafeState,
+                unanswered(None),
+            )),
+            crate::effect::gateway::NO_EDITOR_PROCESS
+        );
+        assert!(crate::effect::gateway::NO_EDITOR_PROCESS.starts_with(
+            "this transaction recorded no editor process (the editor's process could \
+                 not be proven when it connected, "
+        ));
+
+        // The editor answered: its receipt, not the end of the editor,
+        // settles the request.
+        let answered = "00000000-0000-4000-8000-00000000b024";
+        let receipt = TypedProof::EditorRuntime {
+            bridge_reachable: true,
+            receipt_transaction_id: Some(answered.to_owned()),
+            receipt_action_id: Some("editor.script.run".to_owned()),
+            live_state_probe: Some("answered".to_owned()),
+            editor_process: None,
+        };
+        quarantine_editor(&fixture, answered, receipt.clone());
+        assert_eq!(
+            refusal(acknowledge(
+                &fixture,
+                answered,
+                RepairOperation::AcknowledgeSafeState,
+                receipt,
+            )),
+            "the editor answered this request, so its answer settles it, not the end of its \
+             editor"
+        );
+
+        // The re-derived proof names another editor than the one recorded.
+        let mismatched = "00000000-0000-4000-8000-00000000b022";
+        quarantine_editor(
+            &fixture,
+            mismatched,
+            unanswered(Some(EditorProcess {
+                pid: 4242,
+                start_time: "1".to_owned(),
+            })),
+        );
+        assert_eq!(
+            refusal(acknowledge(
+                &fixture,
+                mismatched,
+                RepairOperation::AcknowledgeSafeState,
+                unanswered(Some(EditorProcess {
+                    pid: 4243,
+                    start_time: "1".to_owned(),
+                })),
+            )),
+            "the re-derived proof does not name the editor process this transaction recorded"
+        );
+
+        // A writer-ended proof settles only an acknowledgement.
+        assert_eq!(
+            refusal(acknowledge(
+                &fixture,
+                mismatched,
+                RepairOperation::Compensate,
+                unanswered(Some(EditorProcess {
+                    pid: 4242,
+                    start_time: "1".to_owned(),
+                })),
+            )),
+            "compensate requires a pre-state proof, not a writer-ended proof"
+        );
+
+        // A file transaction has no editor whose end could settle it.
+        let file = "00000000-0000-4000-8000-00000000b023";
+        fixture.quarantine_file(file, "scenes/file.tscn", b"post\n", false, None);
+        assert_eq!(
+            refusal(acknowledge(
+                &fixture,
+                file,
+                RepairOperation::AcknowledgeSafeState,
+                TypedProof::File {
+                    entries: Vec::new()
+                },
+            )),
+            "a writer-ended proof settles only an editor_runtime transaction, not file"
+        );
+
+        for transaction_id in [running, unidentified, mismatched, file, answered] {
+            if transaction_id == running && !procfs::observations_available() {
+                continue;
+            }
+            assert_eq!(
+                fixture
+                    .store
+                    .load(transaction_id)
+                    .expect("the refused record")
+                    .phase,
+                Phase::Quarantined,
+                "{transaction_id} stays quarantined"
+            );
+        }
+
+        // Reconcile reports and changes nothing.
+        let reported = fixture
+            .gateway
+            .apply_operator_repair(
+                &fixture.repair_permit(unidentified, RepairOperation::Reconcile),
+                Some(DerivedTerminal {
+                    disposition: DerivedDisposition::WriterEnded,
+                    proof: unanswered(None),
+                }),
+            )
+            .expect("reconcile reports");
+        assert_eq!(reported.phase, Phase::Quarantined);
+        assert_eq!(reported.reason, "reconcile only: re-derived writer-ended");
+    }
 }

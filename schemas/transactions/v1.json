@@ -261,7 +261,16 @@
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             },
             "receipt_action_id": { "type": ["string", "null"], "minLength": 1 },
-            "live_state_probe": { "type": ["string", "null"], "minLength": 1 }
+            "live_state_probe": { "type": ["string", "null"], "minLength": 1 },
+            "editor_process": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pid", "start_time"],
+              "properties": {
+                "pid": { "type": "integer", "minimum": 1 },
+                "start_time": { "type": "string", "minLength": 1 }
+              }
+            }
           }
         }
       ]

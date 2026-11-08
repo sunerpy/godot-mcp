@@ -82,6 +82,7 @@ fn unbound() -> TypedProof {
         receipt_transaction_id: None,
         receipt_action_id: None,
         live_state_probe: None,
+        editor_process: None,
     }
 }
 
@@ -193,7 +194,7 @@ impl RuntimeEffectBoundary for SessionRuntimeBoundary {
                     command.timeout,
                     &command.cancellation,
                 );
-                bridge_outcome(ticket, action, answer, "runtime")
+                bridge_outcome(ticket, action, answer, "runtime", None)
             }
         }
     }
@@ -317,7 +318,7 @@ impl SessionRuntimeBoundary {
             command.timeout,
             &command.cancellation,
         );
-        let mut outcome = bridge_outcome(ticket, &command.action, answer, "runtime")?;
+        let mut outcome = bridge_outcome(ticket, &command.action, answer, "runtime", None)?;
         if outcome.status != MutationStatus::Committed || outcome.error.is_some() {
             return Ok(outcome);
         }

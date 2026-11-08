@@ -404,6 +404,33 @@ impl ProjectRuntime {
                 runtime,
             },
         ));
+        // A mutation the editor answers after the server stopped waiting for
+        // it settles its quarantined transaction from that answer. The bridge
+        // holds the gateway weakly: the gateway holds the editor boundary,
+        // which holds the bridge.
+        if let Some(bridge) = &editor_bridge {
+            let gateway = Arc::downgrade(&gateway);
+            bridge.attach_late_answers(Arc::new(move |late| {
+                let Some(gateway) = gateway.upgrade() else {
+                    return;
+                };
+                let transaction_id = late.transaction_id.clone();
+                match gateway
+                    .settle_late_editor_answer(crate::editor::boundary::late_editor_answer(late))
+                {
+                    Ok(settlement) => tracing::info!(
+                        transaction_id,
+                        ?settlement,
+                        "the editor answered a mutation after the server stopped waiting"
+                    ),
+                    Err(error) => tracing::warn!(
+                        transaction_id,
+                        %error,
+                        "a late editor answer could not settle its transaction"
+                    ),
+                }
+            }));
+        }
         let authority = Arc::new(PermitAuthority::new(Arc::clone(&store), STDIO_EPOCH));
         let defaults = SchedulerLimits::default();
         let scheduler_limits = SchedulerLimits {

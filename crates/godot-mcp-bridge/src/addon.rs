@@ -14,7 +14,7 @@ pub const ADDON_DIRECTORY: &str = "addons/godot_mcp";
 pub const PLUGIN_CONFIG: &str = "res://addons/godot_mcp/plugin.cfg";
 
 /// The add-on version, as `plugin.cfg` and the plugin itself report it.
-pub const ADDON_VERSION: &str = "0.4.0";
+pub const ADDON_VERSION: &str = "0.4.1";
 
 /// One add-on file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

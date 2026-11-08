@@ -868,11 +868,13 @@ impl TransactionStore {
     /// Write one proof-backed terminal record for an already-`quarantined`
     /// transaction.
     ///
-    /// This is the *only* transition out of `quarantined`, it is reachable only
-    /// from the operator-recovery authority's `RepairPermit` path, and it accepts
-    /// exactly `compensated` or `committed_fsynced` — each of which the caller has
-    /// already backed with an independently re-derived typed proof. There is no
-    /// force, no overwrite and no quarantine-clear variant.
+    /// This is the *only* transition out of `quarantined`. Two authorities reach
+    /// it: the operator-recovery authority's `RepairPermit` path, and the effect
+    /// gateway settling an `editor_runtime` transaction from the editor's late
+    /// answer bound to it (ADR 0015). It accepts exactly `compensated` or
+    /// `committed_fsynced` — each of which the caller has already backed with a
+    /// typed proof of the record's own kind. There is no force, no overwrite and
+    /// no quarantine-clear variant.
     pub(crate) fn repair_transition(
         &self,
         transaction_id: &str,

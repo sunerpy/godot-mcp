@@ -11,12 +11,13 @@ than only what was decided.
 | [0003](0003-no-arbitrary-script-execution.md) | There is no arbitrary-script-execution tool (superseded by 0012) |
 | [0004](0004-editor-plane-cancelled.md) | The editor plane was cancelled for the first release |
 | [0005](0005-exact-godot-versions.md) | Only exact Godot patch versions, from one lock |
-| [0006](0006-three-state-transactions.md) | A durable mutation has exactly three terminal states |
+| [0006](0006-three-state-transactions.md) | A durable mutation has exactly three terminal states (amended by 0015) |
 | [0007](0007-rustsec-2023-0071-resource-server.md) | RUSTSEC-2023-0071 is not exploitable in the resource-server path |
 | [0008](0008-one-strong-isolation-release-gate.md) | One strong Docker isolation check satisfies the release plan |
 | [0009](0009-aws-lc-rs-jwt-backend.md) | JWT uses aws-lc-rs and removes the vulnerable rsa dependency |
 | [0010](0010-complete-development-bridge-strategy.md) | Complete development restores editor/runtime with a default GDScript bridge and optional gdext backend |
 | [0011](0011-live-editor-operability.md) | The live editor is operated through typed tools and one fixed table of editing calls |
-| [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch (amended by 0014) |
+| [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch (amended by 0014 and 0015) |
 | [0013](0013-editor-restart.md) | The editor is restarted only when nothing it holds can be lost |
 | [0014](0014-open-http-mode.md) | An open HTTP mode for development networks |
+| [0015](0015-unanswered-editor-changes.md) | An unanswered editor change is settled by its late answer, or once its editor has ended |

@@ -13,7 +13,7 @@
     },
     "project_object_identity": { "type": "string", "minLength": 1 },
     "project_generation": { "type": "integer", "minimum": 0 },
-    "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state"] }
+    "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state", "writer-ended"] }
   },
   "oneOf": [
     {
@@ -96,7 +96,16 @@
         "bridge_reachable": { "type": "boolean" },
         "bridge_receipt": { "type": ["string", "null"] },
         "live_state_probe": { "type": ["string", "null"] },
-        "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state"] }
+        "claimed_disposition": { "type": "string", "enum": ["pre-state", "post-state", "writer-ended"] },
+        "editor_process": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["pid", "start_time"],
+          "properties": {
+            "pid": { "type": "integer", "minimum": 1 },
+            "start_time": { "type": "string", "minLength": 1 }
+          }
+        }
       }
     }
   ]

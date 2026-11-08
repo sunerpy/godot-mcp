@@ -7,7 +7,7 @@
 //! the terminal record from an independently re-derived typed proof.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use godot_mcp_bridge::protocol::mutation::MutationStatus;
 use godot_mcp_domain::ErrorKind;
@@ -143,6 +143,42 @@ pub(crate) struct EditorEffectIntent {
 /// file. It names no file, so no file pre-state is taken for it.
 pub(crate) const PROJECT_WIDE_SCOPE: &str = "*";
 
+/// One answer the live editor gave to a mutation after the server stopped
+/// waiting for it, as the bridge bound it to the transaction its request was
+/// sent for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LateEditorAnswer {
+    pub(crate) transaction_id: String,
+    pub(crate) idempotency_id: String,
+    /// The bridge method the request named.
+    pub(crate) method: String,
+    /// Whether this server sent the request, rather than one before it.
+    pub(crate) sent_here: bool,
+    pub(crate) status: MutationStatus,
+    /// The classified failure, when the editor answered with an error.
+    pub(crate) error: Option<(ErrorKind, String)>,
+    /// What the editor recorded, and its digest of the state it left, when it
+    /// said.
+    pub(crate) action: Option<String>,
+    pub(crate) digest: Option<String>,
+}
+
+/// How many late editor answers the gateway holds for transactions whose
+/// outcome is still being written.
+pub(crate) const MAX_HELD_LATE_ANSWERS: usize = 16;
+
+/// What one late editor answer did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LateSettlement {
+    /// The quarantined transaction settled in this phase.
+    Settled(Phase),
+    /// The transaction is still in flight: the answer settles it once its
+    /// quarantine is written.
+    Held,
+    /// Nothing changed, for this reason.
+    Ignored(&'static str),
+}
+
 /// The terminal disposition of one executed effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EffectOutcome {
@@ -228,6 +264,10 @@ pub(crate) struct EffectGateway {
     lsp_dap: Box<dyn LspDapEffectBoundary>,
     editor: Box<dyn EditorEffectBoundary>,
     runtime: Box<dyn RuntimeEffectBoundary>,
+    /// Late editor answers for transactions whose outcome was still being
+    /// written when they arrived. The lock also serializes every settlement
+    /// against the release of these answers, so none is lost to the race.
+    late_answers: Mutex<Vec<LateEditorAnswer>>,
 }
 
 impl EffectGateway {
@@ -249,6 +289,7 @@ impl EffectGateway {
             lsp_dap: boundaries.lsp_dap,
             editor: boundaries.editor,
             runtime: boundaries.runtime,
+            late_answers: Mutex::new(Vec::new()),
         }
     }
 
@@ -256,6 +297,205 @@ impl EffectGateway {
     /// ordinary permit is refused and the effect lane blocks writes.
     pub(crate) fn quarantined_transactions(&self) -> Result<Vec<String>, EffectError> {
         Ok(self.store.quarantined_transactions()?)
+    }
+
+    /// Settle the live-editor transaction `late` names from the answer the
+    /// editor gave after the server stopped waiting for it.
+    ///
+    /// The answer is the bound receipt the quarantine lacked: `committed`
+    /// proves the post-state and `not_started` the pre-state, so the
+    /// quarantined transaction settles as an answer in time would have, and
+    /// writes reopen. An `unresolved` answer proves neither and changes
+    /// nothing but the audit log. The answer must name the transaction's own
+    /// idempotency ID. A transaction whose outcome is still being written
+    /// holds the answer until [`Self::execute_editor_effect`] has written it.
+    pub(crate) fn settle_late_editor_answer(
+        &self,
+        late: LateEditorAnswer,
+    ) -> Result<LateSettlement, EffectError> {
+        let mut held = self.held();
+        let record = match self.store.load(&late.transaction_id) {
+            Ok(record) => record,
+            Err(StoreError::NotFound(_)) => {
+                return Ok(LateSettlement::Ignored("no transaction has this ID"));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if record.effect_kind != EffectKind::EditorRuntime
+            || record.effect_boundary != EffectBoundaryKind::Editor
+        {
+            return Ok(LateSettlement::Ignored(
+                "the transaction is no live-editor mutation",
+            ));
+        }
+        if record.idempotency_id != late.idempotency_id {
+            return Ok(LateSettlement::Ignored(
+                "the answer is for another request of this transaction ID",
+            ));
+        }
+        match record.phase {
+            Phase::Quarantined => self.settle_quarantined(&record, &late),
+            // Only this server can have the transaction in flight: the
+            // startup reconciliation settled every one an earlier server left.
+            Phase::EffectStartedFsynced if late.sent_here => {
+                held.retain(|kept| kept.transaction_id != late.transaction_id);
+                if held.len() == MAX_HELD_LATE_ANSWERS {
+                    held.remove(0);
+                }
+                held.push(late);
+                Ok(LateSettlement::Held)
+            }
+            Phase::EffectStartedFsynced => Ok(LateSettlement::Ignored(
+                "the transaction is in flight on this server, and the answer is for a request \
+                 an earlier server sent",
+            )),
+            _ => Ok(LateSettlement::Ignored(
+                "the transaction is no longer quarantined",
+            )),
+        }
+    }
+
+    /// How many late answers wait for their transaction's outcome.
+    #[cfg(test)]
+    pub(crate) fn held_late_answers(&self) -> usize {
+        self.held().len()
+    }
+
+    fn held(&self) -> MutexGuard<'_, Vec<LateEditorAnswer>> {
+        self.late_answers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Settle `transaction_id` from the late answer held for it, now that its
+    /// outcome is written. An answer for a transaction that settled anyway is
+    /// dropped. A failure is logged: the outcome already written stands.
+    fn release_held_late_answer(&self, boundary: EffectBoundaryKind, transaction_id: &str) {
+        if boundary != EffectBoundaryKind::Editor {
+            return;
+        }
+        let mut held = self.held();
+        let Some(index) = held
+            .iter()
+            .position(|late| late.transaction_id == transaction_id)
+        else {
+            return;
+        };
+        let late = held.remove(index);
+        let settled = self
+            .store
+            .load(transaction_id)
+            .map_err(EffectError::from)
+            .and_then(|record| {
+                if record.phase == Phase::Quarantined {
+                    self.settle_quarantined(&record, &late).map(Some)
+                } else {
+                    Ok(None)
+                }
+            });
+        match settled {
+            Ok(Some(settlement)) => tracing::info!(
+                transaction_id,
+                ?settlement,
+                "a late editor answer held during the mutation settled its transaction"
+            ),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                transaction_id,
+                %error,
+                "a late editor answer held during the mutation could not settle its transaction"
+            ),
+        }
+    }
+
+    /// Settle one quarantined live-editor transaction from its late answer,
+    /// auditing the answer before the transition is journaled.
+    fn settle_quarantined(
+        &self,
+        record: &TransactionRecord,
+        late: &LateEditorAnswer,
+    ) -> Result<LateSettlement, EffectError> {
+        let transaction_id = &record.transaction_id;
+        let (phase, proof, outcome, reason) = match late.status {
+            MutationStatus::Committed => (
+                Phase::CommittedFsynced,
+                TypedProof::EditorRuntime {
+                    bridge_reachable: true,
+                    receipt_transaction_id: Some(transaction_id.clone()),
+                    receipt_action_id: Some(
+                        late.action
+                            .clone()
+                            .filter(|action| !action.is_empty())
+                            .unwrap_or_else(|| late.method.clone()),
+                    ),
+                    live_state_probe: Some(
+                        late.digest.clone().unwrap_or_else(|| "answered".to_owned()),
+                    ),
+                    editor_process: None,
+                },
+                late.error
+                    .as_ref()
+                    .map_or(TerminalOutcome::Succeeded, |(kind, _)| {
+                        TerminalOutcome::failed(*kind)
+                    }),
+                "the editor answered after the server stopped waiting: it committed the \
+                 mutation and returned a bound receipt"
+                    .to_owned(),
+            ),
+            MutationStatus::NotStarted => (
+                Phase::Compensated,
+                TypedProof::EditorRuntime {
+                    bridge_reachable: true,
+                    receipt_transaction_id: Some(transaction_id.clone()),
+                    receipt_action_id: None,
+                    live_state_probe: None,
+                    editor_process: None,
+                },
+                TerminalOutcome::failed(
+                    late.error
+                        .as_ref()
+                        .map_or(ErrorKind::Unavailable, |(kind, _)| *kind),
+                ),
+                match &late.error {
+                    Some((_, message)) => format!(
+                        "the editor answered after the server stopped waiting: it did not start \
+                         the mutation ({message})"
+                    ),
+                    None => "the editor answered after the server stopped waiting: it did not \
+                             start the mutation"
+                        .to_owned(),
+                },
+            ),
+            MutationStatus::Unresolved => {
+                self.store.audit(
+                    transaction_id,
+                    "late_answer",
+                    &format!(
+                        "method={} sent_here={} status=unresolved: the editor answered after the \
+                         server stopped waiting and could not say what happened; the transaction \
+                         stays quarantined",
+                        late.method, late.sent_here
+                    ),
+                )?;
+                return Ok(LateSettlement::Ignored(
+                    "the editor could not say what happened",
+                ));
+            }
+        };
+        self.store.audit(
+            transaction_id,
+            "late_answer_settlement",
+            &format!(
+                "method={} sent_here={} status={} settles={}",
+                late.method,
+                late.sent_here,
+                late.status.as_str(),
+                phase.as_str()
+            ),
+        )?;
+        self.store
+            .repair_transition(transaction_id, phase, Some(proof), reason, outcome)?;
+        Ok(LateSettlement::Settled(phase))
     }
 
     /// Which boundaries have a real implementation compiled in. Exposed so
@@ -912,6 +1152,7 @@ impl EffectGateway {
                     Some(error.to_string()),
                     Some(TerminalOutcome::failed(ErrorKind::Unavailable)),
                 )?;
+                self.release_held_late_answer(boundary, &record.transaction_id);
                 return Err(EffectError::Boundary(error.to_string()));
             }
         };
@@ -979,6 +1220,7 @@ impl EffectGateway {
                 )?;
             }
         }
+        self.release_held_late_answer(boundary, &record.transaction_id);
         Ok(outcome)
     }
 
@@ -1408,6 +1650,11 @@ impl EffectGateway {
                     DerivedDisposition::PostState => {
                         (Phase::CommittedFsynced, Conclusion::ProvenPostState)
                     }
+                    // The files are final, and accepted as the result, but
+                    // neither recorded state is proven.
+                    DerivedDisposition::WriterEnded => {
+                        (Phase::CommittedFsynced, Conclusion::Quarantine)
+                    }
                 };
                 (
                     phase,
@@ -1418,7 +1665,7 @@ impl EffectGateway {
                         derived.disposition.as_str(),
                         record.effect_kind.as_str()
                     ),
-                    Some(derived.proof),
+                    Some((derived.disposition, derived.proof)),
                 )
             }
             (operation, None) => {
@@ -1435,18 +1682,29 @@ impl EffectGateway {
             &format!(
                 "operation={} conclusion={} reason={reason}",
                 permit.operation().as_str(),
-                conclusion.as_str()
+                match &proof {
+                    Some((DerivedDisposition::WriterEnded, _)) => "writer_ended",
+                    _ => conclusion.as_str(),
+                }
             ),
         )?;
 
-        if let Some(proof) = proof {
+        if let Some((disposition, proof)) = proof {
+            // A writer-ended settlement commits what the files hold without
+            // proving it is the effect's result, so a replay of the request
+            // still answers that its outcome is unknown.
+            let terminal = if disposition == DerivedDisposition::WriterEnded {
+                TerminalOutcome::failed(ErrorKind::Uncertain)
+            } else {
+                terminal_outcome_for_repair(phase)
+            };
             if record.phase == Phase::Quarantined {
                 self.store.repair_transition(
                     &record.transaction_id,
                     phase,
                     Some(proof),
                     reason.clone(),
-                    terminal_outcome_for_repair(phase),
+                    terminal,
                 )?;
             } else if record.phase != phase {
                 // The Todo 14 case-4 ambiguous-survivor exception: the record is
@@ -1457,7 +1715,7 @@ impl EffectGateway {
                     phase,
                     Some(proof),
                     Some(reason.clone()),
-                    Some(terminal_outcome_for_repair(phase)),
+                    Some(terminal),
                 )?;
             }
         }
@@ -1489,6 +1747,11 @@ impl EffectGateway {
             RepairOperation::Compensate | RepairOperation::Terminate => {
                 DerivedDisposition::PreState
             }
+            RepairOperation::AcknowledgeSafeState
+                if derived.disposition == DerivedDisposition::WriterEnded =>
+            {
+                DerivedDisposition::WriterEnded
+            }
             RepairOperation::AcknowledgeSafeState => DerivedDisposition::PostState,
             RepairOperation::Reconcile => return Ok(()),
         };
@@ -1508,6 +1771,9 @@ impl EffectGateway {
                 record.effect_kind.as_str()
             )));
         }
+        if derived.disposition == DerivedDisposition::WriterEnded {
+            return check_writer_ended(record, &derived.proof);
+        }
         if record.effect_kind != EffectKind::File {
             return Ok(());
         }
@@ -1516,6 +1782,7 @@ impl EffectGateway {
         let recorded = match derived.disposition {
             DerivedDisposition::PreState => &record.pre_hashes,
             DerivedDisposition::PostState => &record.intended_post_hashes,
+            DerivedDisposition::WriterEnded => return Ok(()),
         };
         let outcome = verify_file_proof(self.proof_source.as_ref(), recorded);
         if outcome != ProofOutcome::Matches {
@@ -1642,6 +1909,11 @@ pub(crate) enum DerivedDisposition {
     PreState,
     /// The recorded intended post-state holds.
     PostState,
+    /// Neither state is proven, but the only process that could write for
+    /// the transaction has ended: the editor an unanswered mutation was sent
+    /// to. The files it left are accepted as the result, which stays
+    /// uncertain.
+    WriterEnded,
 }
 
 impl DerivedDisposition {
@@ -1649,7 +1921,70 @@ impl DerivedDisposition {
         match self {
             Self::PreState => "pre-state",
             Self::PostState => "post-state",
+            Self::WriterEnded => "writer-ended",
         }
+    }
+}
+
+/// Why a writer-ended settlement is refused for a transaction that recorded
+/// no editor process.
+pub(crate) const NO_EDITOR_PROCESS: &str = "this transaction recorded no editor process (the \
+     editor's process could not be proven when it connected, the editor answered without \
+     settling the request, or the record predates editor process records), so the end of its \
+     editor cannot be proven";
+
+/// The gateway's own derivation for a writer-ended settlement: the
+/// transaction is a live-editor mutation that was sent and never answered,
+/// it recorded the editor process it was sent to, the re-derived proof names
+/// that same process, and the process has ended now.
+fn check_writer_ended(record: &TransactionRecord, derived: &TypedProof) -> Result<(), EffectError> {
+    let refuse = |message: String| Err(EffectError::Unauthorized(message));
+    if record.effect_kind != EffectKind::EditorRuntime {
+        return refuse(format!(
+            "a writer-ended proof settles only an editor_runtime transaction, not {}",
+            record.effect_kind.as_str()
+        ));
+    }
+    if record.effect_boundary != EffectBoundaryKind::Editor {
+        return refuse(
+            "a writer-ended proof settles only a mutation sent to the live editor, not a \
+             game-session, debug or managed-session command"
+                .to_owned(),
+        );
+    }
+    let Some(TypedProof::EditorRuntime {
+        bridge_reachable: false,
+        receipt_transaction_id: None,
+        receipt_action_id: None,
+        live_state_probe: None,
+        editor_process,
+    }) = &record.proof
+    else {
+        return refuse(
+            "the editor answered this request, so its answer settles it, not the end of its \
+             editor"
+                .to_owned(),
+        );
+    };
+    let Some(editor) = editor_process else {
+        return refuse(NO_EDITOR_PROCESS.to_owned());
+    };
+    if record.proof.as_ref() != Some(derived) {
+        return refuse(
+            "the re-derived proof does not name the editor process this transaction recorded"
+                .to_owned(),
+        );
+    }
+    match crate::editor::process::has_ended(editor) {
+        Ok(true) => Ok(()),
+        Ok(false) => refuse(format!(
+            "the editor that ran this request is still running (pid {}): wait for it to \
+             answer, or close it",
+            editor.pid
+        )),
+        Err(why) => refuse(format!(
+            "whether the editor that ran this request has ended cannot be observed: {why}"
+        )),
     }
 }
 
