@@ -293,11 +293,11 @@ proxy reaches that code only when the operator says so. The
 
 ## Verified on
 
-Godot 4.4.1, 4.5.1, 4.6.1 and 4.7.1, official Linux x86_64 builds, headless editors, by
+Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, headless editors, by
 `crates/godot-mcp-server/tests/live_editor_commands.rs` through the production MCP server: calls
 refused before the editor is asked, a command that answers its value and the files it wrote, one
 declared with `mutates: false` that wrote one, one that reports an error, a provider that does not
 compile, a retry that replays, a call that outlasts its deadline and is finished by the editor,
-and the add-on's own cases
+whose answer then settles it and reopens writes, and the add-on's own cases
 (`crates/godot-mcp-bridge/tests/fixtures/addon/project_commands_cases.gd`). `make godot-test` runs
 the suite against each locked Linux editor. Windows and macOS editors: not measured.
