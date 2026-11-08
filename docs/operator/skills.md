@@ -8,10 +8,10 @@ project, start no server and need no Godot build.
 
 | Skill | The agent loads it when | It covers |
 | --- | --- | --- |
-| `godot-mcp` | reading or changing a Godot project through godot-mcp | what the server is made of, reading before writing, scenes the editor has open, recipes, `call_method` for an AnimationTree state machine, a TileMapLayer and a Theme, typed values, and what each answer means |
+| `godot-mcp` | reading or changing a Godot project through godot-mcp | what the server is made of, finding script errors, reading before writing, connecting signals, scenes the editor has open, recipes, `call_method` for an AnimationTree state machine, a TileMapLayer and a Theme, typed values, and what each answer means |
 | `godot-mcp-export` | exporting, building or packaging the game | presets and export templates, a project export, a pack or a patch, following an export, reading its outputs, cancelling, and installing an APK on an Android device |
-| `godot-mcp-playtest` | running, playing or testing the game | starting a session, waiting, input, reading the running game, a `test.scenario.run` scenario, captures and image comparisons, game speed, recording and replay, and stopping the session |
-| `godot-mcp-setup` | installing, connecting or diagnosing godot-mcp, before any of its tools exists | the installer and `self-check`, client configuration, profiles, the Godot build, the editor add-on, these skills, the HTTP modes and reading `health.get` |
+| `godot-mcp-playtest` | running, playing or testing the game | starting a session, waiting, input, reading the running game, a `test.scenario.run` scenario, captures and image comparisons, game speed, recording and replay, debugging a game that fails, and stopping the session |
+| `godot-mcp-setup` | installing, connecting or diagnosing godot-mcp, before any of its tools exists | the installer and `self-check`, client configuration, profiles, the Godot build and what an export needs, the editor add-on, these skills, the HTTP modes and reading `health.get` |
 
 Each skill is one `SKILL.md` file, in English, with no scripts and no links to other files.
 The binary embeds them when it is built, so a `godot-mcp` binary always installs the skills

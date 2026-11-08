@@ -78,7 +78,7 @@ Claude Desktop、Cursor 和大多数客户端读取下面这种形状的 JSON：
 }
 ```
 
-如果客户端启动进程时不带你 shell 里的 PATH，就把 `command` 写成启动器的完整路径（Linux 与 macOS 安装脚本装在 `~/.local/bin/godot-mcp`）。
+如果客户端启动进程时不带你 shell 里的 PATH，就把 `command` 写成启动器的完整路径，即 `command -v godot-mcp` 输出的路径：Linux 与 macOS 安装脚本把启动器装在你主目录下的 `.local/bin/godot-mcp`。路径要完整写出，因为客户端不经过 shell 运行 `command`，不会展开其中的 `~`。
 
 ## 环境变量
 

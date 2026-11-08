@@ -195,11 +195,14 @@ the connected editor, the server sends the batch there instead of to the headles
 
 A dry run always uses the headless helper.
 
-Every headless writer — the `file.*`, `script.*`, `asset.*` and settings tools, and the headless
-scene and resource tools — refuses with `conflict` a path the connected editor holds: any open
-scene, `project.godot`, and an open script whose editor buffer differs from its file or cannot
-be compared. Close or save a scene in the editor, or change it through `editor.scene.edit` or
+Every headless writer — the `file.*`, `script.*` and `asset.*` tools, and the headless scene and
+resource tools — refuses with `conflict` a path the connected editor holds: any open scene,
+`project.godot`, and an open script whose editor buffer differs from its file or cannot be
+compared. Close or save a scene in the editor, or change it through `editor.scene.edit` or
 `scene.batch.apply`; after a script was changed on disk, run `editor.filesystem.scan`.
+`project.settings.patch` is not refused: the editor carries it out, as
+[The project file and caches belong to the editor](#the-project-file-and-caches-belong-to-the-editor)
+describes.
 
 ## Saving
 

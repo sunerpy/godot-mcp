@@ -1,6 +1,6 @@
 ---
 name: godot-mcp-playtest
-description: "Run, play and test a Godot 4 game through a connected godot-mcp MCP server. Use when the game has to be started, played, watched or checked, when input or button presses are sent to it, when its nodes, properties or UI text are read while it runs, when screenshots, recordings or image comparisons are taken, when a repeatable test scenario is written, or when game speed is changed, the game is stepped by physics frames or input is recorded and replayed. Covers project.run.start in a window or headless, runtime.wait, synthetic input and runtime.ui.press, runtime.properties.get, test.scenario.run, captures and runtime.image.compare, and always ending with project.run.stop. Changing the project is the godot-mcp skill; installing and connecting the server is the godot-mcp-setup skill."
+description: "Run, play and test a Godot 4 game through a connected godot-mcp MCP server. Use when the game has to be started, played, watched or checked, when input or button presses are sent to it, when its nodes, properties or UI text are read while it runs, when screenshots, recordings or image comparisons are taken, when a repeatable test scenario is written, when game speed is changed, the game is stepped by physics frames or input is recorded and replayed, or to debug a crash or a script error. Covers project.run.start in a window or headless, runtime.wait, synthetic input and runtime.ui.press, runtime.properties.get, test.scenario.run, captures and runtime.image.compare, script.check, project.run and debug.command, and always ending with project.run.stop. Changing the project is the godot-mcp skill; exporting it is the godot-mcp-export skill; installing and connecting the server is the godot-mcp-setup skill."
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the runtime or full profile, and a Godot editor build the server can find. Screenshots, recordings and image comparisons need a windowed session, so the server needs a display."
 metadata:
@@ -55,7 +55,8 @@ and shows the score in the HUD label `HUD/Score`. The input map has the actions 
   `window` when the server has a display. Screenshots, recordings and image comparisons need a
   window; a headless session's root viewport is 64 by 64 pixels.
 - `lifetimeSeconds` ends the session at the latest after that long (default 3600, at most
-  14400). At most four sessions, exports included, run at once.
+  14400). At most four managed sessions run at once, games, editor sessions and exports
+  together, and at most one of them is an export.
 - The start answers once the probe has connected. `project.run.status` reports a session's
   state, or every session's without `session`. `project.run.logs` reads the game's stdout or
   stderr one page at a time, also after it ended.
@@ -94,7 +95,9 @@ comparison that can never hold, an `int` against a string, is refused with `inva
 ## Input
 
 - Prefer the game's input actions to raw keys: `input.action.send` with an `action` of the
-  project's input map. `project.settings.get` lists the input map.
+  project's input map. `project.settings.get` lists the actions `project.godot` declares; Godot's
+  built-in `ui_*` actions, such as `ui_accept`, work without being listed. An action the running
+  game does not have is `not_found`.
 - `state` is `tap` by default: press, hold `holdMs` (default 500), release. `press` holds until
   a `release`, until `holdMs` passes, or until the session stops; `release` lets go.
 - `input.sequence.send` sends up to 64 steps, with `wait` steps of `ms` between them, at most
@@ -226,6 +229,33 @@ a reference image of the project:
 { "session": "run_0123456789abcdef0123456789abcdef", "frames": 10, "idempotencyId": "step-1" }
 ```
 
+## When the game fails
+
+- `project.run.status` reports how a session's game ended, under `exit`: its `exit_code` or the
+  `signal` that ended it. `project.run.logs` reads its `stdout` and `stderr`, also after it ended;
+  Godot prints its errors, warnings and script errors to `stderr`.
+- `script.check` compiles one script with the engine's own compiler and answers its diagnostics;
+  `gdscript.diagnostics.get` and `project.validate` check the scripts and the project statically.
+- `project.run` runs the main scene, or `main_scene`, headless by default, until it exits or
+  `deadline_ms` passes, without a session. It answers a `classification`, such as `passed`,
+  `failed` or `timed_out`, with the exit facts, the engine `diagnostics` it parsed and bounded
+  `stdout` and `stderr`. A game that keeps running ends `timed_out`.
+- To stop at a breakpoint, `editor.session.start` starts a headless editor with Godot's language
+  server and debug adapter, and `debug.command` sends it one command at a time: `breakpoints` for
+  a script's lines, `launch` to run the main scene under the debugger, `stopped` to wait for a
+  stop, then `stack`, `scopes` and `variables`, and `continue`, `pause` or `stop`. There is no
+  stepping and no expression evaluation, and a breakpoint in a `@tool` script is refused. The
+  game it runs is not a managed session, so the runtime tools do not reach it.
+  `editor.session.stop` ends the editor and its game.
+
+```json tool=debug.command
+{
+  "session": "editor_0123456789abcdef0123456789abcdef",
+  "command": { "breakpoints": { "path": "res://player.gd", "lines": [42] } },
+  "idempotencyId": "break-player-1"
+}
+```
+
 ## Always stop the session
 
 Call `project.run.stop` when you are done, and after a failure too. It releases every held
@@ -244,7 +274,10 @@ check `project.run.status` without `session` for sessions you started.
 | --- | --- | --- |
 | `unavailable` | no session runs, the session renders nothing for a capture, or the button lies outside the root viewport | start a session, a windowed one for captures; `health.get` names the cause |
 | `unsupported` | the session's probe does not implement the method, as a probe of an older server does, or the button is in a `SubViewport` | stop the session and start a new one; for a `SubViewport`, use input instead |
-| `uncertain` | whether a step or command did what it asked cannot be decided: a wait ran out, an answer was lost, a time scale reads back otherwise | do not resend it; read the game's state first |
+| `uncertain` | whether a step or command did what it asked cannot be decided: a scenario's `wait` step ran out (`runtime.wait` answers `outcome: timeout` instead), an answer was lost, a time scale reads back otherwise | do not resend it; read the game's state first |
+| `timeout` | a call ran past its deadline, so whether it took effect is not proven | as for `uncertain`: do not resend it; read the game's state first |
+| `cancelled` | the request was cancelled before it started; nothing happened | send it again if it is still wanted |
+| `internal` | a fault in the server itself | stop the session and tell the user, with the message |
 | `conflict` | a second recording, a button text several buttons show, a step while the game paused itself, or an `idempotencyId` reused with other arguments | correct the call; use a new id for a new action |
 | `not_found` | the node or property does not exist | read `runtime.tree.get` and the node's properties |
 | `invalid_input` | a comparison that cannot hold, or a disabled or invisible button | correct the call from the message |
