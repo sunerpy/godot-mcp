@@ -64,16 +64,20 @@ pub enum ContractVersion {
     #[serde(rename = "0.5.0")]
     V0_5_0,
     /// Commands a project declares, listed and called through the editor.
-    #[default]
     #[serde(rename = "0.6.0")]
     V0_6_0,
+    /// Frame-level runtime control: stepping a game by physics frames, and
+    /// sampling and replaying input per physics frame.
+    #[default]
+    #[serde(rename = "0.7.0")]
+    V0_7_0,
 }
 
 impl ContractVersion {
     /// Current version marker.
     #[must_use]
     pub const fn current() -> Self {
-        Self::V0_6_0
+        Self::V0_7_0
     }
 
     /// Stable textual representation.
@@ -85,7 +89,8 @@ impl ContractVersion {
             Self::V0_3_0 => "0.3.0",
             Self::V0_4_0 => "0.4.0",
             Self::V0_5_0 => "0.5.0",
-            Self::V0_6_0 => CONTRACT_VERSION,
+            Self::V0_6_0 => "0.6.0",
+            Self::V0_7_0 => CONTRACT_VERSION,
         }
     }
 }

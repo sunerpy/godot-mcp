@@ -2009,9 +2009,10 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         "Sample the running game",
         "Sample named properties of running nodes (or the Engine singleton's) and named \
          performance monitors every `intervalMs` for `durationMs` (at most 10 s and 600 \
-         samples): each series of values, every sample's time, frames and pause and focus \
-         state, and the minimum, maximum, mean and last of each numeric series. Large values \
-         and strings over 256 characters are not sampled. Changes nothing in the game.",
+         samples), or with `cadence` physics_frame once at the start of every physics frame: \
+         each series of values, every sample's time, frames and pause and focus state, and the \
+         minimum, maximum, mean and last of each numeric series. Large values and strings over \
+         256 characters are not sampled. Changes nothing in the game.",
     )),
     runtime_command(
         SessionOperation::ActionSend.key(),
@@ -2064,10 +2065,10 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         SessionOperation::InputRecordingStop.key(),
         "input.recording.stop",
         "Stop recording input",
-        "Stop the managed game session's input recording and answer every event it kept, in \
-         the form input.replay takes, with how many the server injected and how many came from \
-         elsewhere and why the recording ended. The recording is also kept as a JSON artifact, \
-         whose opaque URI is answered.",
+        "Stop the managed game session's input recording and answer every event it kept, with \
+         its time and its physics `frame` from the start, in the form input.replay takes, with \
+         how many the server injected and how many came from elsewhere and why the recording \
+         ended. The recording is also kept as a JSON artifact, whose opaque URI is answered.",
         INPUT,
     )),
     since_0_4(runtime_command(
@@ -2075,11 +2076,13 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
         "input.replay",
         "Replay recorded input",
         "Deliver input `events` — as input.recording.stop answers them, or written by hand — \
-         to a managed game session again at their times from now, for at most 30 s. Everything \
-         the replay pressed and still holds is released when it ends or is cancelled, when the \
-         session stops and when the probe loses the server. Other requests to the session wait \
-         while it runs; cancelling the call ends it at the next frame. Answers how many events \
-         were sent or skipped and how late the latest was.",
+         to a managed game session again at their times from now, or with `schedule` \
+         physics_frame in the physics `frame` each names, counted from the next one, for at \
+         most 30 s. Everything the replay pressed and still holds is released when it ends or \
+         is cancelled, when the session stops and when the probe loses the server. Other \
+         requests to the session wait while it runs; cancelling the call ends it at the next \
+         frame. Answers how many events were sent or skipped, how late the latest was and the \
+         physics frame each event reached the game in.",
         INPUT,
     )),
     since_0_4(runtime_command(
@@ -2160,6 +2163,23 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          ends. A read-back that differs from the request is answered as uncertain.",
         GAME_STATE,
     )),
+    ToolDescriptor {
+        introduced_in: ContractVersion::V0_7_0,
+        ..runtime_command(
+            SessionOperation::FramesStep.key(),
+            "runtime.frames.step",
+            "Step the game by physics frames",
+            "Advance the managed game session by exactly `frames` physics frames (0 to 600), \
+             then hold it paused (`then` hold, the default) or let it run (`then` resume): the \
+             probe pauses the scene tree at the start of the physics frame after the last, \
+             before the game's nodes process it. `frames` 0 holds a running game at its next \
+             physics frame or, with resume, releases a hold. Refused as a conflict when the game \
+             paused itself; nodes that process while paused keep running. Answers the frames \
+             advanced, the first and last physics frame, whether the game is held and why the \
+             step ended.",
+            GAME_STATE,
+        )
+    },
     since_0_4(runtime_command(
         SessionOperation::ImageCompare.key(),
         "runtime.image.compare",
@@ -2740,13 +2760,14 @@ mod tests {
 
     /// A tool the frozen contract 0.2 lists was introduced by 0.2 or earlier,
     /// one the frozen contract 0.3 lists by 0.3 or earlier, one the frozen
-    /// contract 0.4 lists by 0.4 and one the frozen contract 0.5 lists by 0.5;
-    /// every other tool was introduced by contract 0.6.
+    /// contract 0.4 lists by 0.4, one the frozen contract 0.5 lists by 0.5 and
+    /// one the frozen contract 0.6 lists by 0.6; every other tool was
+    /// introduced by contract 0.7.
     #[test]
     fn every_tool_says_which_contract_introduced_it() {
         use crate::manifests::{
             historical_manifest_v0_2, historical_manifest_v0_3, historical_manifest_v0_4,
-            historical_manifest_v0_5,
+            historical_manifest_v0_5, historical_manifest_v0_6,
         };
 
         let listed = |manifest: crate::manifests::ProfileManifest| -> BTreeSet<String> {
@@ -2760,6 +2781,7 @@ mod tests {
         let v0_3 = listed(historical_manifest_v0_3(CapabilityProfile::Full));
         let v0_4 = listed(historical_manifest_v0_4(CapabilityProfile::Full));
         let v0_5 = listed(historical_manifest_v0_5(CapabilityProfile::Full));
+        let v0_6 = listed(historical_manifest_v0_6(CapabilityProfile::Full));
         for tool in TOOL_CATALOG {
             let expected = if v0_2.contains(tool.name) {
                 tool.introduced_in
@@ -2769,8 +2791,10 @@ mod tests {
                 ContractVersion::V0_4_0
             } else if v0_5.contains(tool.name) {
                 ContractVersion::V0_5_0
-            } else {
+            } else if v0_6.contains(tool.name) {
                 ContractVersion::V0_6_0
+            } else {
+                ContractVersion::V0_7_0
             };
             assert!(
                 tool.introduced_in <= ContractVersion::V0_2_0 || !v0_2.contains(tool.name),

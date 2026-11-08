@@ -30,6 +30,7 @@ use serde_json::{Map, Value, json};
 mod android;
 mod control;
 mod export;
+mod frames;
 mod scenario;
 
 use super::debug::{DebugManager, SESSION_STOP, file_uri};
@@ -191,6 +192,39 @@ fn invalid(message: impl Into<String>) -> OutcomeError {
     outcome_error(ErrorKind::InvalidInput, message)
 }
 
+/// The probe method that steps a game by physics frames. A probe that lists
+/// it also samples and replays per physics frame; one that predates it would
+/// sample and replay by time whatever it was asked, so a request for a
+/// physics-frame cadence is refused before it reaches such a probe.
+const FRAME_METHOD: &str = "runtime.frames.step";
+
+/// Whether a probe payload asks for a physics-frame cadence or schedule.
+fn per_physics_frame(payload: &Map<String, Value>) -> bool {
+    ["cadence", "schedule"]
+        .iter()
+        .any(|key| payload.get(*key).and_then(Value::as_str) == Some("physics_frame"))
+}
+
+/// Refuse a physics-frame cadence a connected probe cannot keep.
+fn frames_supported(
+    status: &crate::editor::bridge::BridgeStatus,
+    payload: &Map<String, Value>,
+) -> Result<(), OutcomeError> {
+    if per_physics_frame(payload)
+        && status.connected
+        && !status.methods.iter().any(|known| known == FRAME_METHOD)
+    {
+        return Err(outcome_error(
+            ErrorKind::Unsupported,
+            format!(
+                "the game session's runtime probe predates physics-frame cadences: it does not \
+                 implement {FRAME_METHOD}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// What each managed-session operation asks of its session, beside the
 /// catalog descriptor its operation serves.
 trait SessionCall: Copy {
@@ -220,6 +254,7 @@ impl SessionCall for SessionOperation {
             Self::UiPress => "runtime.ui.press",
             Self::PropertiesSet => "runtime.properties.set",
             Self::NodeMove => "runtime.node.move",
+            Self::FramesStep => FRAME_METHOD,
             Self::ScriptRun => godot_mcp_bridge::runtime::SCRIPT_RUN_METHOD,
             Self::ScreenshotCapture => "runtime.capture.screenshot",
             Self::RecordingCapture => "runtime.capture.recording",
@@ -327,6 +362,7 @@ impl SessionCall for SessionOperation {
             Self::TimeScaleSet | Self::ImageCompare | Self::ScenarioRun => {
                 scenario::properties(self, &session)
             }
+            Self::FramesStep => frames::properties(&session),
             Self::ScriptRun => {
                 let mut properties =
                     crate::live_script::properties(crate::live_script::Place::Game);
@@ -1107,6 +1143,7 @@ impl SessionHandler {
         match self.operation {
             operation if control::handles(operation) => {
                 let (built, extra) = control::payload(operation, arguments)?;
+                frames_supported(&bridge.status(), &built)?;
                 payload.extend(built);
                 timeout += extra;
             }
@@ -1591,6 +1628,12 @@ impl SessionHandler {
             }
             operation if control::handles(operation) => {
                 let (built, extra) = control::payload(operation, arguments)?;
+                frames_supported(&self.sessions().running_game(&session)?.status(), &built)?;
+                payload.extend(built);
+                timeout += extra;
+            }
+            operation if frames::handles(operation) => {
+                let (built, extra) = frames::payload(arguments)?;
                 payload.extend(built);
                 timeout += extra;
             }

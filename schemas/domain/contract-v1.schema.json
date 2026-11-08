@@ -405,6 +405,11 @@
           "description": "Commands a project declares, listed and called through the editor.",
           "type": "string",
           "const": "0.6.0"
+        },
+        {
+          "description": "Frame-level runtime control: stepping a game by physics frames, and\nsampling and replaying input per physics frame.",
+          "type": "string",
+          "const": "0.7.0"
         }
       ]
     },

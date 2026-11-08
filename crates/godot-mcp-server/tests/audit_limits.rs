@@ -80,14 +80,15 @@ const PROFILES: [CapabilityProfile; 4] = [
 /// contract 0.3 adds the live editor's tools to it, and contract 0.4 adds
 /// the script runners, the engine reads, the Android device tools, game
 /// speed, image comparison, test scenarios and the other 0.4 tools,
-/// contract 0.5 adds `scene.recipe.apply` to the write-capable profiles, and
+/// contract 0.5 adds `scene.recipe.apply` to the write-capable profiles,
 /// contract 0.6 adds `editor.commands.list` and `editor.commands.call` to the
-/// editor profiles.
+/// editor profiles, and contract 0.7 adds `runtime.frames.step` to the runtime
+/// profiles.
 const PROFILE_TOOL_COUNTS: [(CapabilityProfile, usize); 4] = [
     (CapabilityProfile::Core, 22),
     (CapabilityProfile::Editor, 84),
-    (CapabilityProfile::Runtime, 74),
-    (CapabilityProfile::Full, 132),
+    (CapabilityProfile::Runtime, 75),
+    (CapabilityProfile::Full, 133),
 ];
 
 /// Every shape that would denote a code-execution outcome. The enumeration

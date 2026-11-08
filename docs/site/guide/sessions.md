@@ -79,7 +79,7 @@ which events the server sent and which came from elsewhere, and keep the recordi
 `input.replay` sends recorded events again at their original times and releases whatever it still
 holds when it ends.
 
-The probe runs one request at a time, so a long wait, sample, walk or replay holds back the
+The probe runs one request at a time, so a long wait, sample, walk, replay or step holds back the
 session's other requests, and commands also wait for one another across the project. Cancel the
 call to end it at once; `project.run.stop` ends whatever runs before it stops the game.
 
@@ -90,6 +90,31 @@ line (from Godot 4.5.1 on), and every project file that differs afterwards. Godo
 script part way through: when the server stops waiting — after `deadline_ms` and two seconds
 more, or when the call is cancelled — the answer is `uncertain` and the code goes on in the game.
 Stopping the session ends it.
+
+## Step frame by frame
+
+`runtime.frames.step` advances the game by exactly `frames` physics frames, at most 600, and then
+holds it paused, or with `then: resume` lets it run on. `frames: 0` holds a running game at its
+next physics frame, and with `resume` releases a hold. The probe holds the game with the game's
+own pause, set at the start of a physics frame before your nodes process it, so the answer's
+`first_frame` and `last_frame` are the physics frames your nodes processed, and the physics server
+stepped once in each of them. While the game is held you can read it, sample it, write its
+properties and capture it; stopping the session, or the game losing its server, releases the hold.
+
+What your game keeps running while it is paused also runs while it is held: nodes whose process
+mode is always, handlers of the SceneTree's `physics_frame` signal, and SceneTreeTimers, which
+process always unless they are created otherwise. The server never changes your game's own pause:
+a step is refused with `conflict` while the game has paused itself, and a step during which the
+game pauses or unpauses the tree ends there with the outcome `interfered`.
+
+`runtime.sample` with `cadence: physics_frame` takes one sample at the start of every physics
+frame, so no frame goes unseen when several run in one idle frame. `input.replay` with
+`schedule: physics_frame` delivers each event so that the game sees it in the physics frame its
+`frame` names: your `_input` receives it at the end of the frame before, and your
+`_physics_process` sees it pressed, with `Input.is_action_just_pressed()` true, in that frame. A
+recording gives every event its `frame`, so it replays by frame as it is.
+
+godot-mcp 0.6.0 and earlier cannot step a game, and sample and replay by time only.
 
 ## Capture
 

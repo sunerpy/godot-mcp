@@ -5,6 +5,10 @@ config_version=5
 config/name="runtime-control"
 run/main_scene="res://main.tscn"
 
+[autoload]
+
+FrameEarly="*res://early.gd"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

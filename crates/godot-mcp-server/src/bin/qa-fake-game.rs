@@ -42,8 +42,10 @@
 //!
 //! `<project>/fake-game.conf` selects the behaviour: `probe` (default) serves
 //! until `runtime.session.stop`, then exits 0; `stubborn` answers the stop but
-//! keeps running; `old-probe` describes only the methods of the 0.3.0 probe;
-//! `lossy` closes the bridge connection, unanswered, on a wait or a replay;
+//! keeps running; `old-probe` describes only the methods of the 0.3.0 probe,
+//! and `probe-0.4` those of the 0.4.0 probe, which steps no physics frames;
+//! `lossy` closes the bridge connection, unanswered, on a wait, a replay or a
+//! step;
 //! `long-replay` runs a replay until the server withdraws it, or 10 s, and
 //! records the same in `<project>/fake-game.replay`;
 //! `scenario` describes the session as one that renders and answers a
@@ -220,7 +222,13 @@ fn control(
         }
     };
     let completed = observed(
-        json!({ "outcome": "completed", "events_sent": 2, "events_skipped": 0, "events_planned": 2, "elapsed_ms": 120, "scheduled_ms": 100, "max_lag_ms": 4, "released": [], "held": [] }),
+        json!({
+            "outcome": "completed", "schedule": "time", "events_sent": 2, "events_skipped": 0,
+            "events_planned": 2, "elapsed_ms": 120, "scheduled_ms": 100, "max_lag_ms": 4,
+            "first_physics_frame": 71, "scheduled_frames": null, "max_lag_frames": null,
+            "deliveries": [{ "index": 0, "physics_frame": 71 }, { "index": 1, "physics_frame": 77 }],
+            "released": [], "held": []
+        }),
         40,
     );
     let replay = if lossy {
@@ -238,7 +246,20 @@ fn control(
     } else {
         FakeAnswer::Payload(completed)
     };
+    let step = if lossy {
+        FakeAnswer::Disconnect
+    } else {
+        FakeAnswer::Payload(observed(
+            json!({
+                "outcome": "completed", "frames_requested": 3, "frames_advanced": 3,
+                "first_frame": 101, "last_frame": 103, "then": "hold", "held": true,
+                "paused": true, "elapsed_ms": 52, "interference": null
+            }),
+            45,
+        ))
+    };
     script
+        .answering("runtime.frames.step", step)
         .answering(
             "runtime.properties.batch",
             FakeAnswer::Payload(observed(
@@ -377,7 +398,7 @@ fn control(
         .answering(
             "runtime.input.record.start",
             FakeAnswer::Payload(observed(
-                json!({ "recording_id": "input-recording-1", "started_ticks_ms": 2000, "max_events": 3000, "max_duration_ms": 30000 }),
+                json!({ "recording_id": "input-recording-1", "started_ticks_ms": 2000, "first_physics_frame": 61, "max_events": 3000, "max_duration_ms": 30000 }),
                 26,
             )),
         )
@@ -387,14 +408,15 @@ fn control(
                 json!({
                     "recording_id": "input-recording-1",
                     "started_ticks_ms": 2000,
+                    "first_physics_frame": 61,
                     "duration_ms": 400,
                     "ended_by": "stopped",
                     "max_events": 3000,
                     "max_duration_ms": 30000,
                     "dropped": 0,
                     "events": [
-                        { "t_ms": 10, "kind": "key", "key": "D", "physical": "D", "unicode": 0, "pressed": true, "echo": false, "modifiers": { "shift": false, "ctrl": false, "alt": false, "meta": false }, "source": "probe", "actions": ["move_right"] },
-                        { "t_ms": 260, "kind": "key", "key": "D", "physical": "D", "unicode": 0, "pressed": false, "echo": false, "modifiers": { "shift": false, "ctrl": false, "alt": false, "meta": false }, "source": "external", "actions": ["move_right"] }
+                        { "t_ms": 10, "frame": 0, "kind": "key", "key": "D", "physical": "D", "unicode": 0, "pressed": true, "echo": false, "modifiers": { "shift": false, "ctrl": false, "alt": false, "meta": false }, "source": "probe", "actions": ["move_right"] },
+                        { "t_ms": 260, "frame": 15, "kind": "key", "key": "D", "physical": "D", "unicode": 0, "pressed": false, "echo": false, "modifiers": { "shift": false, "ctrl": false, "alt": false, "meta": false }, "source": "external", "actions": ["move_right"] }
                     ],
                     "counts": { "total": 2, "probe": 1, "external": 1 }
                 }),
@@ -413,10 +435,15 @@ fn script(stop: FakeAnswer, project: &std::path::Path, behaviour: &str) -> FakeP
     let frame = json!({ "byte_length": png.len(), "sha256": digest });
     // The probe implements the script method whether or not the server
     // offers it; the server sends it only when its operator allowed scripts.
-    let methods = if behaviour == "old-probe" {
-        PROBE_0_3_0_METHODS
-    } else {
-        godot_mcp_bridge::runtime::METHODS_WITH_SCRIPTS
+    let probe_0_4: Vec<&str> = godot_mcp_bridge::runtime::METHODS_WITH_SCRIPTS
+        .iter()
+        .copied()
+        .filter(|method| *method != "runtime.frames.step")
+        .collect();
+    let methods = match behaviour {
+        "old-probe" => PROBE_0_3_0_METHODS,
+        "probe-0.4" => probe_0_4.as_slice(),
+        _ => godot_mcp_bridge::runtime::METHODS_WITH_SCRIPTS,
     };
     // A stand-in that renders nothing says so, as a headless game does; the
     // `scenario` behaviour describes one that renders, for the image tools.

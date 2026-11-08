@@ -1,12 +1,17 @@
 //! Typed control and observation of a running game: property writes and
-//! batch reads, waits, timed samples, node searches, navigation paths and
-//! moves, button presses, and input recording and replay.
+//! batch reads, waits, timed and per-physics-frame samples, node searches,
+//! navigation paths and moves, button presses, and input recording and replay
+//! by time or by physics frame.
 //!
 //! Each tool's advertised schema and the check here give the same verdict on
-//! the same arguments: every constraint the check enforces is one the schema
-//! states, so a call the schema accepts is one the server sends. The probe
-//! applies the semantic rules — whether a node or property exists, whether a
-//! value converts without loss — and answers why it refuses one.
+//! the same arguments: every constraint the check enforces on a field is one
+//! the schema states. A rule that relates two fields is the check's alone, as
+//! no tool schema states a rule across its fields at its top level: a sample
+//! refuses `intervalMs` beside the `physics_frame` cadence, and a replay
+//! refuses an event without the `t_ms` or `frame` its schedule delivers by,
+//! both with `invalid_input` before anything is sent. The probe applies the
+//! semantic rules — whether a node or property exists, whether a value
+//! converts without loss — and answers why it refuses one.
 
 use std::time::Duration;
 
@@ -55,6 +60,13 @@ const MAX_PRESS_HOLD_MS: u64 = 5_000;
 /// either lasts.
 const MAX_EVENTS: usize = 3_000;
 const MAX_INPUT_MS: u64 = 30_000;
+/// The latest physics frame a replayed event names: 30 s of physics frames at
+/// the fastest rate a session can set (`physics_ticks_per_second` 1000). The
+/// probe also refuses a frame later than 30 s at the game's own rate.
+const MAX_INPUT_FRAMES: u64 = 30_000;
+/// How a sample is paced, and how a replay schedules its events.
+const CADENCES: &[&str] = &["interval", "physics_frame"];
+const SCHEDULES: &[&str] = &["time", "physics_frame"];
 /// The largest window coordinate a replayed mouse event names.
 const MAX_WINDOW_COORDINATE: f64 = 1.0e6;
 /// The navigation layer mask: 32 layers.
@@ -85,8 +97,8 @@ const MOUSE_BUTTONS: &[&str] = &[
     "xbutton2",
 ];
 
-/// Every replayable event kind, the fields it declares beside `t_ms`, `kind`,
-/// `source` and `actions`, and the fields it requires. The schema and
+/// Every replayable event kind, the fields it declares beside `t_ms`, `frame`,
+/// `kind`, `source` and `actions`, and the fields it requires. The schema and
 /// [`event`] both read it.
 const EVENT_KINDS: &[(&str, &[&str], &[&str])] = &[
     (
@@ -118,9 +130,11 @@ const EVENT_KINDS: &[(&str, &[&str], &[&str])] = &[
     ("other", &["class"], &[]),
 ];
 
-/// The fields every recorded event carries: its time, its kind, and what the
-/// recording observed about it, which a replay does not read.
-const EVENT_COMMON: &[&str] = &["t_ms", "kind", "source", "actions"];
+/// The fields every recorded event carries: its time and physics frame from
+/// the start, its kind, and what the recording observed about it, which a
+/// replay does not read. A replay reads the time or the frame its schedule
+/// names.
+const EVENT_COMMON: &[&str] = &["t_ms", "frame", "kind", "source", "actions"];
 
 /// Whether `operation` is one of this module's tools.
 pub(super) const fn handles(operation: SessionOperation) -> bool {
@@ -544,6 +558,7 @@ fn event_field_schema(kind: &str, field: &str) -> Value {
     let flag = json!({ "type": "boolean" });
     match (kind, field) {
         (_, "t_ms") => json!({ "type": "integer", "minimum": 0, "maximum": MAX_INPUT_MS }),
+        (_, "frame") => json!({ "type": "integer", "minimum": 0, "maximum": MAX_INPUT_FRAMES }),
         (_, "kind") => json!({ "const": kind }),
         (_, "source") => json!({ "type": "string", "enum": ["probe", "external"] }),
         (_, "actions") => json!({
@@ -587,7 +602,7 @@ fn events_schema() -> Value {
             for field in EVENT_COMMON.iter().chain(fields.iter()) {
                 properties.insert((*field).to_owned(), event_field_schema(kind, field));
             }
-            let mut needed = vec![json!("t_ms"), json!("kind")];
+            let mut needed = vec![json!("kind")];
             needed.extend(required.iter().map(|field| json!(field)));
             let mut variant = json!({
                 "type": "object",
@@ -607,10 +622,12 @@ fn events_schema() -> Value {
         "maxItems": MAX_EVENTS,
         "items": crate::schema::one_of(variants),
         "description": "Up to 3000 events, as input.recording.stop answers them: each its \
-                        `t_ms` from the replay's start (at most 30000; delivered in time \
-                        order), its `kind` and that kind's fields. `source` and `actions` are \
-                        read by no one; `other` events are skipped. A key names `key` or \
-                        `physical`."
+                        `t_ms` from the replay's start (at most 30000) or, under the \
+                        physics_frame schedule, its physics `frame` (at most 30000, and at most \
+                        30 s of the game's physics frames), its `kind` and that kind's fields. \
+                        The schedule's field is required and the other ignored; events are \
+                        delivered in its order. `source` and `actions` are read by no one; \
+                        `other` events are skipped. A key names `key` or `physical`."
     })
 }
 
@@ -665,6 +682,14 @@ pub(super) fn properties(
                     "minimum": 1,
                     "maximum": MAX_SAMPLES,
                     "description": "Stop after this many samples (default 600)."
+                },
+                "cadence": {
+                    "type": "string",
+                    "enum": CADENCES,
+                    "description": "interval (the default) samples every `intervalMs`; \
+                                    physics_frame samples once at the start of every physics \
+                                    frame, before the game's nodes process it, and takes no \
+                                    `intervalMs`."
                 }
             }),
             &["session", "series"],
@@ -754,7 +779,18 @@ pub(super) fn properties(
         ),
         SessionOperation::InputRecordingStop => (json!({ "session": session }), &["session"]),
         SessionOperation::InputReplay => (
-            json!({ "session": session, "events": events_schema() }),
+            json!({
+                "session": session,
+                "events": events_schema(),
+                "schedule": {
+                    "type": "string",
+                    "enum": SCHEDULES,
+                    "description": "time (the default) delivers each event at its `t_ms` from \
+                                    now; physics_frame delivers it so the game sees it in the \
+                                    physics frame its `frame` names, counted from the first \
+                                    physics frame after the replay starts."
+                }
+            }),
             &["session", "events"],
         ),
         other => unreachable!("{} is not a runtime control tool", other.tool_name()),
@@ -775,6 +811,22 @@ fn only(
     {
         Some(unknown) => Err(invalid(format!("{context} does not accept `{unknown}`"))),
         None => Ok(()),
+    }
+}
+
+/// The word `key` names from `words`, when it names one.
+fn one_of_words(
+    arguments: &Map<String, Value>,
+    key: &str,
+    words: &[&'static str],
+) -> Result<Option<&'static str>, OutcomeError> {
+    match arguments.get(key) {
+        None => Ok(None),
+        Some(value) => value
+            .as_str()
+            .and_then(|word| words.iter().copied().find(|known| *known == word))
+            .map(Some)
+            .ok_or_else(|| invalid(format!("`{key}` is {}", words.join(" or ")))),
     }
 }
 
@@ -1188,8 +1240,9 @@ fn press_target(arguments: &Map<String, Value>) -> Result<Map<String, Value>, Ou
     Ok(out)
 }
 
-/// One replayed event the schema's variant for its kind accepts.
-fn event(value: &Value, index: usize) -> Result<(u64, Value), OutcomeError> {
+/// One replayed event the schema's variant for its kind accepts, with its
+/// `t_ms` and its `frame` when it names them.
+fn event(value: &Value, index: usize) -> Result<(Option<u64>, Option<u64>, Value), OutcomeError> {
     let context = format!("event {index}");
     let entry = object(value, &context)?;
     let kind = entry
@@ -1214,8 +1267,8 @@ fn event(value: &Value, index: usize) -> Result<(u64, Value), OutcomeError> {
             "{context}: a {kind} event needs `{missing}`"
         )));
     }
-    let at = bounded_integer(entry, "t_ms", 0, MAX_INPUT_MS)?
-        .ok_or_else(|| invalid(format!("{context} needs `t_ms`")))?;
+    let at = bounded_integer(entry, "t_ms", 0, MAX_INPUT_MS)?;
+    let frame = bounded_integer(entry, "frame", 0, MAX_INPUT_FRAMES)?;
     if entry
         .get("source")
         .is_some_and(|source| !matches!(source.as_str(), Some("probe" | "external")))
@@ -1291,7 +1344,7 @@ fn event(value: &Value, index: usize) -> Result<(u64, Value), OutcomeError> {
             "{context}: a key event names `key` or `physical`"
         )));
     }
-    Ok((at, Value::Object(entry.clone())))
+    Ok((at, frame, Value::Object(entry.clone())))
 }
 
 /// The probe payload of one of this module's tools, checked, and the time
@@ -1348,6 +1401,7 @@ pub(super) fn payload(
                     "durationMs",
                     "intervalMs",
                     "maxSamples",
+                    "cadence",
                 ],
                 "runtime.sample",
             )?;
@@ -1355,9 +1409,19 @@ pub(super) fn payload(
             let duration = bounded_integer(arguments, "durationMs", 1, MAX_SAMPLE_MS)?
                 .unwrap_or(DEFAULT_SAMPLE_MS);
             out.insert("duration_ms".to_owned(), json!(duration));
+            let cadence = one_of_words(arguments, "cadence", CADENCES)?;
+            if let Some(cadence) = cadence {
+                out.insert("cadence".to_owned(), json!(cadence));
+            }
             if let Some(interval) =
                 bounded_integer(arguments, "intervalMs", 1, MAX_SAMPLE_INTERVAL_MS)?
             {
+                if cadence == Some("physics_frame") {
+                    return Err(invalid(
+                        "`intervalMs` paces the interval cadence; the physics_frame cadence \
+                         samples once at the start of every physics frame",
+                    ));
+                }
                 out.insert("interval_ms".to_owned(), json!(interval));
             }
             if let Some(most) = bounded_integer(arguments, "maxSamples", 1, MAX_SAMPLES)? {
@@ -1526,26 +1590,56 @@ pub(super) fn payload(
             only(arguments, &["session"], "input.recording.stop")?;
         }
         SessionOperation::InputReplay => {
-            only(arguments, &["session", "events"], "input.replay")?;
+            only(
+                arguments,
+                &["session", "events", "schedule"],
+                "input.replay",
+            )?;
+            let schedule = one_of_words(arguments, "schedule", SCHEDULES)?;
+            let by_frame = schedule == Some("physics_frame");
             let listed = arguments
                 .get("events")
                 .and_then(Value::as_array)
                 .filter(|listed| !listed.is_empty() && listed.len() <= MAX_EVENTS)
                 .ok_or_else(|| invalid(format!("`events` lists 1 to {MAX_EVENTS} events")))?;
-            let mut timed = listed
-                .iter()
-                .enumerate()
-                .map(|(index, entry)| event(entry, index))
-                .collect::<Result<Vec<_>, _>>()?;
-            // Each event is delivered at its own time: the list is put in time
-            // order, keeping the order of events of the same time.
-            timed.sort_by_key(|(at, _)| *at);
-            let last = timed.last().map_or(0, |(at, _)| *at);
+            let mut keyed = Vec::with_capacity(listed.len());
+            for (index, entry) in listed.iter().enumerate() {
+                let (at, frame, mut entry) = event(entry, index)?;
+                let (key, field) = if by_frame {
+                    (frame, "frame")
+                } else {
+                    (at, "t_ms")
+                };
+                let key = key.ok_or_else(|| {
+                    invalid(format!(
+                        "event {index} needs `{field}`: the {} schedule delivers each event by \
+                         it",
+                        schedule.unwrap_or("time")
+                    ))
+                })?;
+                // The probe answers each delivery by the event's place in the
+                // caller's list, which the ordering below may change.
+                entry["index"] = json!(index);
+                keyed.push((key, entry));
+            }
+            // Each event is delivered at its own time or frame: the list is put
+            // in that order, keeping the order of events of the same one.
+            keyed.sort_by_key(|(key, _)| *key);
+            let last = keyed.last().map_or(0, |(key, _)| *key);
             out.insert(
                 "events".to_owned(),
-                Value::Array(timed.into_iter().map(|(_, entry)| entry).collect()),
+                Value::Array(keyed.into_iter().map(|(_, entry)| entry).collect()),
             );
-            extra = Duration::from_millis(last);
+            if let Some(schedule) = schedule {
+                out.insert("schedule".to_owned(), json!(schedule));
+            }
+            // A frame lasts at most a second, at the slowest rate a session
+            // sets, and the probe replays at most 30 s of the game's frames.
+            extra = Duration::from_millis(if by_frame {
+                MAX_INPUT_MS.min(last.saturating_mul(1_000))
+            } else {
+                last
+            });
         }
         other => unreachable!("{} is not a runtime control tool", other.tool_name()),
     }
@@ -1876,8 +1970,75 @@ mod tests {
                     json!({ "series": [{ "monitor": "TIME_FPS" }], "maxSamples": 601 }),
                     false,
                 ),
+                (
+                    json!({ "series": [{ "monitor": "TIME_FPS" }], "cadence": "physics_frame", "durationMs": 500, "maxSamples": 30 }),
+                    true,
+                ),
+                (
+                    json!({ "series": [{ "monitor": "TIME_FPS" }], "cadence": "interval", "intervalMs": 50 }),
+                    true,
+                ),
+                (
+                    json!({ "series": [{ "monitor": "TIME_FPS" }], "cadence": "process_frame" }),
+                    false,
+                ),
+                (
+                    json!({ "series": [{ "monitor": "TIME_FPS" }], "cadence": null }),
+                    false,
+                ),
             ],
         );
+    }
+
+    /// A physics-frame sample is paced by the physics frames alone: the
+    /// schema accepts `intervalMs` beside it, as it states no rule across
+    /// fields, and the check refuses the pair before anything is sent.
+    #[test]
+    fn a_physics_frame_sample_takes_no_interval() {
+        let schema = advertised("runtime.sample");
+        let arguments = json!({
+            "session": SESSION,
+            "series": [{ "monitor": "TIME_FPS" }],
+            "cadence": "physics_frame",
+            "intervalMs": 50
+        });
+        assert!(crate::schema::conformance::conforms(&schema, &arguments));
+        let refused = payload(
+            SessionOperation::Sample,
+            arguments.as_object().expect("an object"),
+        )
+        .expect_err("an interval with the physics_frame cadence is refused");
+        assert!(
+            format!("{refused:?}").contains("intervalMs"),
+            "the refusal names the field: {refused:?}"
+        );
+
+        let mut arguments = arguments.as_object().cloned().expect("an object");
+        arguments.remove("intervalMs");
+        let (sent, extra) = payload(SessionOperation::Sample, &arguments).expect("valid");
+        assert_eq!(sent["cadence"], json!("physics_frame"));
+        assert_eq!(sent["duration_ms"], json!(1000));
+        assert!(sent.get("interval_ms").is_none());
+        assert_eq!(extra, Duration::from_millis(1000));
+    }
+
+    /// No tool states a rule across its fields at the top of its schema: the
+    /// checks enforce the cadence and schedule rules.
+    #[test]
+    fn no_control_schema_combines_its_top_level_fields() {
+        for &operation in SessionOperation::ALL {
+            if !handles(operation) {
+                continue;
+            }
+            let schema = advertised(operation.tool_name());
+            for keyword in ["oneOf", "anyOf", "allOf", "if", "then", "else", "not"] {
+                assert!(
+                    schema.get(keyword).is_none(),
+                    "{} carries a top-level {keyword}",
+                    operation.tool_name()
+                );
+            }
+        }
     }
 
     #[test]
@@ -2097,9 +2258,36 @@ mod tests {
                     events(json!([{ "t_ms": 0, "kind": "key", "key": "D", "button": 1 }])),
                     false,
                 ),
-                (events(json!([{ "kind": "key", "key": "D" }])), false),
                 (
                     events(json!([{ "t_ms": 30001, "kind": "key", "key": "D" }])),
+                    false,
+                ),
+                (
+                    events(json!([{ "t_ms": 5, "frame": 0, "kind": "key", "key": "D" }])),
+                    true,
+                ),
+                (
+                    events(json!([{ "t_ms": 5, "frame": 30001, "kind": "key", "key": "D" }])),
+                    false,
+                ),
+                (
+                    events(json!([{ "t_ms": 5, "frame": -1, "kind": "key", "key": "D" }])),
+                    false,
+                ),
+                (
+                    events(json!([{ "t_ms": 5, "frame": 1.5, "kind": "key", "key": "D" }])),
+                    false,
+                ),
+                (
+                    json!({ "events": [{ "frame": 30000, "kind": "action", "action": "jump" }], "schedule": "physics_frame" }),
+                    true,
+                ),
+                (
+                    json!({ "events": [{ "t_ms": 0, "kind": "action", "action": "jump" }], "schedule": "time" }),
+                    true,
+                ),
+                (
+                    json!({ "events": [{ "t_ms": 0, "frame": 0, "kind": "action", "action": "jump" }], "schedule": "tick" }),
                     false,
                 ),
                 (
@@ -2139,6 +2327,133 @@ mod tests {
                     false,
                 ),
             ],
+        );
+    }
+
+    /// Each schedule needs the field it delivers by and ignores the other:
+    /// the schema requires neither, as it states no rule across fields, and
+    /// the check refuses an event without its schedule's field.
+    #[test]
+    fn a_replay_needs_the_field_its_schedule_delivers_by() {
+        let schema = advertised("input.replay");
+        for (schedule, events, accepted) in [
+            (None, json!([{ "kind": "key", "key": "D" }]), false),
+            (
+                None,
+                json!([{ "frame": 3, "kind": "key", "key": "D" }]),
+                false,
+            ),
+            (
+                Some("time"),
+                json!([{ "frame": 3, "kind": "key", "key": "D" }]),
+                false,
+            ),
+            (
+                Some("time"),
+                json!([{ "t_ms": 3, "kind": "key", "key": "D" }]),
+                true,
+            ),
+            (
+                Some("physics_frame"),
+                json!([{ "t_ms": 3, "kind": "key", "key": "D" }]),
+                false,
+            ),
+            (
+                Some("physics_frame"),
+                json!([{ "kind": "key", "key": "D" }]),
+                false,
+            ),
+            (
+                Some("physics_frame"),
+                json!([{ "frame": 3, "kind": "key", "key": "D" }]),
+                true,
+            ),
+            (
+                Some("physics_frame"),
+                json!([{ "t_ms": 30001, "frame": 3, "kind": "key", "key": "D" }]),
+                false,
+            ),
+        ] {
+            let mut arguments = json!({ "session": SESSION, "events": events });
+            if let Some(schedule) = schedule {
+                arguments["schedule"] = json!(schedule);
+            }
+            let mut advertised_arguments = arguments.clone();
+            advertised_arguments["idempotencyId"] = json!("call-1");
+            let conforms = crate::schema::conformance::conforms(&schema, &advertised_arguments);
+            let checked = payload(
+                SessionOperation::InputReplay,
+                arguments.as_object().expect("an object"),
+            );
+            assert_eq!(
+                checked.is_ok(),
+                accepted,
+                "the check's verdict on {arguments}: {checked:?}"
+            );
+            // A value out of range is refused by both; a missing field only
+            // by the check.
+            let out_of_range = arguments.to_string().contains("30001");
+            assert_eq!(
+                conforms, !out_of_range,
+                "the schema's verdict on {arguments}"
+            );
+            if let Err(refused) = checked
+                && !out_of_range
+            {
+                let field = if schedule == Some("physics_frame") {
+                    "`frame`"
+                } else {
+                    "`t_ms`"
+                };
+                assert!(
+                    format!("{refused:?}").contains(field),
+                    "the refusal names {field}: {refused:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_replay_is_sent_in_frame_order_and_waits_for_its_last_frame() {
+        let mut arguments = Map::new();
+        arguments.insert("schedule".to_owned(), json!("physics_frame"));
+        arguments.insert(
+            "events".to_owned(),
+            json!([
+                { "t_ms": 900, "frame": 4, "kind": "action", "action": "b" },
+                { "t_ms": 950, "frame": 0, "kind": "action", "action": "a" },
+                { "t_ms": 10, "frame": 4, "kind": "action", "action": "c" }
+            ]),
+        );
+        let (sent, extra) = payload(SessionOperation::InputReplay, &arguments).expect("valid");
+        assert_eq!(sent["schedule"], json!("physics_frame"));
+        let order: Vec<(&str, u64)> = sent["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .map(|event| {
+                (
+                    event["action"].as_str().expect("an action"),
+                    event["index"]
+                        .as_u64()
+                        .expect("its place in the caller's list"),
+                )
+            })
+            .collect();
+        assert_eq!(order, [("a", 1), ("b", 0), ("c", 2)]);
+        // Four frames last at most four seconds, at the slowest rate a
+        // session sets.
+        assert_eq!(extra, Duration::from_millis(4_000));
+
+        arguments.insert(
+            "events".to_owned(),
+            json!([{ "frame": 30000, "kind": "action", "action": "a" }]),
+        );
+        let (_, extra) = payload(SessionOperation::InputReplay, &arguments).expect("valid");
+        assert_eq!(
+            extra,
+            Duration::from_millis(30_000),
+            "a replay lasts at most 30 s"
         );
     }
 

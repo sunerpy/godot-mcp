@@ -114,7 +114,7 @@ every method each class takes.
 | Runtime control | `project.run.start` and `project.run.stop`; `input.action.send`, `input.key.send`, `input.mouse.send`, `input.sequence.send`, `input.replay`                                                                                       | `runtime.tree.get`, `runtime.properties.get`, `runtime.properties.set`, `runtime.wait`, `runtime.ui.get`, `runtime.screenshot.capture`; `test.scenario.run` for a whole scenario |
 | Project tooling | `editor.commands.call` runs a command the project declares in `godot_mcp_commands.json`, in the connected editor, with arguments checked against the command's schema                                                              | `editor.commands.list` lists the commands with their descriptions and argument schemas and runs nothing; a call answers what the command returned and every file it changed      |
 
-The `full` profile holds 132 tools; the generated
+The `full` profile holds 133 tools; the generated
 [tool inventory](docs/protocol/tool-inventory.md) lists each one with its profiles.
 
 ## Install
