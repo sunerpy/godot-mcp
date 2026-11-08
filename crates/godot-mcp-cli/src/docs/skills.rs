@@ -74,23 +74,29 @@ pub struct SkillBudget {
 
 /// Every skill's budget: the size measured when it was pinned, plus about 10%.
 pub const SKILL_BUDGETS: &[SkillBudget] = &[
-    // Measured at 311 lines and 18,921 bytes.
+    // Measured at 354 lines and 22,497 bytes.
     SkillBudget {
         name: "godot-mcp",
-        max_lines: 340,
-        max_bytes: 20_500,
+        max_lines: 380,
+        max_bytes: 24_500,
     },
-    // Measured at 233 lines and 13,801 bytes.
+    // Measured at 187 lines and 12,201 bytes.
+    SkillBudget {
+        name: "godot-mcp-export",
+        max_lines: 210,
+        max_bytes: 13_500,
+    },
+    // Measured at 284 lines and 17,389 bytes.
     SkillBudget {
         name: "godot-mcp-playtest",
-        max_lines: 260,
-        max_bytes: 15_000,
+        max_lines: 310,
+        max_bytes: 19_000,
     },
-    // Measured at 264 lines and 13,225 bytes.
+    // Measured at 296 lines and 15,172 bytes.
     SkillBudget {
         name: "godot-mcp-setup",
-        max_lines: 290,
-        max_bytes: 14_500,
+        max_lines: 320,
+        max_bytes: 16_500,
     },
 ];
 

@@ -62,6 +62,10 @@ pub const SKILLS: &[EmbeddedSkill] = &[
         content: include_str!("../../../../skills/godot-mcp/SKILL.md"),
     },
     EmbeddedSkill {
+        name: "godot-mcp-export",
+        content: include_str!("../../../../skills/godot-mcp-export/SKILL.md"),
+    },
+    EmbeddedSkill {
         name: "godot-mcp-playtest",
         content: include_str!("../../../../skills/godot-mcp-playtest/SKILL.md"),
     },

@@ -1,6 +1,6 @@
 ---
 name: godot-mcp
-description: "Read and change a Godot 4 project through a connected godot-mcp MCP server. Use when scenes, scripts, resources, project settings or assets are inspected or edited with godot-mcp tools, when nodes such as a physics body, lights, particles, a HUD, a TileMapLayer, a Theme or an AnimationTree state machine are added, when the Godot editor has the scene open, or when a godot-mcp answer is conflict, uncertain, unavailable, unsupported or permission_denied. Covers reading before writing with SHA-256 preconditions and idempotency ids, recipes, call_method, typed values and property paths, and what each outcome asks of the agent. Running and testing the game is the godot-mcp-playtest skill; installing, connecting and diagnosing the server is the godot-mcp-setup skill."
+description: "Read and change a Godot 4 project through a connected godot-mcp MCP server. Use when scenes, scripts, resources, project settings or assets are inspected or edited with godot-mcp tools, when nodes such as a physics body, lights, particles, a HUD, a TileMapLayer, a Theme or an AnimationTree state machine are added, to connect signals or find script errors, when the Godot editor has the scene open, or when a godot-mcp answer is conflict, uncertain, unavailable, unsupported or permission_denied. Covers reading before writing with SHA-256 preconditions and idempotency ids, static script checks, recipes, connect_signal and call_method, typed values and property paths, and what each outcome asks of the agent. Running and testing the game is the godot-mcp-playtest skill; exporting it is the godot-mcp-export skill; installing, connecting and diagnosing the server is the godot-mcp-setup skill."
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the editor or full profile. The editor tools also need the godot_mcp add-on running in an open Godot editor."
 metadata:
@@ -52,6 +52,16 @@ Send one request at a time and wait for its answer. A burst is refused per calle
 A tool the profile lists answers `unavailable` while its plane cannot be reached, for example an
 editor tool with no editor connected. `health.get` says which plane and what to do.
 
+## Finding script errors
+
+- `gdscript.diagnostics.get` lists the parse and analysis errors of the project's scripts, or of
+  one `script`; `script.validate` checks one script the same way, and `project.validate` the whole
+  project, for parse errors, dangling references and invalid settings. They run no engine.
+- These checks are static. The engine's own compile of a script is a tool of the runtime and full
+  profiles; see the godot-mcp-playtest skill.
+- With an editor connected, `editor.log.get` returns what the editor logged since the add-on
+  started, its errors and script errors each with the source location, on Godot 4.5.1 and later.
+
 ## Read, then write
 
 Every write is a compare-and-swap against the bytes you read:
@@ -63,9 +73,14 @@ Every write is a compare-and-swap against the bytes you read:
 - Every write takes an `idempotencyId`, a new one for each change you mean. Repeating the exact
   call with the same id answers the recorded result without applying it twice; the same id with
   other arguments is a `conflict`.
-- `dryRun: true` checks the write and answers its diff without writing.
+- `dryRun: true` checks the write and answers its diff without writing; `resource.update`,
+  `project.uid.update` and `scene.save` take `dry_run: true` instead.
 - A batch is all or nothing: when one operation is refused, nothing is written.
   `project.batch.apply` changes several scenes and resources in one transaction.
+- A `connect_signal` operation of a scene batch connects the `signal` of the node `from` to the
+  `method` of the node `to`, and the scene saves the connection. The method must already exist on
+  `to` or its script, or the batch is refused as `unknown_method`: add it with `script.patch`
+  first, then call `editor.filesystem.scan` when the editor has the scene open.
 - `project.godot` changes only through `project.settings.patch`.
 - `script.create` and `script.patch` parse the result and refuse a parse error unless
   `allowParseErrors` is set. The parse is static; it does not run the script.
@@ -85,13 +100,17 @@ lists the open scenes and scripts and which of them hold unsaved changes.
   `editor.scene.tree.get`, which answers its semantic digest, and send `editor.scene.edit` with
   that digest as `expectedDigest`. The edit is one undoable action and saves nothing;
   `editor.scene.save` saves.
-- The file, script, asset and settings writes, and the headless scene and resource writes,
-  refuse with `conflict` a path the editor holds: an open scene, `project.godot`, a script whose
-  editor tab differs from its file. Save or close it in the editor, or change it with the editor
-  tools.
+- The file, script and asset writes, and the headless scene and resource writes, refuse with
+  `conflict` a path the editor holds: an open scene, `project.godot`, a script whose editor tab
+  differs from its file. Save or close it in the editor, or change it with the editor tools.
+- `project.settings.patch` is carried out by the connected editor instead: the editor applies the
+  change and saves `project.godot` with its own writer, which keeps every setting but not the
+  file's comments or layout.
 - After a script changed on disk, call `editor.filesystem.scan`: the editor imports what changed
   and reloads the script tabs that hold no unsaved edit.
-- `editor.undo` and `editor.redo` step through the edited scene's history.
+- `editor.undo` and `editor.redo` step through the edited scene's history. While the editor's
+  global or remote history also has a step to take, they are refused with `conflict` and change
+  nothing; that step is taken in the editor.
 - While **Pause agent edits** is on in the editor's Godot MCP panel, every mutation that goes
   through the editor answers `unavailable` with status `not_started`, and nothing changed. Tell
   the user. Once they turn it off, retry with a new `idempotencyId`; the old one answers the
@@ -121,10 +140,20 @@ godot-mcp knows common setups by name. Before building one of these by hand, use
   `joystick` and `theme`. A prompt's text holds the recipe's parameters, a call template and the
   operations the recipe becomes.
 - `scene.recipe.apply` adds a scene recipe below `parent` in an existing scene, against its
-  SHA-256; `scene.create` makes an empty scene first. `recipe` is an object with one key, the
-  recipe's name, holding its parameters, and `{}` takes every default. The tool's schema lists
-  every parameter with its range; the answer names each value it used and the operations it
-  applied. With the scene open in the editor, it is one undoable action there.
+  SHA-256. `recipe` is an object with one key, the recipe's name, holding its parameters, and
+  `{}` takes every default. The tool's schema lists every parameter with its range; the answer
+  names each value it used and the operations it applied. With the scene open in the editor, it
+  is one undoable action there.
+- A recipe only adds below a parent, and `scene.create` makes a scene whose root is a `Node`
+  unless `rootType` names another class. A scene whose root is the body itself, such as a
+  `CharacterBody2D` player, is `scene.create` with that `rootType` and the shape as `operations`:
+  an `add_node` of a `CollisionShape2D` and a `set_subresource` of its `shape`.
+- `hud` lays out its `parent` as a full-screen `Control`, and `joystick` anchors itself to a
+  `Control` parent. Apply both at `parent` `.` of a scene whose root is a `Control`: below a
+  `CanvasLayer` or a `Node2D`, Godot does not keep the layout and the batch is refused, as
+  `value_not_kept` or `unknown_property`, with nothing written. For a 2D level, make the HUD its
+  own scene with `scene.create` and `rootType` `Control`, then `instance_scene` it below a
+  `CanvasLayer` of the level.
 - `theme` is a resource, not nodes: `resource.create` with `class` `Theme` makes it, and
   `resource.batch.apply` changes it.
 - `joystick` builds a `VirtualJoystick`, which Godot 4.4.1, 4.5.1 and 4.6.1 lack; it applies on
@@ -291,6 +320,9 @@ value: `position:x`, `material:albedo_color`, `theme_override_colors/font_color`
 | `permission_denied` | the server's policy refuses the call | do not work around it; tell the user |
 | `invalid_input` | the request does not fit the schema, or the engine refused an argument | correct the request from the message |
 | `not_found` | the file, node or class does not exist | read the tree again |
+| `timeout` | the call ran past its deadline, so whether its change landed is not proven | as for `uncertain`: do not resend it; read the project first |
+| `cancelled` | the request was cancelled before it started; nothing changed | send it again if it is still wanted |
+| `internal` | a fault in the server itself | tell the user, with the message |
 
 An editor change whose answer was lost answers `uncertain` and is never sent again, not even
 after the editor reconnects. Read the scene before you decide what to do next.

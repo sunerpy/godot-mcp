@@ -85,8 +85,10 @@ Claude Desktop, Cursor and most other clients read a JSON block of this shape:
 }
 ```
 
-If the client starts processes without your shell's PATH, give `command` the launcher's full path
-(`~/.local/bin/godot-mcp` after the Linux and macOS installer).
+If the client starts processes without your shell's PATH, give `command` the launcher's full path,
+as `command -v godot-mcp` prints it: the Linux and macOS installer puts the launcher at
+`.local/bin/godot-mcp` in your home directory. Write the path out in full, since the client does
+not run `command` through a shell and so does not expand a `~` in it.
 
 ## Environment variables
 

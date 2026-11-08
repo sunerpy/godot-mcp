@@ -12,6 +12,7 @@ and not otherwise.
 | Skill | The agent loads it when it |
 | --- | --- |
 | `godot-mcp` | reads or changes your project through godot-mcp |
+| `godot-mcp-export` | exports, builds or packages the game |
 | `godot-mcp-playtest` | runs, plays or tests the game |
 | `godot-mcp-setup` | installs, connects or diagnoses godot-mcp |
 
@@ -21,7 +22,7 @@ and not otherwise.
 godot-mcp skill install
 ```
 
-The command copies the three skills into the skill directory of every agent whose configuration
+The command copies the four skills into the skill directory of every agent whose configuration
 directory it finds in your home directory, such as `~/.claude` for Claude Code, and installs
 them for Claude Code when it finds none. Each skill is one `SKILL.md` file that the `godot-mcp`
 binary carries, so it always installs the skills of its own version.

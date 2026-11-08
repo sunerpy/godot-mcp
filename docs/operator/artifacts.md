@@ -87,7 +87,10 @@ the artifact becomes readable; nothing about a capture is committed until it is.
 * The store holds at most 256 MiB of artifacts at once. A capture that does not fit is
   refused, never truncated.
 * One read returns at most `limits.max_output_bytes`; read a larger artifact in byte
-  ranges.
+  ranges. A `resources/read` whose `_meta` holds
+  `{"io.godot-mcp/artifactRange": {"start": 0, "endInclusive": 1023}}` returns bytes 0
+  to 1023, both included. A range that ends past the artifact's last byte, or is longer
+  than `limits.max_output_bytes`, is refused with `invalid_input`.
 
 `editor.screenshot.capture` registers what the connected editor shows the same way: the
 server reads the PNG back from the editor in bounded chunks and checks it against the

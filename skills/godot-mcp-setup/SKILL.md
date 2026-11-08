@@ -1,6 +1,6 @@
 ---
 name: godot-mcp-setup
-description: "Install, connect, configure and diagnose godot-mcp, the MCP server for Godot 4 projects. Use when godot-mcp is not installed, not registered with the agent or not answering, when it has to be set up for Claude Code, Codex, VS Code, Cursor, OpenCode or another MCP client, when a profile, a Godot build, the Godot editor add-on, HTTP access or these Agent Skills have to be chosen or installed, or when health.get reports a component that is not ready. Works before any godot-mcp tool is available, from the command line. Covers the installer and self-check, client configuration, profiles, godot_binary and the tested Godot builds, editor.addon.install, godot-mcp skill install, the HTTP modes and reading health.get. Editing the project is the godot-mcp skill; running the game is the godot-mcp-playtest skill."
+description: "Install, connect, configure and diagnose godot-mcp, the MCP server for Godot 4 projects. Use when godot-mcp is not installed, not registered with the agent or not answering, when it has to be set up for Claude Code, Codex, VS Code, Cursor, OpenCode or another MCP client, when a profile, a Godot build and its export templates, the Godot editor add-on, HTTP access or these Agent Skills have to be chosen or installed, or when health.get reports a component that is not ready. Works before any godot-mcp tool is available, from the command line. Covers the installer and self-check, client configuration, profiles, godot_binary and the tested Godot builds, editor.addon.install, godot-mcp skill install, the HTTP modes and reading health.get. Editing the project is the godot-mcp skill; running the game is the godot-mcp-playtest skill; exporting it is the godot-mcp-export skill."
 license: MIT
 compatibility: "Uses the godot-mcp command line, which installs and registers without a Godot build. The MCP tools it names need a connected server with the editor or full profile; the tools that run Godot need a Godot 4.4.0 or later editor build."
 metadata:
@@ -116,7 +116,9 @@ Claude Desktop, Cursor and most other clients read this shape:
 ```
 
 - A client that starts processes without the shell's PATH needs the launcher's full path as
-  `command`, such as `~/.local/bin/godot-mcp` after the Linux and macOS installer.
+  `command`, as `command -v godot-mcp` prints it, such as `/home/<you>/.local/bin/godot-mcp`
+  after the Linux installer or `/Users/<you>/.local/bin/godot-mcp` after the macOS one. Write it
+  out in full: a `command` is not run through a shell, so a `~` in it is not expanded.
 - `--workspace <dir>` instead of `--project` starts without a project, so the agent can create
   one with `project.create` or pick one with `project.bind`.
 - Every `GODOT_MCP_`-prefixed environment variable is configuration, and one the server does
@@ -150,9 +152,16 @@ godot_binary = "/opt/godot/godot"
 
 and add `--config /path/to/godot-mcp.toml` to the `serve` arguments.
 `godot-mcp check-config --config /path/to/godot-mcp.toml` runs the server's own loader and
-checks without starting it: exit 0 is valid, and exit 2 says why the file is refused. Exports
-also need the export templates of exactly that Godot build. `health.get` then reports the build
-it resolved and its version under `engine`.
+checks without starting it: exit 0 is valid, and exit 2 says why the file is refused.
+`health.get` then reports under `engine` that a build was found, never its version: the health
+check does not start Godot. `editor.status.get` reports the Godot version of a connected editor.
+
+A project export also needs the export templates of exactly that Godot build, installed where
+Godot's Export Template Manager puts them; a pack or patch export needs none. An Android export
+needs the Android SDK and the JDK as well: add `--android-sdk <dir>` and
+`--android-java-home <dir>` to `serve`, or set `sdk` and `java_home` in an `[android]` section.
+The server installs none of them; the godot-mcp-export skill lists where the templates go on
+each host and covers exporting.
 
 A project with a GDExtension needs one more step on Godot 4.7.1 and 4.7.2, measured with one
 godot-rust extension on Linux: the first import of a project that was never imported aborts,
@@ -191,7 +200,8 @@ is served at a time.
 ## 6. Install these skills
 
 `godot-mcp skill install` copies the skills this binary carries, `godot-mcp`,
-`godot-mcp-playtest` and `godot-mcp-setup`, into the skill directories of the agents in use.
+`godot-mcp-export`, `godot-mcp-playtest` and `godot-mcp-setup`, into the skill directories of
+the agents in use.
 It reads no Godot project and writes only those skill directories.
 
 | `--target` | Writes to (`--global`, the default) | With `--local` | Selected by `auto` when |
@@ -231,6 +241,17 @@ to reach a server already running:
 
 ```sh
 godot-mcp serve --project /path/to/my-game --profile full --http 0.0.0.0:8765
+```
+
+`--http` cannot be combined with `--config` or `--workspace`. With a configuration file, the same
+mode is `transport = "http"` and an `[http]` section:
+
+```toml
+transport = "http"
+
+[http]
+bind = "0.0.0.0:8765"
+mode = "open"
 ```
 
 A client that takes a URL then needs only `"type": "http"` and the printed URL, such as
