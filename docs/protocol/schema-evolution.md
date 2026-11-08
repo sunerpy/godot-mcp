@@ -188,6 +188,31 @@ shape.
 
 No request a 0.5.0 server took is refused.
 
+#### 0.6.0 schema writing
+
+Release 0.6.0 changes how the tool schemas are written and nothing they decide. The contract
+stays 0.5.0: the schemas take and refuse exactly the requests they did before.
+
+* A tool's `$defs` holds only the definitions its schema refers to, directly or through another
+  definition. A tool that takes only plain values no longer carries the definitions of a
+  written value, a resource reference or a `call_method` argument, and one that writes values
+  no longer carries the plain value's.
+* A tool that takes operations, `scene.batch.apply`, `scene.create`, `resource.batch.apply`,
+  `resource.create`, `project.batch.apply` and `editor.scene.edit`, defines in its own `$defs`
+  each operation field schema it repeats: the node path of `node`, `parent`, `from` and `to`,
+  the property path of `property`, the scene path of `scene`, the name of `name`, `type`,
+  `signal`, `group` and `class`, a signal's callback `method`, `call_method`'s editing `method`,
+  `arguments` and `repeat`, and a sub-resource's `properties`. Every field that held the schema
+  holds a `$ref` to it with nothing beside it, so a client reads the same field either way; a
+  field schema a tool holds once stays where it is.
+
+A tool that took no tagged value still carries no `$defs`, and every reference resolves in the
+tool's own schema. Measured as
+[How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
+describes, `tools/list` shrinks from 406,072 to 312,424 bytes in the `editor` profile, from
+231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`; `core`, whose tools take
+no tagged value, stays at 28,044.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an

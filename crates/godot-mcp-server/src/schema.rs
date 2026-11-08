@@ -5,6 +5,7 @@
 //! discriminated union: each variant names its discriminator value and declares
 //! exactly its own fields.
 
+use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use godot_mcp_domain::contracts::GodotValue;
@@ -134,19 +135,23 @@ pub(crate) fn project_scene_pattern() -> String {
 
 /// A tagged contract value a tool may write, `{"type": <variant>, "value":
 /// <payload>}`: any variant but a live object reference, at any depth. The
-/// tool schema that uses it carries [`value_definitions`] as its `$defs`.
+/// tool schema that uses it gets the definitions it refers to from
+/// [`define_values`].
 pub(crate) fn writable_value() -> Value {
     json!({ "$ref": format!("#/$defs/{WRITABLE_VALUE}") })
 }
 
 /// A tagged contract value that refers to nothing: any variant but a resource
 /// or a live object reference, at any depth, as an editor setting holds. The
-/// tool schema that uses it carries [`value_definitions`] as its `$defs`.
+/// tool schema that uses it gets the definitions it refers to from
+/// [`define_values`].
 pub(crate) fn plain_value() -> Value {
     json!({ "$ref": format!("#/$defs/{PLAIN_VALUE}") })
 }
 
-/// The definitions [`writable_value`] and [`plain_value`] refer to.
+/// The definitions [`writable_value`] and [`plain_value`] refer to, and the
+/// ones those refer to in turn. A tool schema carries only those it names,
+/// through [`define_values`].
 ///
 /// They are generated from the [`GodotValue`] type the handler parses, so
 /// each variant name and payload shape is the one the handler accepts. The
@@ -318,6 +323,153 @@ fn retarget(schema: &mut Value) {
     }
 }
 
+/// Give the tool schema `schema` the `$defs` its body refers to and no others:
+/// each of [`value_definitions`] it names, directly or through another
+/// definition. A schema that names none carries no `$defs`.
+pub(crate) fn define_values(schema: &mut Value) {
+    define(schema, Map::new());
+}
+
+/// [`define_values`], after sharing each subschema of `shared` the body
+/// repeats.
+///
+/// A shared subschema is defined once, under its name, and every occurrence
+/// of it, a subschema equal to it inside a top-level property, refers to that
+/// definition instead. A reference with nothing beside it takes exactly the
+/// values the definition takes, so the schema still takes what it took: only
+/// how it is written changes. A subschema the body holds once, or whose
+/// sharing would not make the schema shorter, stays where it is, and so does
+/// a top-level property, which describes itself.
+pub(crate) fn define_shared(schema: &mut Value, shared: &[(&str, Value)]) {
+    let mut definitions = Map::new();
+    let properties = schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .expect("a tool schema declares its properties");
+    let length = |value: &Value| serde_json::to_vec(value).map_or(0, |bytes| bytes.len());
+    for (name, subschema) in shared {
+        assert!(
+            !definitions.contains_key(*name),
+            "one tool shares one subschema as {name}"
+        );
+        let count: usize = properties
+            .values()
+            .map(|property| occurrences_within(property, subschema))
+            .sum();
+        let reference = json!({ "$ref": format!("#/$defs/{name}") });
+        // The definition costs its name, its schema and the punctuation
+        // around them; every occurrence then costs a reference.
+        let defined = name.len() + length(subschema) + 4;
+        if count < 2 || count * length(subschema) <= count * length(&reference) + defined {
+            continue;
+        }
+        for property in properties.values_mut() {
+            replace_within(property, subschema, &reference);
+        }
+        definitions.insert((*name).to_owned(), subschema.clone());
+    }
+    define(schema, definitions);
+}
+
+/// Give `schema` the definitions its body refers to, from `shared` and from
+/// [`value_definitions`], whose names `shared` must not take.
+fn define(schema: &mut Value, shared: Map<String, Value>) {
+    let mut definitions = value_definitions();
+    for (name, definition) in shared {
+        assert!(
+            !definitions.contains_key(&name),
+            "a shared subschema takes the name of the value definition {name}"
+        );
+        definitions.insert(name, definition);
+    }
+    let object = schema
+        .as_object_mut()
+        .expect("a tool schema is a JSON object");
+    assert!(
+        !object.contains_key("$defs"),
+        "a tool schema is given its definitions once"
+    );
+    let mut pending = Vec::new();
+    object
+        .values()
+        .for_each(|value| references(value, &mut pending));
+    let mut named = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if named.contains(&name) {
+            continue;
+        }
+        let definition = definitions
+            .get(&name)
+            .unwrap_or_else(|| panic!("#/$defs/{name} names no definition"));
+        references(definition, &mut pending);
+        named.insert(name);
+    }
+    if named.is_empty() {
+        return;
+    }
+    let carried: Map<String, Value> = named
+        .into_iter()
+        .map(|name| {
+            let definition = definitions.remove(&name).expect("a named definition");
+            (name, definition)
+        })
+        .collect();
+    object.insert("$defs".to_owned(), Value::Object(carried));
+}
+
+/// Push the name of every definition `schema` refers to onto `found`.
+fn references(schema: &Value, found: &mut Vec<String>) {
+    match schema {
+        Value::Object(map) => {
+            if let Some(reference) = map.get("$ref") {
+                let name = reference
+                    .as_str()
+                    .and_then(|reference| reference.strip_prefix("#/$defs/"))
+                    .unwrap_or_else(|| {
+                        panic!("only a local #/$defs reference is defined: {reference}")
+                    });
+                found.push(name.to_owned());
+            }
+            map.values().for_each(|value| references(value, found));
+        }
+        Value::Array(items) => items.iter().for_each(|item| references(item, found)),
+        _ => {}
+    }
+}
+
+/// How many subschemas strictly inside `schema` equal `target`.
+fn occurrences_within(schema: &Value, target: &Value) -> usize {
+    let count = |value: &Value| {
+        if value == target {
+            1
+        } else {
+            occurrences_within(value, target)
+        }
+    };
+    match schema {
+        Value::Object(map) => map.values().map(count).sum(),
+        Value::Array(items) => items.iter().map(count).sum(),
+        _ => 0,
+    }
+}
+
+/// Replace every subschema strictly inside `schema` that equals `target` with
+/// `reference`.
+fn replace_within(schema: &mut Value, target: &Value, reference: &Value) {
+    let replace = |value: &mut Value| {
+        if value == target {
+            *value = reference.clone();
+        } else {
+            replace_within(value, target, reference);
+        }
+    };
+    match schema {
+        Value::Object(map) => map.values_mut().for_each(replace),
+        Value::Array(items) => items.iter_mut().for_each(replace),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +554,173 @@ mod tests {
             Some(3),
             "{schema}"
         );
+    }
+
+    /// A tool schema whose one property is `property`.
+    fn tool(property: Value) -> Value {
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "a": property },
+        })
+    }
+
+    /// The names of the definitions [`define_values`] gives `tool(property)`.
+    fn defined(property: Value) -> BTreeSet<String> {
+        let mut schema = tool(property);
+        define_values(&mut schema);
+        schema
+            .get("$defs")
+            .and_then(Value::as_object)
+            .map(|definitions| definitions.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// A schema carries the value definitions its body names, and the ones
+    /// those name in turn, and no others.
+    #[test]
+    fn a_schema_carries_exactly_the_value_definitions_it_refers_to() {
+        let names = |list: &[&str]| -> BTreeSet<String> {
+            list.iter().map(|name| (*name).to_owned()).collect()
+        };
+        let all: BTreeSet<String> = value_definitions().keys().cloned().collect();
+        // What refers to nothing but the value structs: a plain value.
+        let structs: BTreeSet<String> = all
+            .difference(&names(&[
+                PLAIN_VALUE,
+                WRITABLE_VALUE,
+                CALL_ARGUMENT,
+                "ResourceReference",
+                "ProjectResource",
+            ]))
+            .cloned()
+            .collect();
+        assert!(structs.contains("Vector2") && structs.contains("Projection"));
+
+        let plain = defined(json!({ "type": "array", "items": plain_value() }));
+        assert_eq!(plain, &structs | &names(&[PLAIN_VALUE]));
+        let writable = defined(writable_value());
+        assert_eq!(
+            writable,
+            &structs | &names(&[WRITABLE_VALUE, "ResourceReference", "ProjectResource"])
+        );
+        let argument = defined(json!({ "$ref": format!("#/$defs/{CALL_ARGUMENT}") }));
+        assert_eq!(argument, &writable | &names(&[CALL_ARGUMENT]));
+        assert_eq!(
+            defined(json!({ "anyOf": [plain_value(), writable_value()] })),
+            &plain | &writable
+        );
+        assert_eq!(&plain | &argument, all, "every definition is someone's");
+
+        let mut none = tool(json!({ "type": "string" }));
+        define_values(&mut none);
+        assert_eq!(none, tool(json!({ "type": "string" })), "nothing to define");
+    }
+
+    /// A subschema a tool repeats is defined once and referred to, and the
+    /// shared schema takes exactly what the repeated one took; one it holds
+    /// once, and a top-level property, stay where they are.
+    #[test]
+    fn a_shared_subschema_is_defined_once_and_takes_what_it_replaced() {
+        let path = json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8,
+            "pattern": "^[a-z/]+$",
+            "description": "A path of lower-case letters."
+        });
+        let once = json!({ "type": "integer", "minimum": 0, "description": "Only here." });
+        let body = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "path": path,
+                "operations": {
+                    "type": "array",
+                    "description": "Operations.",
+                    "items": one_of(vec![
+                        variant("op", "move", &[("from", path.clone()), ("to", path.clone())], &["from"]),
+                        variant("op", "count", &[("index", once.clone()), ("value", writable_value())], &[]),
+                    ])
+                }
+            },
+            "required": ["path"],
+        });
+        let mut shared = body.clone();
+        define_shared(
+            &mut shared,
+            &[("Path", path.clone()), ("Index", once.clone())],
+        );
+        let reference = json!({ "$ref": "#/$defs/Path" });
+        let variants = &shared["properties"]["operations"]["items"]["oneOf"];
+        assert_eq!(variants[0]["properties"]["from"], reference);
+        assert_eq!(variants[0]["properties"]["to"], reference);
+        assert_eq!(shared["$defs"]["Path"], path);
+        assert_eq!(
+            shared["properties"]["path"], path,
+            "a top-level property stays"
+        );
+        assert_eq!(
+            variants[1]["properties"]["index"], once,
+            "a single use stays"
+        );
+        assert!(shared["$defs"].get("Index").is_none());
+        assert!(shared["$defs"].get(WRITABLE_VALUE).is_some());
+
+        let mut plain = body.clone();
+        define_values(&mut plain);
+        assert_eq!(
+            conformance::inline_definitions(&shared, &["Path"]),
+            plain,
+            "only the writing changed"
+        );
+        for instance in [
+            json!({ "path": "a", "operations": [{ "op": "move", "from": "a/b", "to": "c" }] }),
+            json!({ "path": "a", "operations": [{ "op": "move", "from": "A" }] }),
+            json!({ "path": "a", "operations": [{ "op": "move", "from": "abcdefghi" }] }),
+            json!({ "path": "a", "operations": [{ "op": "move", "from": "" }] }),
+            json!({ "path": "a", "operations": [{ "op": "move", "to": "a" }] }),
+            json!({ "path": "a", "operations": [{ "op": "move", "from": "a", "x": 1 }] }),
+            json!({ "path": "a", "operations": [{ "op": "count", "index": 2,
+                                                 "value": { "type": "integer", "value": 1 } }] }),
+            json!({ "path": "a", "operations": [{ "op": "count", "index": -1 }] }),
+        ] {
+            assert_eq!(
+                conformance::conforms(&shared, &instance),
+                conformance::conforms(&plain, &instance),
+                "{instance}"
+            );
+        }
+    }
+
+    /// Sharing a subschema too small to pay for its definition would make
+    /// the schema longer, so it stays repeated.
+    #[test]
+    fn a_subschema_too_small_to_share_stays_repeated() {
+        let small = json!({ "type": "integer" });
+        let body = tool(json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "x": small, "y": small }
+        }));
+        let mut shared = body.clone();
+        define_shared(&mut shared, &[("Small", small)]);
+        assert_eq!(shared, body);
+    }
+
+    #[test]
+    #[should_panic(expected = "takes the name of the value definition")]
+    fn a_shared_subschema_cannot_take_a_value_definition_name() {
+        let word = json!({
+            "type": "string",
+            "pattern": "^[a-z]+$",
+            "description": "A word of lower-case letters, which every field here takes."
+        });
+        let mut schema = tool(json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "w": word, "x": word, "y": word, "z": word }
+        }));
+        define_shared(&mut schema, &[(WRITABLE_VALUE, word)]);
     }
 }

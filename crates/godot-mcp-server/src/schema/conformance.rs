@@ -63,6 +63,55 @@ pub(crate) fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(Str
     cases
 }
 
+/// `schema` with each of the definitions `names` put back wherever a bare
+/// reference names it, and taken out of its `$defs`: how the schema reads
+/// before those definitions were shared.
+#[cfg(test)]
+pub(crate) fn inline_definitions(schema: &Value, names: &[&str]) -> Value {
+    fn put_back(value: &mut Value, definitions: &Map<String, Value>, names: &[&str]) {
+        let named = value
+            .as_object()
+            .filter(|map| map.len() == 1)
+            .and_then(|map| map.get("$ref"))
+            .and_then(Value::as_str)
+            .and_then(|reference| reference.strip_prefix("#/$defs/"))
+            .filter(|name| names.contains(name))
+            .map(str::to_owned);
+        if let Some(name) = named {
+            *value = definitions[&name].clone();
+            return;
+        }
+        match value {
+            Value::Object(map) => map
+                .values_mut()
+                .for_each(|child| put_back(child, definitions, names)),
+            Value::Array(items) => items
+                .iter_mut()
+                .for_each(|item| put_back(item, definitions, names)),
+            _ => {}
+        }
+    }
+    let mut inlined = schema.clone();
+    let Some(object) = inlined.as_object_mut() else {
+        return inlined;
+    };
+    let mut definitions = object
+        .remove("$defs")
+        .and_then(|definitions| definitions.as_object().cloned())
+        .unwrap_or_default();
+    let shared = definitions.clone();
+    object
+        .values_mut()
+        .for_each(|value| put_back(value, &shared, names));
+    for name in names {
+        definitions.remove(*name);
+    }
+    if !definitions.is_empty() {
+        object.insert("$defs".to_owned(), Value::Object(definitions));
+    }
+    inlined
+}
+
 /// Keywords that never change a verdict.
 const ANNOTATIONS: &[&str] = &["description", "default", "title", "format", "$defs"];
 

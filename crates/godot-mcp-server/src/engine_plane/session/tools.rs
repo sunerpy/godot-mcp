@@ -702,7 +702,7 @@ impl SessionCall for SessionOperation {
             "required": required,
         });
         if control::uses_values(self) || scenario::uses_values(self) {
-            schema["$defs"] = Value::Object(crate::schema::value_definitions());
+            crate::schema::define_values(&mut schema);
         }
         schema
     }

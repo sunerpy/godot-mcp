@@ -216,7 +216,7 @@ pub(crate) fn calls_schema(kind: ReadKind) -> Value {
 
 /// The strict input schema of one read tool.
 pub(super) fn input_schema(kind: ReadKind) -> Map<String, Value> {
-    let schema = json!({
+    let mut schema = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -232,8 +232,8 @@ pub(super) fn input_schema(kind: ReadKind) -> Map<String, Value> {
             "calls": calls_schema(kind)
         },
         "required": ["path", "calls"],
-        "$defs": crate::schema::value_definitions(),
     });
+    crate::schema::define_values(&mut schema);
     schema
         .as_object()
         .cloned()
