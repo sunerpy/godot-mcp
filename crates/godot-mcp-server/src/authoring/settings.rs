@@ -28,6 +28,8 @@ const MANIFEST: &str = "project.godot";
 const MAX_OPERATIONS: usize = 64;
 /// Most events one input action may bind.
 const MAX_EVENTS: usize = 16;
+/// The longest text an allowlisted text setting takes, in characters.
+const MAX_TEXT_CHARS: usize = 4096;
 /// The deadzone Godot gives a new action.
 const DEFAULT_DEADZONE: f64 = 0.2;
 
@@ -778,6 +780,21 @@ fn field<'a>(operation: &'a Map<String, Value>, key: &str) -> Result<&'a str, Ou
         .ok_or_else(|| invalid(&format!("this operation needs a string `{key}`")))
 }
 
+/// The `name` of an entry to remove: any string but the empty one, which
+/// names no entry.
+fn removed_name<'a>(
+    operation: &'a Map<String, Value>,
+    what: &str,
+) -> Result<&'a str, OutcomeError> {
+    let name = field(operation, "name")?;
+    if name.is_empty() {
+        return Err(invalid(&format!(
+            "the `name` of {what} to remove must not be empty"
+        )));
+    }
+    Ok(name)
+}
+
 fn only_fields(operation: &Map<String, Value>, allowed: &[&str]) -> Result<(), OutcomeError> {
     if let Some(unknown) = operation
         .keys()
@@ -966,7 +983,7 @@ fn apply_operation(
             Ok(json!({ "op": op, "name": name, "path": uri, "singleton": singleton }))
         }
         "remove_autoload" => {
-            let name = field(operation, "name")?;
+            let name = removed_name(operation, "an autoload")?;
             let removed = document.remove("autoload", name);
             Ok(json!({ "op": op, "name": name, "changed": removed }))
         }
@@ -1012,7 +1029,7 @@ fn apply_operation(
             Ok(json!({ "op": op, "name": name, "events": literals.len() }))
         }
         "remove_input_action" => {
-            let name = field(operation, "name")?;
+            let name = removed_name(operation, "an input action")?;
             let removed = document.remove("input", name);
             Ok(json!({ "op": op, "name": name, "changed": removed }))
         }
@@ -1145,11 +1162,12 @@ fn scalar_literal(
 ) -> Result<String, OutcomeError> {
     let mismatch = |expected: &str| invalid(&format!("`{setting}` takes {expected}"));
     match kind {
+        // Free text: a description may hold a tab or a newline.
         ValueKind::Text => value
             .as_str()
-            .filter(|text| text.len() <= 4096)
+            .filter(|text| text.chars().count() <= MAX_TEXT_CHARS)
             .map(godot_string)
-            .ok_or_else(|| mismatch("a string of at most 4096 bytes")),
+            .ok_or_else(|| mismatch(&format!("a string of at most {MAX_TEXT_CHARS} characters"))),
         ValueKind::ResourcePath => {
             let raw = value.as_str().ok_or_else(|| mismatch("a res:// path"))?;
             let (uri, relative) = res_path(raw, setting)?;
@@ -1472,10 +1490,10 @@ fn event_variant(kind: &str, fields: &[&str], required: &[&str]) -> Value {
 }
 
 /// The schema of one allowlisted setting's value, as [`scalar_literal`]
-/// reads it. A text's bound is in bytes, which a schema counts as characters.
+/// reads it.
 fn value_kind_schema(kind: ValueKind) -> Value {
     match kind {
-        ValueKind::Text => json!({ "type": "string", "maxLength": 4096 }),
+        ValueKind::Text => json!({ "type": "string", "maxLength": MAX_TEXT_CHARS }),
         ValueKind::ResourcePath => json!({ "type": "string", "pattern": "^res://" }),
         ValueKind::Integer { min, max } => {
             json!({ "type": "integer", "minimum": min, "maximum": max })
@@ -2764,6 +2782,66 @@ mod tests {
                 apply_operation(&mut document, case, &mut requirements).is_ok(),
                 *expected,
                 "the handler's verdict on {shown}"
+            );
+        }
+    }
+
+    /// A text setting's value is at most 4096 characters, whatever the bytes
+    /// each takes, and free text: it may be empty or hold a control
+    /// character, a tab or a newline in a description. An autoload or input
+    /// action to remove is named by a non-empty string, as the schema says.
+    #[test]
+    fn text_values_and_removed_names_follow_one_rule_in_the_schema_and_the_check() {
+        use crate::schema::conformance::{NameRule, name_cases};
+        let text = |value: &str| json!({ "op": "set_value", "setting": "application/config/description", "value": value });
+        let rule = NameRule {
+            limit: 4096,
+            empty: true,
+            control: false,
+        };
+        let mut cases: Vec<(Value, bool)> = name_cases(rule, "", "")
+            .into_iter()
+            .map(|(value, expected)| (text(&value), expected))
+            .collect();
+        cases.push((text("line one\nline two\tend"), true));
+        for op in ["remove_autoload", "remove_input_action"] {
+            for (name, expected) in [
+                ("Game", true),
+                ("\u{1F600}", true),
+                ("a\u{1F}b", true),
+                ("", false),
+            ] {
+                cases.push((json!({ "op": op, "name": name }), expected));
+            }
+            cases.push((json!({ "op": op, "name": 3 }), false));
+            cases.push((json!({ "op": op }), false));
+        }
+        let schema = advertised_operation_schema();
+        for (case, expected) in &cases {
+            let shown = format!(
+                "{} {}",
+                case["op"],
+                case.get("value").or_else(|| case.get("name")).map_or_else(
+                    || "nothing".to_owned(),
+                    |value| {
+                        format!(
+                            "{} characters",
+                            value.as_str().map_or(0, |text| text.chars().count())
+                        )
+                    }
+                )
+            );
+            assert_eq!(
+                crate::schema::conformance::conforms(&schema, case),
+                *expected,
+                "the schema's verdict on {shown}: {case}"
+            );
+            let mut document = Document::parse(MANIFEST_TEXT);
+            let mut requirements = Requirements { files: Vec::new() };
+            assert_eq!(
+                apply_operation(&mut document, case, &mut requirements).is_ok(),
+                *expected,
+                "the handler's verdict on {shown}: {case}"
             );
         }
     }
