@@ -566,7 +566,7 @@ fn event_field_schema(kind: &str, field: &str) -> Value {
             "maxItems": 8,
             "items": { "type": "string", "minLength": 1, "maxLength": MAX_NAME }
         }),
-        (_, "key" | "physical") => json!({ "type": "string", "minLength": 1, "maxLength": 64 }),
+        (_, "key" | "physical") => crate::schema::name(64),
         (_, "unicode") => json!({ "type": "integer", "minimum": 0, "maximum": 1_114_111 }),
         (_, "pressed" | "echo" | "double_click") => flag,
         (_, "modifiers") => json!({
@@ -586,9 +586,8 @@ fn event_field_schema(kind: &str, field: &str) -> Value {
         (_, "button") => json!({ "type": "integer", "minimum": 0, "maximum": 127 }),
         (_, "axis") => json!({ "type": "integer", "minimum": 0, "maximum": 9 }),
         (_, "value") => json!({ "type": "number", "minimum": -1, "maximum": 1 }),
-        (_, "action" | "class") => {
-            json!({ "type": "string", "minLength": 1, "maxLength": MAX_NAME })
-        }
+        (_, "action") => crate::schema::name(MAX_NAME),
+        (_, "class") => json!({ "type": "string", "minLength": 1, "maxLength": MAX_NAME }),
         (_, "strength") => json!({ "type": "number", "minimum": 0, "maximum": 1 }),
         (kind, field) => unreachable!("{kind} declares no field {field}"),
     }
@@ -1293,7 +1292,11 @@ fn event(value: &Value, index: usize) -> Result<(Option<u64>, Option<u64>, Value
             continue;
         };
         let fits = match (kind, *field) {
-            (_, "key" | "physical") => text(Some(value), 1, 64).is_some(),
+            // No key name Godot's `OS.find_keycode_from_string` knows holds a
+            // control character.
+            (_, "key" | "physical") => {
+                text(Some(value), 1, 64).is_some_and(|name| !name.chars().any(char::is_control))
+            }
             (_, "unicode") => whole(value).is_some_and(|code| code <= 1_114_111),
             (_, "pressed" | "echo" | "double_click") => value.is_boolean(),
             (_, "modifiers") => value.as_object().is_some_and(|modifiers| {
@@ -1323,7 +1326,10 @@ fn event(value: &Value, index: usize) -> Result<(Option<u64>, Option<u64>, Value
             (_, "value") => value
                 .as_f64()
                 .is_some_and(|value| (-1.0..=1.0).contains(&value)),
-            (_, "action" | "class") => text(Some(value), 1, MAX_NAME).is_some(),
+            // An action is named as `input.action.send` names it.
+            (_, "action") => text(Some(value), 1, MAX_NAME)
+                .is_some_and(|name| !name.chars().any(char::is_control)),
+            (_, "class") => text(Some(value), 1, MAX_NAME).is_some(),
             (_, "strength") => value
                 .as_f64()
                 .is_some_and(|value| (0.0..=1.0).contains(&value)),

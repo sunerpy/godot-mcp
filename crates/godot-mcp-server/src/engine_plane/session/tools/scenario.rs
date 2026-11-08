@@ -1503,6 +1503,43 @@ mod tests {
         });
     }
 
+    /// An input step of a scenario names its action and key as
+    /// `input.sequence.send`'s steps do: an action in 1 to 256 characters and
+    /// a key in 1 to 32, whatever the bytes each takes, neither with a
+    /// control character.
+    #[test]
+    fn a_scenario_input_step_names_actions_and_keys_as_a_sequence_does() {
+        use crate::schema::conformance::{NameRule, name_cases};
+        let action = NameRule {
+            limit: 256,
+            empty: false,
+            control: true,
+        };
+        let key = NameRule {
+            limit: 32,
+            ..action
+        };
+        let input = |step: Value| scenario(json!([{ "kind": "input", "steps": [step] }]));
+        let mut cases = Vec::new();
+        for (name, expected) in name_cases(action, "", "") {
+            cases.push((
+                input(json!({ "kind": "action", "action": name })),
+                expected,
+                expected,
+            ));
+        }
+        for (name, expected) in name_cases(key, "", "") {
+            cases.push((
+                input(json!({ "kind": "key", "key": name })),
+                expected,
+                expected,
+            ));
+        }
+        verdicts("test.scenario.run", &cases, |arguments| {
+            plan(arguments).is_ok()
+        });
+    }
+
     #[test]
     fn a_plan_is_spelled_for_the_probe() {
         let plan = plan(&map(json!({

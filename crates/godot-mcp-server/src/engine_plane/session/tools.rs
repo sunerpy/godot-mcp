@@ -599,7 +599,8 @@ impl SessionCall for SessionOperation {
                     "action": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 256,
+                        "maxLength": MAX_ACTION_CHARS,
+                        "pattern": crate::schema::NO_CONTROL_PATTERN,
                         "description": "An input action of the game's input map, e.g. ui_accept."
                     },
                     "state": state,
@@ -619,7 +620,8 @@ impl SessionCall for SessionOperation {
                     "key": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 32,
+                        "maxLength": MAX_KEY_CHARS,
+                        "pattern": crate::schema::NO_CONTROL_PATTERN,
                         "description": "A Godot key name: A, Space, Enter, Left, F1, ..."
                     },
                     "state": state,
@@ -677,8 +679,8 @@ impl SessionCall for SessionOperation {
                                         .iter()
                                         .map(|field| {
                                             let schema = match *field {
-                                                "action" => json!({ "type": "string", "minLength": 1, "maxLength": 256 }),
-                                                "key" => json!({ "type": "string", "minLength": 1, "maxLength": 32 }),
+                                                "action" => crate::schema::name(MAX_ACTION_CHARS),
+                                                "key" => crate::schema::name(MAX_KEY_CHARS),
                                                 "button" => button.clone(),
                                                 "position" => position.clone(),
                                                 "state" => state.clone(),
@@ -886,6 +888,29 @@ fn res_scene(raw: &str) -> Result<String, OutcomeError> {
     Ok(format!("res://{relative}"))
 }
 
+/// `runtime.performance.get`'s `monitors`: the monitors to read, every one
+/// when absent.
+fn performance_monitors(arguments: &Map<String, Value>) -> Result<Option<Value>, OutcomeError> {
+    let Some(names) = arguments.get("monitors") else {
+        return Ok(None);
+    };
+    let names = names
+        .as_array()
+        .filter(|names| {
+            names.len() <= MAX_MONITORS
+                && names.iter().all(|name| {
+                    name.as_str()
+                        .is_some_and(|name| !name.is_empty() && name.chars().count() <= 256)
+                })
+        })
+        .ok_or_else(|| {
+            invalid(format!(
+                "`monitors` is an array of at most {MAX_MONITORS} monitor names"
+            ))
+        })?;
+    Ok(Some(Value::Array(names.clone())))
+}
+
 /// One input step in the probe's spelling, validated.
 /// Every input step kind, every field it declares and the fields it requires.
 /// The schema and [`sequence_step`] both read it.
@@ -922,6 +947,20 @@ fn sequence_step(step: &Map<String, Value>) -> Result<Value, OutcomeError> {
     probe_step(step, kind)
 }
 
+/// The longest input action name an input step takes, in characters.
+const MAX_ACTION_CHARS: usize = 256;
+/// The longest key name an input step takes, in characters.
+const MAX_KEY_CHARS: usize = 32;
+
+/// Whether `name` can name an input action or a key: 1 to `most`
+/// characters, none of them a control character. The project settings this
+/// server writes refuse one in an action name, Godot's input-map editor does
+/// below U+0020, and `OS.find_keycode_from_string` knows no key name that
+/// holds one.
+fn is_input_name(name: &str, most: usize) -> bool {
+    !name.is_empty() && name.chars().count() <= most && !name.chars().any(char::is_control)
+}
+
 fn probe_step(step: &Map<String, Value>, kind: &str) -> Result<Value, OutcomeError> {
     let mut out = Map::new();
     out.insert("kind".to_owned(), Value::String(kind.to_owned()));
@@ -938,8 +977,11 @@ fn probe_step(step: &Map<String, Value>, kind: &str) -> Result<Value, OutcomeErr
     match kind {
         "action" => {
             let action = required_string(step, "action")?;
-            if action.is_empty() || action.len() > 256 {
-                return Err(invalid("`action` must name an input action"));
+            if !is_input_name(action, MAX_ACTION_CHARS) {
+                return Err(invalid(format!(
+                    "`action` must name an input action: 1 to {MAX_ACTION_CHARS} characters \
+                     without control characters"
+                )));
             }
             out.insert("action".to_owned(), Value::String(action.to_owned()));
             if let Some(strength) = step.get("strength") {
@@ -952,8 +994,11 @@ fn probe_step(step: &Map<String, Value>, kind: &str) -> Result<Value, OutcomeErr
         }
         "key" => {
             let key = required_string(step, "key")?;
-            if key.is_empty() || key.len() > 32 {
-                return Err(invalid("`key` must name a key"));
+            if !is_input_name(key, MAX_KEY_CHARS) {
+                return Err(invalid(format!(
+                    "`key` must name a key: 1 to {MAX_KEY_CHARS} characters without control \
+                     characters"
+                )));
             }
             out.insert("key".to_owned(), Value::String(key.to_owned()));
             if let Some(modifiers) = step.get("modifiers") {
@@ -1181,22 +1226,8 @@ impl SessionHandler {
                 }
             }
             SessionOperation::PerformanceGet => {
-                if let Some(names) = arguments.get("monitors") {
-                    let names = names
-                        .as_array()
-                        .filter(|names| {
-                            names.len() <= MAX_MONITORS
-                                && names.iter().all(|name| {
-                                    name.as_str()
-                                        .is_some_and(|name| !name.is_empty() && name.len() <= 256)
-                                })
-                        })
-                        .ok_or_else(|| {
-                            invalid(format!(
-                                "`monitors` is an array of at most {MAX_MONITORS} monitor names"
-                            ))
-                        })?;
-                    payload.insert("monitors".to_owned(), Value::Array(names.clone()));
+                if let Some(names) = performance_monitors(arguments)? {
+                    payload.insert("monitors".to_owned(), names);
                 }
             }
             _ => {
@@ -2228,6 +2259,148 @@ mod tests {
                 "{kind} {step}"
             );
         }
+    }
+
+    /// An input action named in 1 to 256 characters, whatever the bytes each
+    /// takes, without a control character: the project settings this server
+    /// writes refuse one in an action name, and so does Godot's input-map
+    /// editor below U+0020.
+    const ACTION_NAME: crate::schema::conformance::NameRule =
+        crate::schema::conformance::NameRule {
+            limit: 256,
+            empty: false,
+            control: true,
+        };
+
+    /// A key named in 1 to 32 characters without a control character: no key
+    /// name Godot's `OS.find_keycode_from_string` knows holds one.
+    const KEY_NAME: crate::schema::conformance::NameRule = crate::schema::conformance::NameRule {
+        limit: 32,
+        ..ACTION_NAME
+    };
+
+    /// The name cases of `rule`, each as the arguments `wrap` makes of it,
+    /// with the same verdict for the schema and the handler.
+    fn named_cases(
+        rule: crate::schema::conformance::NameRule,
+        wrap: impl Fn(String) -> Value,
+    ) -> Vec<(Value, bool, bool)> {
+        crate::schema::conformance::name_cases(rule, "", "")
+            .into_iter()
+            .map(|(name, expected)| (wrap(name), expected, expected))
+            .collect()
+    }
+
+    /// An action or key a tool sends, or a sequence step names, follows the
+    /// same rule in the schema and in the check.
+    #[test]
+    fn action_and_key_names_agree_with_their_checks() {
+        let sequence = |arguments: &Map<String, Value>| {
+            arguments
+                .get("steps")
+                .and_then(Value::as_array)
+                .is_some_and(|steps| {
+                    steps.iter().all(|step| {
+                        step.as_object()
+                            .is_some_and(|step| sequence_step(step).is_ok())
+                    })
+                })
+        };
+        verdicts(
+            "input.action.send",
+            &named_cases(ACTION_NAME, |name| json!({ "action": name })),
+            |arguments| probe_step(&arguments_without_session(arguments), "action").is_ok(),
+        );
+        verdicts(
+            "input.key.send",
+            &named_cases(KEY_NAME, |name| json!({ "key": name })),
+            |arguments| probe_step(&arguments_without_session(arguments), "key").is_ok(),
+        );
+        verdicts(
+            "input.sequence.send",
+            &named_cases(
+                ACTION_NAME,
+                |name| json!({ "steps": [{ "kind": "action", "action": name }] }),
+            ),
+            sequence,
+        );
+        verdicts(
+            "input.sequence.send",
+            &named_cases(
+                KEY_NAME,
+                |name| json!({ "steps": [{ "kind": "key", "key": name }] }),
+            ),
+            sequence,
+        );
+    }
+
+    /// A replayed event names its action as `input.action.send` does, and
+    /// its key or physical key in 1 to 64 characters without a control
+    /// character, the names the recording answers.
+    #[test]
+    fn replayed_action_and_key_names_agree_with_their_checks() {
+        let replay = |arguments: &Map<String, Value>| {
+            control::payload(SessionOperation::InputReplay, arguments).is_ok()
+        };
+        let event = |event: Value| json!({ "events": [event] });
+        let key = crate::schema::conformance::NameRule {
+            limit: 64,
+            ..ACTION_NAME
+        };
+        verdicts(
+            "input.replay",
+            &named_cases(ACTION_NAME, |name| {
+                event(json!({ "t_ms": 0, "kind": "action", "action": name }))
+            }),
+            replay,
+        );
+        verdicts(
+            "input.replay",
+            &named_cases(key, |name| {
+                event(json!({ "t_ms": 0, "kind": "key", "key": name }))
+            }),
+            replay,
+        );
+        verdicts(
+            "input.replay",
+            &named_cases(key, |name| {
+                event(json!({ "t_ms": 0, "kind": "key", "physical": name }))
+            }),
+            replay,
+        );
+    }
+
+    /// A monitor is named in 1 to 256 characters, whatever the bytes each
+    /// takes, and may hold a control character: a project names its custom
+    /// monitors as it likes, and `editor.performance.get` and `runtime.sample`
+    /// take such a name too.
+    #[test]
+    fn the_performance_schema_and_its_check_agree() {
+        let rule = crate::schema::conformance::NameRule {
+            limit: 256,
+            empty: false,
+            control: false,
+        };
+        let mut cases = named_cases(rule, |name| json!({ "monitors": [name] }));
+        cases.extend([
+            (json!({}), true, true),
+            (json!({ "monitors": [] }), true, true),
+            (
+                json!({ "monitors": ["TIME_FPS", "Game/Score"] }),
+                true,
+                true,
+            ),
+            (json!({ "monitors": "TIME_FPS" }), false, false),
+            (json!({ "monitors": [3] }), false, false),
+            (
+                json!({ "monitors": vec!["TIME_FPS"; MAX_MONITORS + 1] }),
+                false,
+                false,
+            ),
+        ]);
+        verdicts("runtime.performance.get", &cases, |arguments| {
+            performance_monitors(arguments).is_ok()
+        });
     }
 
     /// The advertised schema of a managed-session tool.
