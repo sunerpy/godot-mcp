@@ -308,8 +308,10 @@ shape, and no field is added, renamed or retyped.
   terminator (`\n`, `\r`, U+2028 and U+2029). The project-relative path pattern of every engine
   path field, `project.test`'s selection and `debug.command`'s GDScript path name the
   characters they take instead. A strict client now takes a path holding U+2028 or U+2029, as
-  the checks always did, and `debug.command` a path holding `\n` or `\r` too; it refuses a
-  `project.test` selection with `,` or `;` after a line terminator, as the check always did.
+  the checks always did, and `debug.command` a path holding `\n` or `\r` too. It still refuses a
+  `project.test` selection with `,` or `;` after U+2028 or U+2029, as the check does: the
+  selection's own lookahead now refuses it, where the path pattern refused every line terminator
+  before.
 
 Some requests a 0.6.0 server took are refused: a control character in the fields of the second
 point, an empty `base` or removed name, and a `res://`-prefixed read path of 1,025 to 1,030
