@@ -781,6 +781,7 @@ fn startup_reconciliation_same_byte_staged_update_converges_to_compensated() {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })
     .expect("real startup reconciliation must converge for a staged same-byte update");
@@ -834,6 +835,7 @@ fn startup_reconciliation_intent_only_create_and_update_prove_pre_state() {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })
     .expect("real startup reconciliation opens the project");
@@ -895,6 +897,7 @@ fn startup_reconciliation_intent_only_pre_state_mismatch_quarantines() {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })
     .expect("real startup reconciliation opens the project");

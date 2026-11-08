@@ -190,6 +190,11 @@ const SCRIPT: ToolAnnotations = ToolAnnotations {
     open_world: true,
 };
 
+/// Calling code the project declares: it runs with the user's privileges, so
+/// like a caller's script it may change or remove anything the user can, and
+/// reach anything the user can reach, whatever its declaration says.
+const PROJECT_COMMAND: ToolAnnotations = SCRIPT;
+
 const CREATE: ToolAnnotations = ToolAnnotations {
     read_only: false,
     destructive: false,
@@ -1874,6 +1879,42 @@ pub const TOOL_CATALOG: &[ToolDescriptor] = &[
          Godot 4.5.1 and later hand to the plugin. Carries the scene's semantic digest. \
          Reading adds no undo history and marks nothing unsaved.",
     )),
+    // --- contract 0.6.0: commands the project declares -------------------------
+    ToolDescriptor {
+        profiles: EDITOR_PROFILES,
+        introduced_in: ContractVersion::V0_6_0,
+        ..bound_read(
+            AuthoringOperation::CommandsList.key(),
+            "editor.commands.list",
+            "List the project's commands",
+            "Read godot_mcp_commands.json at the project root and list the commands the project \
+             declares for editor.commands.call: each provider's script, each command's name, \
+             title, description, input schema and `mutates` flag, whether it can be called and \
+             why not, every problem the file has, whether the server allows project commands and \
+             whether a connected editor serves them. Runs no project code; needs no Godot \
+             process.",
+            IdentityFamily::StaticDiscovery,
+        )
+    },
+    ToolDescriptor {
+        introduced_in: ContractVersion::V0_6_0,
+        ..editor_mutation(
+            EditorOperation::CommandsCall.key(),
+            "editor.commands.call",
+            "Call a project command",
+            "Call a `command` of a `provider` the project declares in godot_mcp_commands.json, \
+             with `arguments` the server first checks against the command's declared input \
+             schema. The connected editor loads the provider's tool script, awaits its \
+             `mcp_call(command, args)` and answers what it returned as a tagged value, what the \
+             editor logged meanwhile (Godot 4.5.1 and later) and every project file that differs \
+             from before the call; nothing is undone. The project's code runs with the user's \
+             privileges and nothing confines what it does. Godot cannot stop it part way: when \
+             `deadline_ms` passes first the answer is `uncertain`, the code may still be running, \
+             and writes stay blocked until it is resolved. Refused when the server does not \
+             allow project commands; editor.commands.list shows what can be called.",
+            PROJECT_COMMAND,
+        )
+    },
     runtime_read(
         SessionOperation::TreeGet.key(),
         "runtime.tree.get",
@@ -2698,13 +2739,14 @@ mod tests {
     }
 
     /// A tool the frozen contract 0.2 lists was introduced by 0.2 or earlier,
-    /// one the frozen contract 0.3 lists by 0.3 or earlier, and one the frozen
-    /// contract 0.4 lists by 0.4; every other tool was introduced by contract
-    /// 0.5.
+    /// one the frozen contract 0.3 lists by 0.3 or earlier, one the frozen
+    /// contract 0.4 lists by 0.4 and one the frozen contract 0.5 lists by 0.5;
+    /// every other tool was introduced by contract 0.6.
     #[test]
     fn every_tool_says_which_contract_introduced_it() {
         use crate::manifests::{
             historical_manifest_v0_2, historical_manifest_v0_3, historical_manifest_v0_4,
+            historical_manifest_v0_5,
         };
 
         let listed = |manifest: crate::manifests::ProfileManifest| -> BTreeSet<String> {
@@ -2717,6 +2759,7 @@ mod tests {
         let v0_2 = listed(historical_manifest_v0_2(CapabilityProfile::Full));
         let v0_3 = listed(historical_manifest_v0_3(CapabilityProfile::Full));
         let v0_4 = listed(historical_manifest_v0_4(CapabilityProfile::Full));
+        let v0_5 = listed(historical_manifest_v0_5(CapabilityProfile::Full));
         for tool in TOOL_CATALOG {
             let expected = if v0_2.contains(tool.name) {
                 tool.introduced_in
@@ -2724,8 +2767,10 @@ mod tests {
                 ContractVersion::V0_3_0
             } else if v0_4.contains(tool.name) {
                 ContractVersion::V0_4_0
-            } else {
+            } else if v0_5.contains(tool.name) {
                 ContractVersion::V0_5_0
+            } else {
+                ContractVersion::V0_6_0
             };
             assert!(
                 tool.introduced_in <= ContractVersion::V0_2_0 || !v0_2.contains(tool.name),

@@ -144,6 +144,7 @@ fn main() -> ExitCode {
                 limits: config.limits.clone(),
                 process: config.process.clone(),
                 allow_scripts: config.allow_scripts,
+                project_commands: config.project_commands_enabled(),
                 android: config.android.clone(),
             });
         }
@@ -158,6 +159,7 @@ fn main() -> ExitCode {
         limits: config.limits.clone(),
         process: config.process.clone(),
         allow_scripts: config.allow_scripts,
+        project_commands: config.project_commands_enabled(),
         android: config.android.clone(),
     };
 

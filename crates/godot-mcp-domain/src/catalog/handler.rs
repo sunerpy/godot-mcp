@@ -124,6 +124,7 @@ operations! {
         AddonInstall,
         AddonUpdate,
         AddonRemove,
+        CommandsList,
     }
 }
 
@@ -164,6 +165,7 @@ operations! {
         PerformanceGet,
         ResourcePreview,
         SceneRead,
+        CommandsCall,
     }
 }
 

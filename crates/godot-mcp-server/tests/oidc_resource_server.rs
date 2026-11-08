@@ -447,6 +447,7 @@ subject = "{SUBJECT}"
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: false,
         android: Default::default(),
     })?;
     let transport = bind_http_transport(

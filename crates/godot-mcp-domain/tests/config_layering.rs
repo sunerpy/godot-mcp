@@ -1473,3 +1473,82 @@ fn an_open_listener_accepts_script_execution_and_keeps_the_bridge_on_loopback() 
         "got {error:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Project-declared commands (ADR 0016): on by transport unless set explicitly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn project_commands_are_on_except_for_a_proxied_principal() {
+    let stdio = load_config(None, &no_env(), &CliOverrides::default()).expect("defaults");
+    assert_eq!(stdio.project_commands, None, "unset unless configured");
+    assert!(stdio.project_commands_enabled(), "on for stdio");
+    let trusted = load_config(
+        Some(TRUSTED_LOCAL_FILE),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("valid");
+    assert!(trusted.project_commands_enabled(), "on for trusted_local");
+    let open = load_config(Some(OPEN_FILE), &no_env(), &CliOverrides::default()).expect("valid");
+    assert!(open.project_commands_enabled(), "on for open");
+    let proxied =
+        load_config(Some(PROXIED_OIDC_FILE), &no_env(), &CliOverrides::default()).expect("valid");
+    assert!(!proxied.project_commands_enabled(), "off for proxied_oidc");
+}
+
+#[test]
+fn project_commands_follow_the_file_the_environment_and_the_cli() {
+    let proxied = load_config(
+        Some(&format!("project_commands = true\n{PROXIED_OIDC_FILE}")),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("an operator may turn them on for a proxied principal");
+    assert_eq!(proxied.project_commands, Some(true));
+    assert!(proxied.project_commands_enabled());
+    let off = load_config(
+        Some("project_commands = false\n"),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect("file");
+    assert!(!off.project_commands_enabled());
+    let environment = load_config(
+        Some("project_commands = true\n"),
+        &env(&[("GODOT_MCP_PROJECT_COMMANDS", "false")]),
+        &CliOverrides::default(),
+    )
+    .expect("environment");
+    assert!(
+        !environment.project_commands_enabled(),
+        "the environment wins over the file"
+    );
+    let cli = load_config(
+        None,
+        &env(&[("GODOT_MCP_PROJECT_COMMANDS", "false")]),
+        &CliOverrides {
+            project_commands: Some(true),
+            ..CliOverrides::default()
+        },
+    )
+    .expect("cli");
+    assert!(cli.project_commands_enabled(), "the CLI wins");
+    let error = load_config(
+        None,
+        &env(&[("GODOT_MCP_PROJECT_COMMANDS", "yes")]),
+        &CliOverrides::default(),
+    )
+    .expect_err("only true or false");
+    assert!(
+        matches!(error, ConfigError::InvalidEnvValue { .. }),
+        "{error}"
+    );
+    let error = load_config(
+        Some("project_commands = \"on\"\n"),
+        &no_env(),
+        &CliOverrides::default(),
+    )
+    .expect_err("a boolean");
+    assert!(matches!(error, ConfigError::Parse(_)), "{error}");
+}

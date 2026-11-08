@@ -81,7 +81,7 @@ impl Place {
 }
 
 /// The log kinds that make a run `failed`.
-const ERROR_KINDS: [&str; 3] = ["error", "script", "shader"];
+pub(crate) const ERROR_KINDS: [&str; 3] = ["error", "script", "shader"];
 
 fn outcome_error(kind: ErrorKind, message: impl Into<String>) -> OutcomeError {
     OutcomeError::new(
@@ -294,7 +294,7 @@ pub(crate) fn answer_of(answer: Value, changes: Result<Value, String>) -> Value 
 /// The run's log entries as diagnostics (errors and warnings) and output (what
 /// it printed), each diagnostic with the line of the caller's source it names
 /// when the entry or its backtrace is inside the compiled source.
-fn sort_log(entries: &[Value], source_file: Option<&str>) -> (Vec<Value>, Vec<Value>) {
+pub(crate) fn sort_log(entries: &[Value], source_file: Option<&str>) -> (Vec<Value>, Vec<Value>) {
     let ours = |file: &Value| source_file.is_some() && file.as_str() == source_file;
     let mut diagnostics = Vec::new();
     let mut output = Vec::new();

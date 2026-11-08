@@ -130,8 +130,8 @@ sbom:
 
 # The live suites `godot-test` runs against a locked editor, each case once per build.
 LIVE_SUITES := live_editor_bridge live_authoring live_recipes live_editor_script \
-	live_editor_more live_runtime_control live_runtime_script live_runtime_scenario \
-	script_run insight_engine live_deploy
+	live_editor_commands live_editor_more live_runtime_control live_runtime_script \
+	live_runtime_scenario script_run insight_engine live_deploy
 # The live suites of the CLI crate, which drive the `godot-mcp` binary itself.
 CLI_LIVE_SUITES := live_editor_exit
 

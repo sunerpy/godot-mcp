@@ -23,6 +23,9 @@ pub struct OpenListener {
     pub profile: &'static str,
     /// Whether the script tools run caller-written GDScript.
     pub allow_scripts: bool,
+    /// Whether the profile lists `editor.commands.call` and the server calls
+    /// the commands a project declares (ADR 0016).
+    pub project_commands: bool,
 }
 
 fn url(address: SocketAddr) -> String {
@@ -77,6 +80,13 @@ pub fn lines(listener: &OpenListener, route: impl Fn(IpAddr) -> Option<IpAddr>) 
                     .to_owned(),
             );
         }
+        if listener.project_commands {
+            lines.push(
+                "godot-mcp serve: warning: project commands are on, so they can also run the \
+                 commands the project declares in godot_mcp_commands.json"
+                    .to_owned(),
+            );
+        }
     }
     lines
 }
@@ -119,6 +129,14 @@ mod tests {
             token,
             profile: "full",
             allow_scripts,
+            project_commands: false,
+        }
+    }
+
+    fn with_commands(bound: &str, token: bool) -> OpenListener {
+        OpenListener {
+            project_commands: true,
+            ..listener(bound, token, false)
         }
     }
 
@@ -126,6 +144,8 @@ mod tests {
                            can use every tool of the full profile";
     const SCRIPTS: &str = "godot-mcp serve: warning: script execution is on, so they can also \
                            run any GDScript with this user's privileges";
+    const COMMANDS: &str = "godot-mcp serve: warning: project commands are on, so they can also \
+                            run the commands the project declares in godot_mcp_commands.json";
 
     #[test]
     fn a_wildcard_bind_names_this_host_and_the_lan_address() {
@@ -190,6 +210,35 @@ mod tests {
             ["godot-mcp serve: HTTP (open) listening at http://127.0.0.1:8765/mcp"]
         );
         assert_eq!(lines(&listener("[::1]:8765", false, false), never).len(), 1);
+    }
+
+    /// A profile that lists `editor.commands.call`, with the switch on, lets
+    /// anyone who reaches the port run the project's declared commands.
+    #[test]
+    fn project_commands_are_named_beside_the_warning() {
+        let never = |_: IpAddr| -> Option<IpAddr> { panic!("a specific bind needs no route") };
+        assert_eq!(
+            lines(&with_commands("192.168.1.20:8765", false), never),
+            [
+                "godot-mcp serve: HTTP (open) listening at http://192.168.1.20:8765/mcp",
+                WARNING,
+                COMMANDS,
+            ]
+        );
+        let both = OpenListener {
+            allow_scripts: true,
+            ..with_commands("192.168.1.20:8765", false)
+        };
+        assert_eq!(lines(&both, never)[2..], [SCRIPTS, COMMANDS]);
+        // A token or a loopback bind silences it, as it does the others.
+        assert_eq!(
+            lines(&with_commands("192.168.1.20:8765", true), never).len(),
+            1
+        );
+        assert_eq!(
+            lines(&with_commands("127.0.0.1:8765", false), never).len(),
+            1
+        );
     }
 
     #[test]

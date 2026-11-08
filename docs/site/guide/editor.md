@@ -86,6 +86,7 @@ lasts until you turn it off, close the editor or reload the add-on. The
 | `editor.shortcuts.get`, `editor.shortcuts.set` | Reads and rebinds the editor's shortcuts, the ones its Shortcuts tab lists |
 | `editor.play.start`, `editor.play.stop` | Runs the game as the editor's Play button does, and stops it |
 | `editor.addon.reload` | Reloads the plugin; the editor reconnects |
+| `editor.commands.list`, `editor.commands.call` | Lists the commands your project declares; runs one in the editor and answers what it returned |
 
 Reads never change editor state: they open nothing, select nothing, mark nothing unsaved and add
 nothing to an undo history.
@@ -250,6 +251,53 @@ Godot cannot stop a script part way through. The server waits `deadline_ms` and 
 a run that has not answered by then is `uncertain`, the editor may still be running it, and the
 project's changes stay blocked until the editor answers when the run ends, or the transaction is
 resolved ([Recovery](../operate/recovery.md)). Only closing the editor ends the code.
+
+## Commands your project declares
+
+A project can offer its own editor tooling to an agent as commands. List them in
+`godot_mcp_commands.json` at the project root, each with a description and a JSON Schema for its
+arguments, and write them in a `@tool` script whose `mcp_call(command, args)` answers
+`{"ok": true, "value": ...}` or `{"ok": false, "error": "..."}`:
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "levels",
+      "script": "res://tools/level_commands.gd",
+      "commands": [
+        {
+          "name": "rebuild",
+          "title": "Rebuild a level",
+          "description": "Generate res://levels/level_<seed>.tscn from a seed.",
+          "input_schema": {
+            "type": "object",
+            "properties": { "seed": { "type": "integer", "minimum": 0 } },
+            "required": ["seed"],
+            "additionalProperties": false
+          },
+          "mutates": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+`editor.commands.list` shows what the file declares, which commands can be called and why one
+cannot, and runs nothing. `editor.commands.call` checks the arguments against the command's
+schema, has the editor run the command, and answers what it returned, what the editor logged and
+every project file that differs afterwards. Nothing it does is undone, and a call that has not
+answered by its deadline is `uncertain` and blocks further changes until its answer comes or it
+is resolved, as a script does.
+
+Project commands are on, because the code is your project's own; behind a proxy they are off
+until the configuration turns them on, and `project_commands = false` turns them off anywhere.
+The [project commands reference](../../operator/project-commands.md) has the file format, the
+argument rules, a complete provider and the answer. godot-mcp 0.5.0 and earlier have no project
+commands, and an add-on earlier than 0.5.0 answers `unsupported` until `editor.addon.update`
+replaces it.
 
 ## When an answer is lost
 

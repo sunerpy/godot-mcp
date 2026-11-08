@@ -35,7 +35,7 @@ proof that the editor's process has ended.
   session take the request under one lock, so an answer that meets the deadline reaches either
   the caller or the kept request, never neither. A report that arrives before the server is
   ready to settle anything waits for it, at most 16.
-- **The add-on reports what it could not deliver.** Add-on 0.4.1 keeps the answer to a mutation
+- **The add-on reports what it could not deliver.** Add-on 0.5.0 keeps the answer to a mutation
   it could not deliver, or delivered after the request's deadline, and records a queued mutation
   dropped with a lost connection as `not_started`: at most 16 answers that say what happened. It
   reports each in a mutation.late_answer event, at once when a session is described and to
@@ -58,7 +58,7 @@ proof that the editor's process has ended.
 
 ### An editor that ended
 
-- **The server records which process it sent the request to.** Add-on 0.4.1 also reports the
+- **The server records which process it sent the request to.** Add-on 0.5.0 also reports the
   executable it runs in its session description. The server keeps the editor's process ID and
   start time only when the platform reports start times (Linux and macOS), the add-on named an
   executable, and the process runs that same file; the start time is read on both sides of the
@@ -103,7 +103,7 @@ proof that the editor's process has ended.
   its answer settled it there. With `deadline_ms` 29000 and the main thread held for 40 s, Godot
   4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2 each lost the session to the silence rule, dialled again
   when the run ended, and settled the run from its report 43.0 to 44.1 s after the call.
-- An add-on older than 0.4.1 sends no report and names no executable, so only an answer on the
+- An add-on older than 0.5.0 sends no report and names no executable, so only an answer on the
   same session settles a change made through it, and the operator's repair cannot.
 - The repair is unavailable where the server cannot identify the editor's process: on Windows,
   for an editor in another PID namespace such as a container or a Flatpak, for a request

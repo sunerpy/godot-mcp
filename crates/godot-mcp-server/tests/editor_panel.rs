@@ -344,6 +344,7 @@ async fn over_http_the_status_names_the_http_transport() -> anyhow::Result<()> {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })?;
     let transport = bind_http_transport(

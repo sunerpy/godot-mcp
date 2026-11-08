@@ -36,6 +36,7 @@ fn options(project: &Path) -> StdioOptions {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     }
 }

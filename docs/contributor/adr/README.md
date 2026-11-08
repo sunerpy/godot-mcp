@@ -17,7 +17,8 @@ than only what was decided.
 | [0009](0009-aws-lc-rs-jwt-backend.md) | JWT uses aws-lc-rs and removes the vulnerable rsa dependency |
 | [0010](0010-complete-development-bridge-strategy.md) | Complete development restores editor/runtime with a default GDScript bridge and optional gdext backend |
 | [0011](0011-live-editor-operability.md) | The live editor is operated through typed tools and one fixed table of editing calls |
-| [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch (amended by 0014 and 0015) |
+| [0012](0012-declared-script-execution.md) | Script execution is declared: three tools behind one operator switch (amended by 0014, 0015 and 0016) |
 | [0013](0013-editor-restart.md) | The editor is restarted only when nothing it holds can be lost |
 | [0014](0014-open-http-mode.md) | An open HTTP mode for development networks |
 | [0015](0015-unanswered-editor-changes.md) | An unanswered editor change is settled by its late answer, or once its editor has ended |
+| [0016](0016-project-commands.md) | Commands a project declares, listed without running anything and called through the editor |

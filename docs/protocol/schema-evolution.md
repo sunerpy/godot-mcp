@@ -162,11 +162,36 @@ All of them are additions: a 0.4.0 client loses nothing, and a request it could 
 it meant. A 0.4.0 server refuses a configuration file with `mode = "open"`, as it refuses every
 unknown value.
 
+### Contract 0.6.0
+
+Contract 0.6.0 adds two tools, a project file format and a configuration key
+([ADR 0016](../contributor/adr/0016-project-commands.md)). The 0.5.0 manifests stay frozen in
+`schemas/domain/profiles/v0.5/`. The same release corrects schemas that disagreed with their
+checks and writes each tool's schema with only the definitions it uses.
+
+* `editor.commands.list` and `editor.commands.call`, in the `editor` and `full` profiles, list and
+  call the commands a project declares in `godot_mcp_commands.json`. The list reads the file and
+  runs nothing; the call checks its arguments against the command's declared schema and is
+  carried out by the connected editor. See [Project commands](../operator/project-commands.md).
+* The declaration's format, version 1, is published as
+  `schemas/domain/project-commands-v1.schema.json`.
+* The JSON Schema subset that checks a command's arguments, `godot_mcp_domain::jsonschema`, gains
+  `maximum`, the inclusive upper bound beside `minimum`.
+* The configuration key `project_commands` and the variable `GODOT_MCP_PROJECT_COMMANDS`. Unset,
+  project commands are on for stdio, `trusted_local` and `open`, and off for `proxied_oidc`.
+* The editor bridge gains the method `editor.commands.call`, which a server lists in a session's
+  capabilities only while project commands are on; add-on 0.5.0 implements it. With an add-on that
+  predates it the tool answers `unsupported` and says to update it.
+
+All of them are additions: a 0.5.0 client loses nothing, and a request it could send means what
+it meant. A 0.5.0 server refuses a configuration file with `project_commands`, as it refuses every
+unknown key, and ignores a `godot_mcp_commands.json`, which is an ordinary project file to it.
+
 #### 0.6.0 corrections
 
-Release 0.6.0 corrects places where a tool's advertised schema and its own check disagreed.
-The contract stays 0.5.0: no data-transfer object, error variant or capability manifest changes
-shape.
+Release 0.6.0 also corrects places where a tool's advertised schema and its own check
+disagreed. No data-transfer object, error variant or capability manifest changes shape for
+them.
 
 * In `scene.batch.apply`, `scene.create`, `editor.scene.edit` and `project.batch.apply`, the
   `method` of `connect_signal` and `disconnect_signal` was advertised as `call_method`'s list of
@@ -190,8 +215,8 @@ No request a 0.5.0 server took is refused.
 
 #### 0.6.0 schema writing
 
-Release 0.6.0 changes how the tool schemas are written and nothing they decide. The contract
-stays 0.5.0: the schemas take and refuse exactly the requests they did before.
+Release 0.6.0 also changes how the tool schemas are written and nothing they decide: the
+schemas take and refuse exactly the requests they did before.
 
 * A tool's `$defs` holds only the definitions its schema refers to, directly or through another
   definition. A tool that takes only plain values no longer carries the definitions of a
@@ -210,8 +235,8 @@ A tool that took no tagged value still carries no `$defs`, and every reference r
 tool's own schema. Measured as
 [How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
 describes, `tools/list` shrinks from 406,072 to 312,424 bytes in the `editor` profile, from
-231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`; `core`, whose tools take
-no tagged value, stays at 28,044.
+231,860 to 193,983 in `runtime` and from 605,686 to 474,161 in `full`, measured before the
+project-command tools were added; `core`, whose tools take no tagged value, stays at 28,044.
 
 ## Bridge protocol
 

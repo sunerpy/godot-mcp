@@ -28,6 +28,12 @@ writes it and the editor can undo it.
 [Profiles and tool outcomes](../../operator/profiles-and-outcomes.md#script-execution) says what a
 run answers and what ends it.
 
+Two more tools, in the `editor` and `full` profiles, run the commands your project declares in
+`godot_mcp_commands.json`: `editor.commands.list` lists them and runs nothing, and
+`editor.commands.call` runs one in the open editor
+([The editor add-on](editor.md#commands-your-project-declares)). They need no switch, because the
+code is your project's own; behind a proxy they are off until the configuration turns them on.
+
 ## Membership is not availability
 
 A tool appears in `tools/list` because the profile lists it. Whether what it needs is there right

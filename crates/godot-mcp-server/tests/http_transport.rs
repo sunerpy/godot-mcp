@@ -592,6 +592,7 @@ async fn production_http_health_reports_the_bound_transport_and_live_auth_mode()
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })?;
 

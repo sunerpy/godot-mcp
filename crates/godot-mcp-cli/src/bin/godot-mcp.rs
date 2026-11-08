@@ -618,6 +618,10 @@ async fn serve_http(
             token: transport.requires_open_token(),
             profile: profile.manifest_name(),
             allow_scripts: config.allow_scripts,
+            project_commands: config.project_commands_enabled()
+                && godot_mcp_domain::manifests::canonical_manifest(profile)
+                    .tools
+                    .contains("editor.commands.call"),
         };
         for line in
             godot_mcp_cli::serve_banner::lines(&listener, godot_mcp_cli::serve_banner::route_probe)
@@ -778,6 +782,7 @@ fn serve(
                 limits: config.limits.clone(),
                 process: config.process.clone(),
                 allow_scripts: config.allow_scripts,
+                project_commands: config.project_commands_enabled(),
                 android: config.android.clone(),
             });
         }
@@ -791,6 +796,7 @@ fn serve(
         limits: config.limits.clone(),
         process: config.process.clone(),
         allow_scripts: config.allow_scripts,
+        project_commands: config.project_commands_enabled(),
         android: config.android.clone(),
     };
 

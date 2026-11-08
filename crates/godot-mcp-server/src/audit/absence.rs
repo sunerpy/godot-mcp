@@ -2,9 +2,12 @@
 //!
 //! ADR 0012 declares the script tools ([`DECLARED_SCRIPT_TOOLS`]): each runs
 //! caller-written GDScript, and only for a server whose operator set the one
-//! switch, [`SCRIPT_SWITCH_KEY`]. The proofs here keep everything else absent:
-//! no other advertised name denotes execution, no other configuration key turns
-//! anything on, and the reserved name stays a name.
+//! switch, [`SCRIPT_SWITCH_KEY`]. ADR 0016 declares the project-command tool
+//! ([`DECLARED_COMMAND_TOOLS`]): it runs the code a project declares in
+//! `godot_mcp_commands.json`, never caller-written code, and only while the
+//! operator leaves [`PROJECT_COMMANDS_SWITCH_KEY`] on. The proofs here keep
+//! everything else absent: no other advertised name denotes execution, no other
+//! configuration key turns anything on, and the reserved name stays a name.
 //!
 //! ## Why this is not a string blacklist
 //!
@@ -49,6 +52,19 @@ pub const DECLARED_SCRIPT_TOOLS: &[&str] =
 /// The one configuration key that turns the declared script tools on.
 pub const SCRIPT_SWITCH_KEY: &str = "allow_scripts";
 
+/// The project-command tool ADR 0016 declares. It calls a command the project
+/// declares, which runs that project's code in the connected editor, only for
+/// a server whose operator leaves [`PROJECT_COMMANDS_SWITCH_KEY`] on (it is off
+/// for a proxied principal unless the operator set it).
+pub const DECLARED_COMMAND_TOOLS: &[&str] = &["editor.commands.call"];
+
+/// The one configuration key that decides whether the declared project-command
+/// tool calls anything.
+pub const PROJECT_COMMANDS_SWITCH_KEY: &str = "project_commands";
+
+/// The declared switches, in the order the probe reports them.
+const DECLARED_SWITCH_KEYS: [&str; 2] = [SCRIPT_SWITCH_KEY, PROJECT_COMMANDS_SWITCH_KEY];
+
 /// Every four canonical profiles, in manifest order.
 const AUDITED_PROFILES: [CapabilityProfile; 4] = [
     CapabilityProfile::Core,
@@ -64,6 +80,10 @@ const EXECUTION_SHAPES: &[&str] = &[
     "editor.script.run",
     "runtime.script.run",
     "script.run",
+    "editor.commands.call",
+    "runtime.commands.call",
+    "project.commands.call",
+    "commands.call",
     "script.eval",
     "script.exec",
     "script.execute",
@@ -107,6 +127,8 @@ pub struct ExecutionSurfaceAudit {
     pub reserved_is_callable: bool,
     /// Every advertised declared script tool, as `profile:tool:name`.
     pub declared_entries: Vec<String>,
+    /// Every advertised declared project-command tool, as `profile:tool:name`.
+    pub declared_command_entries: Vec<String>,
     /// Every advertised entry that denotes execution and is not declared.
     /// Always empty.
     pub execution_entries: Vec<String>,
@@ -125,6 +147,7 @@ pub fn audit_execution_surface() -> ExecutionSurfaceAudit {
         resources_audited: 0,
         reserved_is_callable: false,
         declared_entries: Vec::new(),
+        declared_command_entries: Vec::new(),
         execution_entries: Vec::new(),
     };
     for profile in AUDITED_PROFILES {
@@ -140,6 +163,8 @@ pub fn audit_execution_surface() -> ExecutionSurfaceAudit {
                 audit.execution_entries.push(entry);
             } else if DECLARED_SCRIPT_TOOLS.contains(&tool.as_str()) {
                 audit.declared_entries.push(entry);
+            } else if DECLARED_COMMAND_TOOLS.contains(&tool.as_str()) {
+                audit.declared_command_entries.push(entry);
             } else if EXECUTION_SHAPES.contains(&tool.as_str()) {
                 audit.execution_entries.push(entry);
             }
@@ -164,8 +189,8 @@ pub fn audit_execution_surface() -> ExecutionSurfaceAudit {
 pub struct ConfigSurfaceProbe {
     /// Every candidate key the configuration shape accepted. Always empty.
     pub accepted: Vec<String>,
-    /// Every section that accepted the declared switch, as `section.key`.
-    /// Exactly `server.allow_scripts`.
+    /// Every section that accepted a declared switch, as `section.key`.
+    /// Exactly `server.allow_scripts` and `server.project_commands`.
     pub declared_switch: Vec<String>,
     /// How many candidate keys were rejected.
     pub rejected: usize,
@@ -190,14 +215,14 @@ pub fn config_surface_probe() -> ConfigSurfaceProbe {
             continue;
         }
         probe.sections_probed += 1;
-        let mut declared = base.clone();
-        if let Value::Object(fields) = &mut declared {
-            fields.insert(SCRIPT_SWITCH_KEY.to_owned(), Value::Bool(true));
-        }
-        if accepts(&declared) {
-            probe
-                .declared_switch
-                .push(format!("{section}.{SCRIPT_SWITCH_KEY}"));
+        for switch in DECLARED_SWITCH_KEYS {
+            let mut declared = base.clone();
+            if let Value::Object(fields) = &mut declared {
+                fields.insert(switch.to_owned(), Value::Bool(true));
+            }
+            if accepts(&declared) {
+                probe.declared_switch.push(format!("{section}.{switch}"));
+            }
         }
         for key in CANDIDATE_SWITCH_KEYS {
             let mut candidate = base.clone();
@@ -313,15 +338,20 @@ mod absence_audit {
             audit.execution_entries
         );
         // Each declared tool is advertised, by the profiles that list it only.
-        for tool in DECLARED_SCRIPT_TOOLS {
-            let listing: Vec<String> = AUDITED_PROFILES
-                .into_iter()
-                .filter(|profile| canonical_manifest(*profile).tools.contains(*tool))
-                .map(|profile| format!("{}:tool:{tool}", profile.manifest_name()))
-                .collect();
-            assert!(!listing.is_empty(), "{tool} is advertised nowhere");
-            for entry in listing {
-                assert!(audit.declared_entries.contains(&entry), "{entry}");
+        for (tools, entries) in [
+            (DECLARED_SCRIPT_TOOLS, &audit.declared_entries),
+            (DECLARED_COMMAND_TOOLS, &audit.declared_command_entries),
+        ] {
+            for tool in tools {
+                let listing: Vec<String> = AUDITED_PROFILES
+                    .into_iter()
+                    .filter(|profile| canonical_manifest(*profile).tools.contains(*tool))
+                    .map(|profile| format!("{}:tool:{tool}", profile.manifest_name()))
+                    .collect();
+                assert!(!listing.is_empty(), "{tool} is advertised nowhere");
+                for entry in listing {
+                    assert!(entries.contains(&entry), "{entry}");
+                }
             }
         }
     }
@@ -330,7 +360,10 @@ mod absence_audit {
     fn no_configuration_section_accepts_an_execution_switch() {
         let probe = config_surface_probe();
         assert!(probe.accepted.is_empty());
-        assert_eq!(probe.declared_switch, ["server.allow_scripts"]);
+        assert_eq!(
+            probe.declared_switch,
+            ["server.allow_scripts", "server.project_commands"]
+        );
         assert_eq!(probe.sections_probed, 4);
         assert_eq!(probe.rejected, 4 * CANDIDATE_SWITCH_KEYS.len());
     }

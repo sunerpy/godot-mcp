@@ -1120,6 +1120,7 @@ impl EditorCall for EditorOperation {
             Self::PerformanceGet => "editor.performance.read",
             Self::ResourcePreview => crate::editor::boundary::PREVIEW_RESOURCE,
             Self::SceneRead => super::scene_read::BRIDGE_METHOD,
+            Self::CommandsCall => super::bridge::COMMANDS_CALL_METHOD,
         }
     }
 
@@ -1156,6 +1157,10 @@ impl EditorCall for EditorOperation {
                     crate::live_script::Place::Editor,
                 )),
                 &["source"],
+            ),
+            Self::CommandsCall => (
+                Value::Object(crate::project_commands::properties()),
+                &["provider", "command"],
             ),
             Self::PlayStart => (
                 json!({
@@ -1734,6 +1739,9 @@ pub(crate) struct EditorToolRuntime {
     pub(crate) trust: ProcessTrust,
     /// Whether `editor.script.run` runs caller-written GDScript (ADR 0012).
     pub(crate) allow_scripts: bool,
+    /// Whether `editor.commands.call` calls the commands the project declares
+    /// (ADR 0016).
+    pub(crate) project_commands: bool,
     /// The managed sessions of a profile that runs the project: an editor
     /// one of them runs is never restarted (ADR 0013).
     pub(crate) sessions: Option<Arc<SessionManager>>,
@@ -1862,6 +1870,41 @@ impl EditorToolRuntime {
                 WorkspaceFreshness::StaleIndex
             },
         )
+    }
+
+    /// The caller's own recorded answer for this exact identity, when the
+    /// mutation already ran: an exact retry answers from the journal before
+    /// anything it depends on is re-read or re-checked.
+    fn recorded(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        call: &KernelToolCall,
+        idempotency_id: &str,
+    ) -> Result<Option<Value>, OutcomeError> {
+        let access = &call.access;
+        let request = RouteRequest {
+            tool: tool.to_owned(),
+            idempotency_id: idempotency_id.to_owned(),
+            transaction_id: None,
+            path: String::new(),
+            bytes: Vec::new(),
+            arguments: arguments.clone(),
+            observation: self.observation(),
+            cancellation: call.cancellation.clone(),
+            queued_at_unix_ms: access.observed_at_unix_ms(),
+            identity: Some(route_identity(access)),
+            effect: None,
+            audit: Some(call.audit.clone()),
+        };
+        match self
+            .router
+            .recorded_replay(&request)
+            .map_err(|refusal| refusal.to_outcome())?
+        {
+            Some(report) if report.replayed() => editor_answer(&report).map(Some),
+            _ => Ok(None),
+        }
     }
 
     /// Journal and send one live-editor mutation through the outcome router.
@@ -2606,12 +2649,28 @@ impl KernelToolHandler for EditorHandler {
         if operation == EditorOperation::ScriptRun && !runtime.allow_scripts {
             return Err(crate::scripts::scripts_off());
         }
+        if operation == EditorOperation::CommandsCall && !runtime.project_commands {
+            return Err(crate::project_commands::commands_off());
+        }
         let idempotency_id = call.idempotency_id.clone().ok_or_else(|| {
             outcome_error(
                 ErrorKind::InvalidInput,
                 format!("{tool} requires `idempotencyId`, so a retried call can never apply twice"),
             )
         })?;
+        // A project command is checked against the declaration on disk, which
+        // the command itself may change; an exact retry answers from the
+        // journal first, and a call the declaration does not allow is refused
+        // before the editor is asked, with nothing journaled.
+        let command = if operation == EditorOperation::CommandsCall {
+            let canonical = Value::Object(arguments.clone());
+            if let Some(replay) = runtime.recorded(tool, &canonical, &call, &idempotency_id)? {
+                return Ok(crate::project_commands::replayed(replay, arguments));
+            }
+            Some(crate::project_commands::prepare(&runtime.root, arguments)?)
+        } else {
+            None
+        };
         if operation == EditorOperation::PlayStart && runtime.trust == ProcessTrust::Untrusted {
             return Err(outcome_error(ErrorKind::PermissionDenied, UNTRUSTED_PLAY));
         }
@@ -2878,6 +2937,16 @@ impl KernelToolHandler for EditorHandler {
                     EditorScope::project_wide(Vec::new()).within(request.deadline),
                 )
             }
+            // As for a script run: the command may write any project file, and
+            // the editor may still be running it when the deadline ends the
+            // wait.
+            EditorOperation::CommandsCall => match &command {
+                Some(prepared) => (
+                    prepared.payload.clone(),
+                    EditorScope::project_wide(Vec::new()).within(prepared.deadline),
+                ),
+                None => unreachable!("a project command is checked above"),
+            },
             // An editor setting lives in the user's own settings file, outside
             // the project: no project file is in scope.
             EditorOperation::PreferencesSet => {
@@ -2950,7 +3019,10 @@ impl KernelToolHandler for EditorHandler {
         };
         // Read from disk now, not from the last snapshot: the editor writes
         // files of its own (`.uid` sidecars, imports) the snapshot may predate.
-        let before = if operation == EditorOperation::ScriptRun {
+        let before = if matches!(
+            operation,
+            EditorOperation::ScriptRun | EditorOperation::CommandsCall
+        ) {
             crate::scripts::contents_of_inventory(&runtime.root, &runtime.workspace.rescan())?
         } else {
             None
@@ -2975,6 +3047,11 @@ impl KernelToolHandler for EditorHandler {
                 before.as_ref(),
                 after,
             );
+        }
+        if let Some(prepared) = &command {
+            let after =
+                crate::scripts::contents_of_inventory(&runtime.root, &runtime.workspace.rescan());
+            return crate::project_commands::finish(prepared, result, before.as_ref(), after);
         }
         let mut answer = result?;
         if !reimported.is_empty() {

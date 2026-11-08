@@ -19,6 +19,8 @@ profile 是你对「服务器能对项目做什么」的一个明确选择。它
 
 有三个工具会执行 Agent 自己写的 GDScript：`script.run` 在无头 Godot 里运行，`editor.script.run` 在打开的编辑器里运行，`runtime.script.run` 在运行中的游戏里运行。包含它们的 profile 都会列出它们，但在你用 `--allow-scripts` 启动服务器之前，它们一律返回 `permission_denied`。开关打开后，脚本不受任何限制：它以你的权限运行，做过的事不会被撤销。有合适的类型化工具时，仍然优先用类型化工具：它们写入前会检查改动，编辑器也能撤销。一次运行会答复什么、什么能结束它，见[Profile 与工具结果](../../../operator/profiles-and-outcomes.md#script-execution)。
 
+`editor` 与 `full` 另有两个工具运行项目在 `godot_mcp_commands.json` 中声明的命令：`editor.commands.list` 列出这些命令，不运行任何代码；`editor.commands.call` 在打开的编辑器里运行其中一个（见[编辑器插件](editor.md)）。它们不需要开关，因为运行的是项目自己的代码；在代理后面默认关闭，要在配置里打开。
+
 ## 列出不等于可用
 
 一个工具出现在 `tools/list` 里，是因为 profile 列出了它。它需要的东西此刻在不在，是每次调用时单独回答的：没有解析到 Godot 时，`project.test` 答复 `unavailable` 并说明原因；没有游戏在运行时，`runtime.tree.get` 答复 `unavailable` 并指向 `project.run.start`。工具不会从发现结果里消失，也绝不假装已经执行。客户端因此可以信任工具列表，再从答复里了解这台机器的情况。

@@ -9,8 +9,9 @@ The editor bridge plug-in is not shipped with the first release: version 0.1 shi
 frozen bridge protocol and its codec. Contract 0.2 ships the add-on, and contract 0.3 adds the
 live edits, saves, captures, log, scans, script navigation, editing calls and running the
 project that this page describes. Contract 0.4 adds the editor's cameras, closing script tabs,
-its dialogs, restarting it, its performance monitors and resource previews. The protocol it
-speaks is still the frozen one; see [Editor bridge protocol](../protocol/bridge-protocol.md).
+its dialogs, restarting it, its performance monitors and resource previews, and contract 0.6
+calling the commands a project declares. The protocol it speaks is still the frozen one; see
+[Editor bridge protocol](../protocol/bridge-protocol.md).
 
 ## Install and enable the add-on
 
@@ -154,6 +155,7 @@ own requests still run, and a mutation already running finishes.
 | `editor.play.start`, `editor.play.stop` | runtime | Run the project in the editor, as its Play buttons do, and stop it. |
 | `editor.addon.reload` | mutation | Disables and re-enables the plugin; the editor reconnects with a new session. |
 | `editor.script.run` | mutation | Runs caller-written GDScript in the editor, when the operator turned script execution on; see [Running a script in the editor](#running-a-script-in-the-editor). |
+| `editor.commands.call` | mutation | Calls a command the project declares in `godot_mcp_commands.json`, when the operator has not turned project commands off; see [Calling a project command](#calling-a-project-command). |
 
 Reads never change editor state: they open nothing, select nothing, mark nothing unsaved and add
 nothing to any undo history.
@@ -708,6 +710,35 @@ checks before it compiles anything.
 - **The panel's pause holds it back** like any other mutation; see
   [Pausing agent edits](#pausing-agent-edits).
 
+## Calling a project command
+
+`editor.commands.call` calls a command the project declares in `godot_mcp_commands.json`
+([Project commands](project-commands.md), [ADR 0016](../contributor/adr/0016-project-commands.md)).
+The server checks the call against the declaration and the arguments against the command's
+schema, and sends the add-on the provider's `res://` script and the arguments as tagged values.
+`editor.commands.list` shows what can be called; it reads the file and needs no editor.
+
+- **The add-on checks the request again.** It refuses, with nothing loaded, a request on a session
+  whose capabilities did not offer the method, a script path that is not a `res://` path to a
+  `.gd` file without empty or dot-leading segments, arguments that are not a tagged dictionary,
+  and a script that no longer exists or no longer carries `@tool`. Such an answer is
+  `not_started`, and nothing is blocked.
+- **It loads the provider fresh.** The script is read from its file, not from the editor's cache,
+  so an edited provider takes effect at the next call; loading it runs its static initializers.
+  A provider extending Node is added under the plugin while it runs and freed after. Its
+  `mcp_call(command, args)` is awaited when it is a coroutine.
+- **It answers how far the call got**: the script did not compile, defines no `mcp_call`,
+  answered without a boolean `ok`, or answered, with the value in Godot's own spelling or the
+  error text; what the editor logged meanwhile; and every project file that differs from before
+  the call. On Godot 4.4.1 the plugin cannot read the editor's log, so a command that answered
+  `ok: true` is `inconclusive`.
+- **The rest is as for a script.** The code runs with your privileges and nothing confines it;
+  nothing it does is undone; a call not answered within `deadline_ms` and two seconds more is
+  `uncertain` and blocks every change until it is resolved; it holds the editor while it runs;
+  and the panel's pause holds it back.
+- **An older add-on does not have it.** Add-on 0.5.0 serves the method; with an earlier one the
+  tool answers `unsupported` and says to run `editor.addon.update` and then `editor.addon.reload`.
+
 ## The editor's settings
 
 `editor.preferences.get` reads the settings the editor's Editor Settings dialog shows: 446 on
@@ -888,9 +919,9 @@ An unresolved change that may have saved a file is quarantined, and writes stay 
 is resolved; see [Recovery](recovery.md). A change the editor never answered can be settled once
 the editor process it was sent to has ended, when the server identified that process; see
 [An editor that ended before it answered](recovery.md#an-editor-that-ended-before-it-answered).
-`editor.scene.save`, `editor.filesystem.scan`, `editor.play.start`, `editor.dialog.respond` and
-`editor.restart` with `save` may also write files nobody can list in advance, so their
-transactions cover the whole project. An unresolved change
+`editor.scene.save`, `editor.filesystem.scan`, `editor.play.start`, `editor.dialog.respond`,
+`editor.restart` with `save`, `editor.script.run` and `editor.commands.call` may also write files
+nobody can list in advance, so their transactions cover the whole project. An unresolved change
 to editor state alone — selection, the open scene, the main screen, an unsaved undo, a stop, a
 closed scene or script tab, a moved camera, an editor setting, a shortcut, a restart without
 `save` — touches no project file, so it blocks nothing.
@@ -923,7 +954,8 @@ closed scene or script tab, a moved camera, an editor setting, a shortcut, a res
   title is cut at 512 characters and a text at 4096, which `text_truncated` says.
   `editor.performance.get` names at most 256 monitors.
 - No typed tool calls an editor method outside the table above; `editor.script.run` runs what the
-  caller writes, only while the operator allows scripts.
+  caller writes, only while the operator allows scripts, and `editor.commands.call` runs what the
+  project declares, unless the operator turned project commands off.
 
 ## What the add-on does not do
 
@@ -947,6 +979,7 @@ Each of these has another way to it, or is left to you on purpose.
 | Discarding a scene's unsaved changes | Undo them with `editor.undo`, then close the scene; a close never discards. |
 | More than one editor | One editor connects to a server; run one server for each project. |
 | Running a script while the operator has not allowed scripts | Start the server with `--allow-scripts`; see [Running a script in the editor](#running-a-script-in-the-editor). |
+| Calling project code the project does not declare, or any while project commands are off | Declare the command in `godot_mcp_commands.json`, and leave `project_commands` on; see [Project commands](project-commands.md). |
 
 ## Verified on
 
@@ -954,7 +987,8 @@ Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, by the
 `crates/godot-mcp-server/tests/live_editor_bridge.rs` and, for property paths, graph-resource
 calls, `repeat`, global script classes, imported models and reading in the editor,
 `crates/godot-mcp-server/tests/live_authoring.rs`, for scripts
-`crates/godot-mcp-server/tests/live_editor_script.rs`, and for cameras, script tabs, dialogs,
+`crates/godot-mcp-server/tests/live_editor_script.rs`, for project commands
+`crates/godot-mcp-server/tests/live_editor_commands.rs`, and for cameras, script tabs, dialogs,
 restarts, performance monitors and previews `crates/godot-mcp-server/tests/live_editor_more.rs`,
 through the production MCP server: headless editors, and windowed ones drawn by the OpenGL
 renderer under Xvfb for saves, captures, previews and running the project. `make godot-test` runs these suites against each locked Linux editor, and

@@ -112,8 +112,9 @@ every method each class takes.
 | Themes          | `resource.create` or `resource.batch.apply` editing a `Theme` (`set_color`, `set_font_size`, `set_constant`, `set_stylebox`), as the `theme` recipe does; `scene.recipe.apply` with `hud`; edit `Control` anchors                  | Read `get_color`, `get_type_list`; in a game, `runtime.ui.get` and `runtime.ui.press`                                                                                            |
 | TileMap         | Edit `TileSet` and `TileSetAtlasSource` (`add_source`, `create_tile`, terrains) and `TileMapLayer` (`set_cell`, `erase_cell`, `set_cells_terrain_connect`)                                                                         | Read `get_used_cells`, `get_cell_source_id`, `get_cell_atlas_coords`                                                                                                             |
 | Runtime control | `project.run.start` and `project.run.stop`; `input.action.send`, `input.key.send`, `input.mouse.send`, `input.sequence.send`, `input.replay`                                                                                       | `runtime.tree.get`, `runtime.properties.get`, `runtime.properties.set`, `runtime.wait`, `runtime.ui.get`, `runtime.screenshot.capture`; `test.scenario.run` for a whole scenario |
+| Project tooling | `editor.commands.call` runs a command the project declares in `godot_mcp_commands.json`, in the connected editor, with arguments checked against the command's schema                                                              | `editor.commands.list` lists the commands with their descriptions and argument schemas and runs nothing; a call answers what the command returned and every file it changed      |
 
-The `full` profile holds 130 tools; the generated
+The `full` profile holds 132 tools; the generated
 [tool inventory](docs/protocol/tool-inventory.md) lists each one with its profiles.
 
 ## Install

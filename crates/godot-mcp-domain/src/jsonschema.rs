@@ -10,7 +10,7 @@
 //!
 //! Supported keywords: `type`, `enum`, `const`, `properties`, `required`,
 //! `additionalProperties` (boolean or schema), `items`, `minItems`, `maxItems`,
-//! `minLength`, `maxLength`, `minimum`, `pattern`, `oneOf`. The annotation
+//! `minLength`, `maxLength`, `minimum`, `maximum`, `pattern`, `oneOf`. The annotation
 //! keywords `$schema`, `$id`, `title`, `description`, `examples` and `default`
 //! are ignored.
 //!
@@ -18,7 +18,13 @@
 //! literals, escapes, character classes and the quantifiers `*`, `+`, `?`,
 //! `{n}` and `{n,m}`, optionally wrapped in a single top-level alternation of
 //! such sequences (`^(a|b)$` or `^a|b$`). Nested groups, back-references and the
-//! `.` wildcard are rejected as unsupported rather than approximated.
+//! `.` wildcard are rejected as unsupported rather than approximated. A pattern
+//! is matched in time linear in the text for each of its elements, so a schema
+//! written by someone else cannot make validation search every way of
+//! splitting a long string.
+//!
+//! [`check_schema`] walks a whole schema without an instance, for schemas that
+//! arrive from outside the workspace and must be judged before they are used.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -78,6 +84,7 @@ const SUPPORTED: &[&str] = &[
     "minLength",
     "maxLength",
     "minimum",
+    "maximum",
     "pattern",
     "oneOf",
 ];
@@ -89,6 +96,116 @@ const SUPPORTED: &[&str] = &[
 /// schema construct outside the supported subset.
 pub fn validate(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
     validate_at("", schema, instance)
+}
+
+/// The type names `type` may hold.
+const TYPE_NAMES: &[&str] = &[
+    "null", "boolean", "integer", "number", "string", "array", "object",
+];
+
+/// Check, without an instance, that every node of `schema` stays inside the
+/// supported subset: [`validate`] meets a nested keyword only when an instance
+/// reaches it, so a schema accepted here is one it never refuses for its own
+/// shape.
+///
+/// # Errors
+/// Returns the first construct outside the subset; the pointer names its place
+/// in the schema, not in an instance.
+pub fn check_schema(schema: &Value) -> Result<(), SchemaError> {
+    check_node("", schema)
+}
+
+fn check_node(pointer: &str, schema: &Value) -> Result<(), SchemaError> {
+    let object = match schema {
+        Value::Bool(_) => return Ok(()),
+        Value::Object(object) => object,
+        _ => {
+            return Err(SchemaError::new(
+                pointer,
+                "schema node must be an object or boolean",
+            ));
+        }
+    };
+    for key in object.keys() {
+        if !ANNOTATIONS.contains(&key.as_str()) && !SUPPORTED.contains(&key.as_str()) {
+            return Err(SchemaError::new(
+                pointer,
+                format!("unsupported schema keyword `{key}`"),
+            ));
+        }
+    }
+    for (key, value) in object {
+        let at = format!("{pointer}/{}", escape_pointer(key));
+        match key.as_str() {
+            "type" => {
+                let names: Vec<&Value> = match value {
+                    Value::String(_) => vec![value],
+                    Value::Array(values) => values.iter().collect(),
+                    _ => return Err(SchemaError::new(&at, "`type` must be a string or array")),
+                };
+                for name in names {
+                    let name = name
+                        .as_str()
+                        .ok_or_else(|| SchemaError::new(&at, "`type` entries must be strings"))?;
+                    if !TYPE_NAMES.contains(&name) {
+                        return Err(SchemaError::new(&at, format!("unknown type `{name}`")));
+                    }
+                }
+            }
+            "enum" if !value.is_array() => {
+                return Err(SchemaError::new(&at, "`enum` must be an array"));
+            }
+            "properties" => {
+                let Value::Object(properties) = value else {
+                    return Err(SchemaError::new(&at, "`properties` must be an object"));
+                };
+                for (name, child) in properties {
+                    check_node(&format!("{at}/{}", escape_pointer(name)), child)?;
+                }
+            }
+            "required" => {
+                let Value::Array(names) = value else {
+                    return Err(SchemaError::new(&at, "`required` must be an array"));
+                };
+                if names.iter().any(|name| !name.is_string()) {
+                    return Err(SchemaError::new(&at, "`required` entries must be strings"));
+                }
+            }
+            "additionalProperties" | "items" => check_node(&at, value)?,
+            "minItems" | "maxItems" | "minLength" | "maxLength" if value.as_u64().is_none() => {
+                return Err(SchemaError::new(
+                    &at,
+                    format!("`{key}` must be a non-negative integer"),
+                ));
+            }
+            "minimum" | "maximum" if value.as_f64().is_none() => {
+                return Err(SchemaError::new(&at, format!("`{key}` must be numeric")));
+            }
+            "pattern" => {
+                let pattern = value
+                    .as_str()
+                    .ok_or_else(|| SchemaError::new(&at, "`pattern` must be a string"))?;
+                Pattern::parse(pattern).map_err(|reason| {
+                    SchemaError::new(&at, format!("unsupported pattern: {reason}"))
+                })?;
+            }
+            "oneOf" => {
+                let Value::Array(branches) = value else {
+                    return Err(SchemaError::new(&at, "`oneOf` must be an array"));
+                };
+                for (index, branch) in branches.iter().enumerate() {
+                    check_node(&format!("{at}/{index}"), branch)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// A JSON pointer reference token for `name` (RFC 6901).
+fn escape_pointer(name: &str) -> String {
+    name.replace('~', "~0").replace('/', "~1")
 }
 
 fn validate_at(pointer: &str, schema: &Value, instance: &Value) -> Result<(), SchemaError> {
@@ -143,6 +260,17 @@ fn validate_at(pointer: &str, schema: &Value, instance: &Value) -> Result<(), Sc
                     .ok_or_else(|| SchemaError::new(pointer, "number is not representable"))?;
                 if actual < minimum {
                     return Err(SchemaError::new(pointer, "number is below the minimum"));
+                }
+            }
+            if let Some(maximum) = object.get("maximum") {
+                let maximum = maximum
+                    .as_f64()
+                    .ok_or_else(|| SchemaError::new(pointer, "`maximum` must be numeric"))?;
+                let actual = number
+                    .as_f64()
+                    .ok_or_else(|| SchemaError::new(pointer, "number is not representable"))?;
+                if actual > maximum {
+                    return Err(SchemaError::new(pointer, "number is above the maximum"));
                 }
             }
         }
@@ -594,38 +722,58 @@ fn element_matches(element: &Element, value: char) -> bool {
     }
 }
 
+/// Whether `text` is exactly one run of `parts`, decided in time linear in the
+/// text for each part: the set of positions the parts so far can end at is
+/// carried forward, so stacked quantifiers never multiply into a search over
+/// every way of splitting the text.
 fn match_parts(parts: &[(Element, Quantifier)], text: &[char]) -> bool {
-    let Some(((element, quantifier), rest)) = parts.split_first() else {
-        return text.is_empty();
-    };
-    let (minimum, maximum) = match *quantifier {
-        Quantifier::One => (1, Some(1)),
-        Quantifier::Exactly(count) => (count, Some(count)),
-        Quantifier::Between(low, high) => (low, Some(high)),
-        Quantifier::ZeroOrMore => (0, None),
-        Quantifier::OneOrMore => (1, None),
-        Quantifier::ZeroOrOne => (0, Some(1)),
-    };
-    let mut available = 0_usize;
-    while available < text.len() && element_matches(element, text[available]) {
-        available += 1;
-        if maximum.is_some_and(|maximum| available >= maximum) {
-            break;
+    let length = text.len();
+    let mut reachable = vec![false; length + 1];
+    reachable[0] = true;
+    let mut run = vec![0_usize; length + 1];
+    let mut coverage = vec![0_isize; length + 2];
+    for (element, quantifier) in parts {
+        let (minimum, maximum) = match *quantifier {
+            Quantifier::One => (1, Some(1)),
+            Quantifier::Exactly(count) => (count, Some(count)),
+            Quantifier::Between(low, high) => (low, Some(high)),
+            Quantifier::ZeroOrMore => (0, None),
+            Quantifier::OneOrMore => (1, None),
+            Quantifier::ZeroOrOne => (0, Some(1)),
+        };
+        // `run[index]`: how many characters from `index` on the element matches.
+        run[length] = 0;
+        for index in (0..length).rev() {
+            run[index] = if element_matches(element, text[index]) {
+                run[index + 1] + 1
+            } else {
+                0
+            };
         }
-    }
-    if available < minimum {
-        return false;
-    }
-    let mut taken = available;
-    loop {
-        if match_parts(rest, &text[taken..]) {
-            return true;
+        coverage.iter_mut().for_each(|slot| *slot = 0);
+        let mut advanced = false;
+        for start in 0..=length {
+            if !reachable[start] {
+                continue;
+            }
+            let longest = maximum.map_or(run[start], |maximum: usize| run[start].min(maximum));
+            if longest < minimum {
+                continue;
+            }
+            coverage[start + minimum] += 1;
+            coverage[start + longest + 1] -= 1;
+            advanced = true;
         }
-        if taken == minimum {
+        if !advanced {
             return false;
         }
-        taken -= 1;
+        let mut depth = 0_isize;
+        for (position, slot) in reachable.iter_mut().enumerate() {
+            depth += coverage[position];
+            *slot = depth > 0;
+        }
     }
+    reachable[length]
 }
 
 #[cfg(test)]
@@ -696,6 +844,157 @@ mod tests {
     fn nested_groups_are_rejected_rather_than_approximated() {
         let schema = json!({ "type": "string", "pattern": "^(a(b|c))$" });
         assert!(validate(&schema, &json!("ab")).is_err());
+    }
+
+    /// A pattern a schema author writes is matched in time linear in the
+    /// text: stacked quantifiers over a long string answer at once instead of
+    /// trying every way to split it.
+    #[test]
+    fn a_pattern_is_matched_in_time_linear_in_the_text() {
+        let schema = json!({ "type": "string", "pattern": "^a*a*a*a*a*a*a*a*b$" });
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let long = "a".repeat(200_000);
+            let refused = validate(&schema, &json!(long)).is_err();
+            let accepted = validate(&schema, &json!(format!("{long}b"))).is_ok();
+            let _ = sender.send((refused, accepted));
+        });
+        let (refused, accepted) = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the pattern answers within 10 s for 200,000 characters");
+        assert!(refused, "a text without the final `b` does not match");
+        assert!(accepted, "a text ending in `b` matches");
+    }
+
+    #[test]
+    fn bounded_and_optional_quantifiers_keep_their_meaning() {
+        for (pattern, matching, failing) in [
+            (
+                "^[a-z][a-z0-9_.-]*$",
+                &["a", "a-b_c.d9"][..],
+                &["", "A", "1a", "a b"][..],
+            ),
+            (
+                "^x?y{2,3}z+$",
+                &["yyz", "xyyyzz"][..],
+                &["xyz", "xyyyyz", "yy"][..],
+            ),
+            ("^[^/]{1,4}$", &["abcd", "é"][..], &["", "abcde", "a/b"][..]),
+            ("^(ab|c{2})$", &["ab", "cc"][..], &["abc", "c", "ccc"][..]),
+        ] {
+            let schema = json!({ "type": "string", "pattern": pattern });
+            for text in matching {
+                assert!(
+                    validate(&schema, &json!(text)).is_ok(),
+                    "{pattern} matches {text:?}"
+                );
+            }
+            for text in failing {
+                assert!(
+                    validate(&schema, &json!(text)).is_err(),
+                    "{pattern} refuses {text:?}"
+                );
+            }
+        }
+    }
+
+    /// `maximum` bounds a number from above as `minimum` bounds it from
+    /// below: both bounds are inclusive, for integers and fractions alike.
+    #[test]
+    fn a_maximum_bounds_a_number_from_above() {
+        let schema = json!({ "type": "integer", "minimum": 1, "maximum": 8 });
+        assert_eq!(check_schema(&schema), Ok(()));
+        for accepted in [1, 8] {
+            assert_eq!(validate(&schema, &json!(accepted)), Ok(()), "{accepted}");
+        }
+        assert_eq!(
+            validate(&schema, &json!(9)),
+            Err(SchemaError::new("", "number is above the maximum"))
+        );
+        let fraction = json!({ "type": "number", "maximum": 0.5 });
+        assert_eq!(validate(&fraction, &json!(0.5)), Ok(()));
+        assert!(validate(&fraction, &json!(0.75)).is_err());
+        assert_eq!(
+            validate(&json!({ "maximum": "1" }), &json!(0)),
+            Err(SchemaError::new("", "`maximum` must be numeric"))
+        );
+    }
+
+    #[test]
+    fn a_schema_inside_the_subset_passes_the_static_check() {
+        let schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "description": "Arguments of a command",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string", "minLength": 1, "maxLength": 64,
+                          "pattern": "^[a-z][a-z0-9_]*$", "default": "a" },
+                "count": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+                "tags": { "type": "array", "maxItems": 8, "items": { "enum": ["a", "b"] } },
+                "mode": { "oneOf": [ { "const": "fast" }, { "const": "slow" } ] },
+                "extra": { "type": "object", "additionalProperties": { "type": "boolean" } }
+            }
+        });
+        assert_eq!(check_schema(&schema), Ok(()));
+        assert_eq!(check_schema(&json!(true)), Ok(()));
+    }
+
+    /// The validator only meets a nested keyword when an instance reaches it,
+    /// so the static check walks every subschema and names where it stopped.
+    #[test]
+    fn the_static_check_names_the_first_construct_outside_the_subset() {
+        for (schema, pointer, reason) in [
+            (
+                json!({ "type": "object", "properties": { "mail": { "type": "string", "format": "email" } } }),
+                "/properties/mail",
+                "unsupported schema keyword `format`",
+            ),
+            (
+                json!({ "type": "object", "properties": { "a/b": { "pattern": "^a.b$" } } }),
+                "/properties/a~1b/pattern",
+                "unsupported pattern: unsupported wildcard `.`",
+            ),
+            (json!({ "type": "text" }), "/type", "unknown type `text`"),
+            (
+                json!({ "type": "array", "items": [ { "type": "string" } ] }),
+                "/items",
+                "schema node must be an object or boolean",
+            ),
+            (
+                json!({ "type": "string", "minLength": -1 }),
+                "/minLength",
+                "`minLength` must be a non-negative integer",
+            ),
+            (
+                json!({ "type": "object", "required": [1] }),
+                "/required",
+                "`required` entries must be strings",
+            ),
+            (
+                json!({ "oneOf": [ { "type": "string" }, { "$ref": "#/x" } ] }),
+                "/oneOf/1",
+                "unsupported schema keyword `$ref`",
+            ),
+            (
+                json!({ "minimum": "1" }),
+                "/minimum",
+                "`minimum` must be numeric",
+            ),
+            (
+                json!({ "maximum": "1" }),
+                "/maximum",
+                "`maximum` must be numeric",
+            ),
+            (json!(3), "/", "schema node must be an object or boolean"),
+        ] {
+            assert_eq!(
+                check_schema(&schema),
+                Err(SchemaError::new(pointer, reason)),
+                "{schema}"
+            );
+        }
     }
 
     #[test]

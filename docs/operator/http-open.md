@@ -29,14 +29,18 @@ godot-mcp serve: HTTP (open) listening on 0.0.0.0:8765, every interface
 godot-mcp serve: this host: http://127.0.0.1:8765/mcp
 godot-mcp serve: other hosts: http://192.0.2.10:8765/mcp
 godot-mcp serve: warning: no token; anyone who can reach this port can use every tool of the full profile
+godot-mcp serve: warning: project commands are on, so they can also run the commands the project declares in godot_mcp_commands.json
 ```
 
 The `other hosts` line names the address this machine reaches the rest of the network from.
 When the machine has no such route the line reads
 `http://<this host's LAN address>:8765/mcp`; fill in the address its network settings show. A
 listener bound to one address prints that address's URL; one bound to loopback prints no
-warning, since only this machine reaches it. With `--allow-scripts`, and no token, a second
+warning, since only this machine reaches it. With `--allow-scripts`, and no token, another
 warning says that anyone who can reach the port can also run GDScript with your privileges.
+The `editor` and `full` profiles call the commands a project declares unless
+`project_commands = false` turns them off, and the last warning says so
+([Project commands](project-commands.md)).
 
 ## Require a token
 

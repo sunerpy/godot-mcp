@@ -40,6 +40,7 @@ Start here:
 | [Recovery](operator/recovery.md) | Restart survivors, quarantine, operator repair |
 | [Editor bridge](operator/editor-bridge.md) | What ships, and what does not |
 | [Recipes](operator/recipes.md) | Common setups applied by name with `scene.recipe.apply`, and the operations each becomes |
+| [Project commands](operator/project-commands.md) | Commands a project declares in `godot_mcp_commands.json`, listed without running anything and called in the editor |
 | [Managed sessions](operator/managed-sessions.md) | Game and editor sessions, input, captures, debugging |
 | [Exports](operator/exports.md) | Presets, exact templates, managed exports and their artifacts |
 | [Godot compatibility matrix](operator/version-matrix.md) | Exact locked versions |

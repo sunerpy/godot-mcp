@@ -95,6 +95,7 @@ profile = "core"
 transport = "stdio"
 disposable = false
 allow_scripts = false
+project_commands = true
 
 [bridge]
 endpoint = "127.0.0.1:0"
@@ -134,6 +135,7 @@ has no runtime effect in this release.
 | `disposable` | Reserved server-wide switch. `false` is the only runnable value in this release; `serve` refuses `true` rather than silently loading the original project or claiming that a filtered copy confines untrusted code. |
 | `log_sink` | `stderr` (default) or a rolling file. |
 | `allow_scripts` | `false` (default) or `true`. Whether the script tools run caller-written GDScript; see [Script execution](#script-execution). |
+| `project_commands` | `true` or `false`. Whether `editor.commands.call` calls the commands the project declares; unset, on except for `proxied_oidc`. See [Project commands](#project-commands). |
 
 The engine crate contains operation-scoped disposable-copy machinery, but `serve` does not
 yet route every engine operation through it. Consequently `disposable = true` fails startup
@@ -179,6 +181,47 @@ path = "/etc/godot-mcp/proxy-hop.cred"
 [http.principal]
 issuer = "https://issuer.example.invalid"
 subject = "operator@example.invalid"
+```
+
+### Project commands
+
+`project_commands` decides whether `editor.commands.call` calls the commands a project declares
+in `godot_mcp_commands.json` ([Project commands](project-commands.md)). Unset, it follows the
+transport: on for stdio, `trusted_local` and `open`, and off for `proxied_oidc`, so a caller the
+server only knows through a proxy reaches the project's code only when the operator says so.
+`project_commands = false` turns them off for any transport, and `GODOT_MCP_PROJECT_COMMANDS`
+sets the key alongside `--config`; `serve` without `--config` leaves it unset. While it is off, a
+call answers `permission_denied` and sends nothing, the editor add-on is not offered the method,
+and `editor.commands.list` still lists the declaration with every command unavailable.
+
+Turning them on for a proxied principal is the operator's decision to make, and the loader
+accepts it:
+
+<!-- docs-check:config expect="accept" -->
+```toml
+transport = "http"
+project_commands = true
+
+[http]
+bind = "127.0.0.1:8765"
+mode = "proxied_oidc"
+host = "godot-mcp.example.invalid"
+origin = "https://godot-mcp.example.invalid"
+external_resource_url = "https://godot-mcp.example.invalid/mcp"
+
+[http.proxy_hop.credential_file]
+path = "/etc/godot-mcp/proxy-hop.cred"
+
+[http.principal]
+issuer = "https://issuer.example.invalid"
+subject = "operator@example.invalid"
+```
+
+The key takes `true` or `false` only:
+
+<!-- docs-check:config expect="reject" -->
+```toml
+project_commands = "on"
 ```
 
 ### `[http]`
@@ -501,9 +544,9 @@ Each recognized variable maps to exactly one key, using the same names in upper
 snake case under the `GODOT_MCP_` prefix — for example `GODOT_MCP_TRANSPORT`,
 `GODOT_MCP_PROFILE`, `GODOT_MCP_HTTP_BIND`, `GODOT_MCP_HTTP_MODE`,
 `GODOT_MCP_LOG_SINK`, `GODOT_MCP_DEADLINE_MS`, `GODOT_MCP_PROCESS_BOUNDARY`,
-`GODOT_MCP_PROCESS_TRUST`, `GODOT_MCP_ALLOW_SCRIPTS`, `GODOT_MCP_ANDROID_SDK`,
-`GODOT_MCP_ANDROID_JAVA_HOME`. The adapter's two paths are read from the file only. OIDC
-policy lists use
+`GODOT_MCP_PROCESS_TRUST`, `GODOT_MCP_ALLOW_SCRIPTS`, `GODOT_MCP_PROJECT_COMMANDS`,
+`GODOT_MCP_ANDROID_SDK`, `GODOT_MCP_ANDROID_JAVA_HOME`. The adapter's two paths are read from the
+file only. OIDC policy lists use
 comma-separated values in `GODOT_MCP_HTTP_ALLOWED_ALGORITHMS`,
 `GODOT_MCP_HTTP_REQUIRED_SCOPES`, and
 `GODOT_MCP_HTTP_REQUIRED_CAPABILITIES`.

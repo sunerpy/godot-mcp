@@ -46,6 +46,7 @@ pub(crate) mod node_handle;
 pub mod observability;
 pub mod operator;
 pub(crate) mod policy;
+pub(crate) mod project_commands;
 pub mod project_context;
 pub(crate) mod recipe_prompts;
 pub mod rmcp_adapter;

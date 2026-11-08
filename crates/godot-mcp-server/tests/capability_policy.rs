@@ -646,6 +646,7 @@ fn capability_policy_failure_paths() {
             "editor.addon.reload",
             "editor.camera.get",
             "editor.camera.set",
+            "editor.commands.call",
             "editor.dialog.respond",
             "editor.dialogs.get",
             "editor.filesystem.scan",
