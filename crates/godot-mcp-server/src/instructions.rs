@@ -80,7 +80,7 @@ pub fn server_instructions(profile: CapabilityProfile, bootstrap: bool) -> Strin
     lines.push(format!(
         "`unavailable` means a plane (editor, engine or game session) cannot be reached right \
          now, not that the tool is missing{health}. Never retry an `uncertain` outcome: its \
-         effect is unknown, and project writes may stay blocked until the operator resolves it."
+         effect is unknown, and project writes may stay blocked until it is resolved."
     ));
 
     let scripts = present(&SCRIPT_TOOLS, &has);
