@@ -154,6 +154,14 @@ checks without starting it: exit 0 is valid, and exit 2 says why the file is ref
 also need the export templates of exactly that Godot build. `health.get` then reports the build
 it resolved and its version under `engine`.
 
+A project with a GDExtension needs one more step on Godot 4.7.1 and 4.7.2, measured with one
+godot-rust extension on Linux: the first import of a project that was never imported aborts,
+and `project.import.run` answers `failed` with signal `SIGABRT`. That import still records the
+extension, so run `project.import.run` again, or open the project in the Godot editor once;
+until then the extension's classes are not loaded. On those builds `script.run` with
+`context: "copy"` answers `unavailable`, because a copy is imported from scratch every time:
+use `context: "project"`, or `editor.script.run` while an editor is connected.
+
 ## 5. Connect the Godot editor
 
 The editor tools need the `godot_mcp` add-on running in an open Godot editor on the project. A
