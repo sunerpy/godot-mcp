@@ -257,7 +257,7 @@ proves what it wrote. What it can prove is that the writer is gone.
 
 When the add-on connects, the server records which editor process it is talking to:
 the process ID and its start time, kept only when the platform reports start times
-(Linux and macOS), the add-on reports the executable it runs (add-on 0.4.1 and later),
+(Linux and macOS), the add-on reports the executable it runs (add-on 0.5.0 and later),
 and that process really runs that executable. An unanswered request's record names that process. Once
 the process has ended, `acknowledge-safe-state` with a `writer-ended` proof accepts
 the project's files as they are, and the request's own result stays unknown:
@@ -309,7 +309,7 @@ transition. It is refused, and the transaction stays quarantined, when:
 
 * the record names no editor process — the server could not prove the editor's
   process when it connected (Windows, an editor in another PID namespace such as a
-  container or a Flatpak, an add-on older than 0.4.1, which does not report its
+  container or a Flatpak, an add-on older than 0.5.0, which does not report its
   executable), the editor
   answered without settling the request, or the record predates editor process
   records;

@@ -5,9 +5,9 @@ extends RefCounted
 ## camera (`editor_camera.gd`), semantic scene batches and live edits as one
 ## undoable action, saving, undo/redo, project settings, the editor's own
 ## settings and shortcuts, file-system scans, running the project, running a
-## caller's script (`script_runner.gd`), answering a dialog
-## (`editor_dialogs.gd`), reloading this plugin, and restarting the editor
-## (`editor_restart.gd`).
+## caller's script (`script_runner.gd`), calling a command the project declares
+## (`project_commands.gd`), answering a dialog (`editor_dialogs.gd`), reloading
+## this plugin, and restarting the editor (`editor_restart.gd`).
 ##
 ## A scene batch is the same typed command model the headless helper applies
 ## (`add_node`, `set_property`, `connect_signal`, ...). It is applied to the
@@ -36,6 +36,7 @@ const Play = preload("play.gd")
 const Preferences = preload("preferences.gd")
 const Shortcuts = preload("shortcuts.gd")
 const ScriptRunner = preload("script_runner.gd")
+const ProjectCommands = preload("project_commands.gd")
 const EditorCamera = preload("editor_camera.gd")
 const EditorDialogs = preload("editor_dialogs.gd")
 const EditorRestart = preload("editor_restart.gd")
@@ -50,6 +51,7 @@ const SETTLE_FRAMES := 3
 const METHODS := [
 	"editor.addon.reload",
 	"editor.camera.set",
+	"editor.commands.call",
 	"editor.dialog.respond",
 	"editor.filesystem.scan",
 	"editor.history.redo",
@@ -82,6 +84,7 @@ var _results: Array = []
 var _files = Filesystem.new()
 var _play = Play.new()
 var _scripts = ScriptRunner.new()
+var _commands = ProjectCommands.new()
 
 
 func _init(owner = null) -> void:
@@ -152,6 +155,10 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			var handlers = _handlers()
 			var offered: bool = handlers.panel_state != null and handlers.panel_state.server_methods.has(ScriptRunner.EDITOR_METHOD)
 			return await _scripts.run(ScriptRunner.EDITOR_METHOD, offered, payload, handlers.editor_log, handlers.plugin)
+		"editor.commands.call":
+			var handlers = _handlers()
+			var offered: bool = handlers.panel_state != null and handlers.panel_state.server_methods.has(ProjectCommands.METHOD)
+			return await _commands.call_command(offered, payload, handlers.editor_log, handlers.plugin)
 	return fail("unsupported", "the editor bridge does not implement %s" % method)
 
 

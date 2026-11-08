@@ -19,7 +19,7 @@ const STDIO_HANDSHAKE: &str = concat!(
     "\n",
 );
 
-const LIVE_TOOLS: [&str; 130] = [
+const LIVE_TOOLS: [&str; 132] = [
     "android.deploy",
     "android.devices.list",
     "asset.delete",
@@ -35,6 +35,8 @@ const LIVE_TOOLS: [&str; 130] = [
     "editor.addon.update",
     "editor.camera.get",
     "editor.camera.set",
+    "editor.commands.call",
+    "editor.commands.list",
     "editor.dialog.respond",
     "editor.dialogs.get",
     "editor.filesystem.scan",
@@ -422,13 +424,14 @@ fn shipped_binary_rejects_invalid_main_scene_before_engine_discovery() {
 
 /// The size of each profile's `tools/list`, as the compact JSON of its
 /// `tools` in bytes, measured with the shipped binary when the budget was
-/// last set: contract 0.5.0 after its schemas carry only the definitions
-/// they refer to and share what one tool repeats.
+/// last set: contract 0.6.0 with the two project-command tools, its schemas
+/// carrying only the definitions they refer to and sharing what one tool
+/// repeats.
 const MEASURED_TOOLS_BYTES: [(&str, usize); 4] = [
     ("core", 28_044),
-    ("editor", 312_424),
+    ("editor", 315_484),
     ("runtime", 193_983),
-    ("full", 474_161),
+    ("full", 477_221),
 ];
 
 /// Every profile's `tools/list` stays within 2% of its measured size. A client

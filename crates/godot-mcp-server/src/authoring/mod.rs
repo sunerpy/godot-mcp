@@ -20,6 +20,7 @@
 mod addon;
 pub(crate) mod assets;
 mod base64;
+mod commands;
 pub mod diff;
 mod files;
 mod md5;
@@ -103,6 +104,7 @@ fn operation_schema(operation: AuthoringOperation) -> Value {
         AuthoringOperation::AddonInstall => addon::install_schema(),
         AuthoringOperation::AddonUpdate => addon::update_schema(),
         AuthoringOperation::AddonRemove => addon::remove_schema(),
+        AuthoringOperation::CommandsList => commands::list_schema(),
     }
 }
 
@@ -136,6 +138,9 @@ pub(crate) struct AuthoringRuntimeConfig {
     /// The live-editor bridge, when the profile serves the editor plane. A
     /// connected editor owns `project.godot` and applies settings changes.
     pub(crate) editor: Option<Arc<EditorBridge>>,
+    /// Whether the operator allows the project's declared commands to be
+    /// called (`project_commands`); `editor.commands.list` reports it.
+    pub(crate) project_commands: bool,
 }
 
 /// The shared runtime behind every authoring handler.
@@ -146,6 +151,7 @@ pub(crate) struct AuthoringRuntime {
     uploads: assets::Uploads,
     generation: u64,
     editor: Option<Arc<EditorBridge>>,
+    project_commands: bool,
 }
 
 impl AuthoringRuntime {
@@ -157,6 +163,7 @@ impl AuthoringRuntime {
             uploads: assets::Uploads::new(config.uploads_dir),
             generation: config.generation,
             editor: config.editor,
+            project_commands: config.project_commands,
         }
     }
 
@@ -710,12 +717,14 @@ impl KernelToolHandler for AuthoringHandler {
                 | AuthoringOperation::SettingsGet
                 | AuthoringOperation::AssetStatus
                 | AuthoringOperation::AddonStatus
+                | AuthoringOperation::CommandsList
         ) {
             return match self.operation {
                 AuthoringOperation::FilesList => files::list(runtime, arguments),
                 AuthoringOperation::FileGet => files::get(runtime, arguments),
                 AuthoringOperation::SettingsGet => settings::get(runtime, arguments),
                 AuthoringOperation::AddonStatus => addon::status(runtime),
+                AuthoringOperation::CommandsList => commands::list(runtime),
                 _ => assets::status(runtime, arguments),
             };
         }
@@ -775,7 +784,8 @@ impl KernelToolHandler for AuthoringHandler {
             | AuthoringOperation::FileGet
             | AuthoringOperation::SettingsGet
             | AuthoringOperation::AssetStatus
-            | AuthoringOperation::AddonStatus => unreachable!("reads are answered above"),
+            | AuthoringOperation::AddonStatus
+            | AuthoringOperation::CommandsList => unreachable!("reads are answered above"),
         }
     }
 }

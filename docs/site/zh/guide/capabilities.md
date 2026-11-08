@@ -24,6 +24,7 @@ description: godot-mcp 用哪些工具处理动画、AnimationTree、物理、3D
 | 主题 | 用 `resource.create` 或 `resource.batch.apply` 编辑 `Theme`（`set_color`、`set_font_size`、`set_constant`、`set_stylebox`），`theme` 配方就是这样做的；`scene.recipe.apply` 配合 `hud`；编辑 `Control` 的锚点 | 读取 `get_color`、`get_type_list`；游戏运行时用 `runtime.ui.get` 与 `runtime.ui.press` |
 | TileMap | 编辑 `TileSet` 与 `TileSetAtlasSource`（`add_source`、`create_tile`、地形）以及 `TileMapLayer`（`set_cell`、`erase_cell`、`set_cells_terrain_connect`） | 读取 `get_used_cells`、`get_cell_source_id`、`get_cell_atlas_coords` |
 | 运行时控制 | `project.run.start` 与 `project.run.stop`；`input.action.send`、`input.key.send`、`input.mouse.send`、`input.sequence.send`、`input.replay` | `runtime.tree.get`、`runtime.properties.get`、`runtime.properties.set`、`runtime.wait`、`runtime.ui.get`、`runtime.screenshot.capture`；完整的测试场景用 `test.scenario.run` |
+| 项目工具 | `editor.commands.call` 在连接的编辑器里运行项目在 `godot_mcp_commands.json` 中声明的命令，参数先按该命令声明的 schema 检查 | `editor.commands.list` 列出这些命令及其说明和参数 schema，不运行任何代码；调用的答复给出命令返回的值和它改动的每个文件 |
 
 ## 配方
 
@@ -42,4 +43,4 @@ Agent 不看本页也能找到这些配方：每个配方同时也是一个 MCP 
 
 ## 其他部分
 
-[工具参考](../../../protocol/tool-inventory.md)列出全部 130 个工具及其所属的 profile。表里没有编辑方法或配方的部分，同样可以处理：一批改动可以用 `set_property` 设置节点存储的属性，用 `set_subresource` 在其中嵌入资源；用 `--allow-scripts` 启动服务器之后，`script.run`、`editor.script.run` 和 `runtime.script.run` 可以运行 Agent 自己写的 GDScript。
+[工具参考](../../../protocol/tool-inventory.md)列出全部 132 个工具及其所属的 profile。表里没有编辑方法或配方的部分，同样可以处理：一批改动可以用 `set_property` 设置节点存储的属性，用 `set_subresource` 在其中嵌入资源；用 `--allow-scripts` 启动服务器之后，`script.run`、`editor.script.run` 和 `runtime.script.run` 可以运行 Agent 自己写的 GDScript。

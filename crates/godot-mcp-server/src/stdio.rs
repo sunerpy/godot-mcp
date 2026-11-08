@@ -111,6 +111,9 @@ pub struct StdioOptions {
     pub process: godot_mcp_domain::config::ProcessConfig,
     /// Whether the script tools run caller-written GDScript (ADR 0012).
     pub allow_scripts: bool,
+    /// Whether `editor.commands.call` calls the commands the project declares
+    /// (ADR 0016): the configuration's `project_commands_enabled()`.
+    pub project_commands: bool,
     /// The Android SDK and JDK an Android export and a device deploy use.
     pub android: godot_mcp_domain::config::AndroidConfig,
 }
@@ -340,7 +343,10 @@ impl ProjectRuntime {
                         file_object: held.file_object.clone(),
                         generation: held.generation,
                     },
-                    options.allow_scripts,
+                    crate::editor::bridge::Offers {
+                        scripts: options.allow_scripts,
+                        commands: options.project_commands,
+                    },
                 )
                 .map_err(StdioError::Analysis)?,
             )
@@ -562,6 +568,7 @@ impl ProjectRuntime {
             uploads_dir: state_dir.join("uploads"),
             generation: INITIAL_PROJECT_GENERATION,
             editor: editor_bridge.clone(),
+            project_commands: options.project_commands,
         }));
         register_authoring_tools(&mut kernel, authoring)
             .map_err(|error| StdioError::Analysis(error.to_string()))?;
@@ -575,6 +582,7 @@ impl ProjectRuntime {
                     root: lease.safe_root(),
                     trust: options.process.trust,
                     allow_scripts: options.allow_scripts,
+                    project_commands: options.project_commands,
                     sessions: sessions.clone(),
                 }),
             )

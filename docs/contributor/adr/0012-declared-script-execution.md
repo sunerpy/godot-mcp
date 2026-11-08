@@ -1,9 +1,10 @@
 # 0012 — Script execution is declared: three tools behind one operator switch
 
 **Status:** accepted for contract 0.4.0; amended by [ADR 0014](0014-open-http-mode.md),
-which accepts the switch with the `open` HTTP mode, and by
+which accepts the switch with the `open` HTTP mode, by
 [ADR 0015](0015-unanswered-editor-changes.md), which settles an unanswered run from the editor's
-late answer, or once the editor has ended. It supersedes
+late answer, or once the editor has ended, and by [ADR 0016](0016-project-commands.md), whose
+project commands have a switch of their own. It supersedes
 [ADR 0003](0003-no-arbitrary-script-execution.md), keeps `unsafe_script` a reserved name,
 and leaves the typed tools of [ADR 0011](0011-live-editor-operability.md) as they are.
 

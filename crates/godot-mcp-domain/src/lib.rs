@@ -32,6 +32,7 @@ pub mod lease;
 pub mod manifests;
 pub mod objid;
 pub mod project;
+pub mod project_commands;
 pub mod reading_methods;
 pub mod recipes;
 pub mod safe_root;
@@ -48,8 +49,10 @@ pub mod workspace_root;
 /// editor's node, save, capture, scan, log and play methods, and routes a
 /// `project.godot` change through a connected editor that owns the file.
 /// Version 0.4.0 adds declared script execution, engine reads and runtime
-/// control; version 0.5.0 adds `scene.recipe.apply`.
-pub const CONTRACT_VERSION: &str = "0.5.0";
+/// control; version 0.5.0 adds `scene.recipe.apply`; version 0.6.0 adds the
+/// commands a project declares, `editor.commands.list` and
+/// `editor.commands.call`.
+pub const CONTRACT_VERSION: &str = "0.6.0";
 
 /// Capability profiles exposed by the public contract. Selection is explicit
 /// and independent of how an outcome is requested.

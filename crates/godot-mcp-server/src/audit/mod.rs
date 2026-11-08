@@ -12,9 +12,9 @@ pub mod event;
 pub mod sink;
 
 pub use absence::{
-    ConfigSurfaceProbe, DECLARED_SCRIPT_TOOLS, ExecutionSurfaceAudit,
-    RESERVED_UNSAFE_SCRIPT_CAPABILITY, SCRIPT_SWITCH_KEY, audit_execution_surface,
-    config_surface_probe, scan_bytes_for_reserved_identifier,
+    ConfigSurfaceProbe, DECLARED_COMMAND_TOOLS, DECLARED_SCRIPT_TOOLS, ExecutionSurfaceAudit,
+    PROJECT_COMMANDS_SWITCH_KEY, RESERVED_UNSAFE_SCRIPT_CAPABILITY, SCRIPT_SWITCH_KEY,
+    audit_execution_surface, config_surface_probe, scan_bytes_for_reserved_identifier,
 };
 pub use event::{
     AuditActorFacts, AuditBoundary, AuditCorrelationFacts, AuditDigest, AuditEffectFacts,

@@ -58,6 +58,7 @@ description: 用 godot_mcp 插件把正在运行的 Godot 编辑器连到服务�
 | `editor.shortcuts.get`、`editor.shortcuts.set` | 读取和重新绑定编辑器的快捷键，即快捷键页里列出的那些 |
 | `editor.play.start`、`editor.play.stop` | 像编辑器的运行按钮那样运行游戏，以及停止它 |
 | `editor.addon.reload` | 重新加载插件，编辑器随后重新连接 |
+| `editor.commands.list`、`editor.commands.call` | 列出项目声明的命令；在编辑器里运行其中一个，并答复它返回了什么 |
 
 读取从不改变编辑器状态：不打开任何东西，不选择任何东西，不把任何东西标为未保存，也不往撤销历史里添加任何东西。
 
@@ -132,6 +133,40 @@ Godot 不会把 `--headless` 传给它重启出来的编辑器，所以用 `--he
 用 `--allow-scripts` 启动服务器后，`editor.script.run` 会在编辑器的主线程上运行 Agent 写的 GDScript。脚本能用到编辑器能用的一切——打开的场景、`EditorInterface`、文件系统——答复里给出它的 `run()` 返回了什么、打印了什么、报了哪些错以及出错的行，还有运行前后内容不同的每个项目文件。Godot 4.4.1 上读不到编辑器的日志，所以看不到 `run()` 里的错误。它做的改动不进编辑器的撤销历史。
 
 Godot 无法让脚本中途停下。服务器等待 `deadline_ms`，再多等两秒；到那时仍未答复的运行结果是 `uncertain`，编辑器可能仍在运行它，项目的改动会一直被阻止，直到运行结束时编辑器给出答复，或者这个事务被解决（见[恢复](../operate/recovery.md)）。只有关闭编辑器才能结束这段代码。
+
+## 项目自己的命令
+
+项目可以把自己的编辑器工具作为命令提供给 Agent。在项目根目录的 `godot_mcp_commands.json` 里列出这些命令，每个命令带一段说明和一份描述参数的 JSON Schema；命令写在一个 `@tool` 脚本里，由它的 `mcp_call(command, args)` 答复 `{"ok": true, "value": ...}` 或 `{"ok": false, "error": "..."}`：
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "levels",
+      "script": "res://tools/level_commands.gd",
+      "commands": [
+        {
+          "name": "rebuild",
+          "title": "Rebuild a level",
+          "description": "Generate res://levels/level_<seed>.tscn from a seed.",
+          "input_schema": {
+            "type": "object",
+            "properties": { "seed": { "type": "integer", "minimum": 0 } },
+            "required": ["seed"],
+            "additionalProperties": false
+          },
+          "mutates": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+`editor.commands.list` 列出文件声明了什么、哪些命令可以调用、某个命令为什么不能调用，它不运行任何代码。`editor.commands.call` 先按命令的 schema 检查参数，再让编辑器运行这个命令，答复里给出它返回了什么、编辑器记录了什么日志，以及调用前后内容不同的每个项目文件。它做的事都不会撤销；到期限仍未答复的调用结果是 `uncertain`，在它的答复到来或事务被解决之前会阻止后续改动，这一点和脚本相同。
+
+项目命令默认开启，因为运行的是项目自己的代码；在代理后面默认关闭，要在配置里打开；`project_commands = false` 在任何情况下都会关闭它们。文件格式、参数规则、一个完整的命令脚本和答复的各个字段，见[项目命令参考](../../../operator/project-commands.md)。godot-mcp 0.5.0 及更早的版本没有项目命令；早于 0.5.0 的插件会答复 `unsupported`，用 `editor.addon.update` 更新后才能使用。
 
 ## 答复丢失时
 

@@ -2646,7 +2646,7 @@ mod editor_process {
 
     use super::GatewayFixture;
     use crate::editor::boundary::BridgeEditorBoundary;
-    use crate::editor::bridge::{EditorBridge, RENDEZVOUS_FILE};
+    use crate::editor::bridge::{EditorBridge, Offers, RENDEZVOUS_FILE};
     use crate::effect::boundary::{
         CancelSignal, EditorMutation, SafeRootFileBoundary, UnavailableBoundaries,
     };
@@ -2678,7 +2678,8 @@ mod editor_process {
             file_object: "unix:dev=1,ino=31".to_owned(),
             generation: 0,
         };
-        let bridge = EditorBridge::start(scratch.path(), claim, false).expect("start the bridge");
+        let bridge = EditorBridge::start(scratch.path(), claim, Offers::default())
+            .expect("start the bridge");
         let executable = std::env::current_exe().expect("this test's executable");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.path().join(RENDEZVOUS_FILE),

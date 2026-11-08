@@ -509,6 +509,12 @@ pub struct ServerConfig {
     /// `proxied_oidc`, so a script never runs for a remote principal.
     #[serde(default)]
     pub allow_scripts: bool,
+    /// Whether `editor.commands.call` calls the commands the project declares
+    /// in `godot_mcp_commands.json` (ADR 0016). Unset, it follows the
+    /// transport: on for stdio, `trusted_local` and `open`, off for
+    /// `proxied_oidc`; see [`ServerConfig::project_commands_enabled`].
+    #[serde(default)]
+    pub project_commands: Option<bool>,
 }
 
 impl Default for ServerConfig {
@@ -526,7 +532,24 @@ impl Default for ServerConfig {
             android: AndroidConfig::default(),
             limits: Limits::default(),
             allow_scripts: false,
+            project_commands: None,
         }
+    }
+}
+
+impl ServerConfig {
+    /// Whether project-declared commands may be called: the configured value,
+    /// or, unset, on unless the server serves a proxied OIDC principal. A
+    /// remote principal reaches project code only when an operator says so.
+    #[must_use]
+    pub fn project_commands_enabled(&self) -> bool {
+        self.project_commands.unwrap_or_else(|| {
+            !(self.transport == Transport::Http
+                && self
+                    .http
+                    .as_ref()
+                    .is_some_and(|http| http.mode == HttpMode::ProxiedOidc))
+        })
     }
 }
 
@@ -560,6 +583,7 @@ pub struct CliOverrides {
     pub max_body_bytes: Option<u64>,
     pub max_queue: Option<u32>,
     pub allow_scripts: Option<bool>,
+    pub project_commands: Option<bool>,
     pub android_sdk: Option<String>,
     pub android_java_home: Option<String>,
 }
@@ -828,6 +852,7 @@ fn reject_unknown_env(
         "GODOT_MCP_MAX_BODY_BYTES",
         "GODOT_MCP_MAX_QUEUE",
         "GODOT_MCP_ALLOW_SCRIPTS",
+        "GODOT_MCP_PROJECT_COMMANDS",
         "GODOT_MCP_ANDROID_SDK",
         "GODOT_MCP_ANDROID_JAVA_HOME",
     ];
@@ -878,6 +903,9 @@ fn apply_env(
     }
     if let Some(value) = env.get("GODOT_MCP_ALLOW_SCRIPTS") {
         config.allow_scripts = parse_bool_env("GODOT_MCP_ALLOW_SCRIPTS", value)?;
+    }
+    if let Some(value) = env.get("GODOT_MCP_PROJECT_COMMANDS") {
+        config.project_commands = Some(parse_bool_env("GODOT_MCP_PROJECT_COMMANDS", value)?);
     }
     if let Some(value) = env.get("GODOT_MCP_ANDROID_SDK") {
         config.android.sdk = Some(value.clone());
@@ -1045,6 +1073,9 @@ fn apply_cli(config: &mut ServerConfig, http: &mut HttpPartial, cli: &CliOverrid
     }
     if let Some(value) = cli.allow_scripts {
         config.allow_scripts = value;
+    }
+    if let Some(value) = cli.project_commands {
+        config.project_commands = Some(value);
     }
     if let Some(value) = &cli.android_sdk {
         config.android.sdk = Some(value.clone());

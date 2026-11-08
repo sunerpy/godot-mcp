@@ -70,6 +70,8 @@ pub struct BootstrapOptions {
     pub process: godot_mcp_domain::config::ProcessConfig,
     /// Whether the bound project's script tools run caller-written GDScript.
     pub allow_scripts: bool,
+    /// Whether the bound project's declared commands may be called.
+    pub project_commands: bool,
     /// The Android SDK and JDK the bound project's Android exports use.
     pub android: godot_mcp_domain::config::AndroidConfig,
 }
@@ -554,6 +556,7 @@ impl BootstrapHandler {
             limits: self.shared.options.limits.clone(),
             process: self.shared.options.process.clone(),
             allow_scripts: self.shared.options.allow_scripts,
+            project_commands: self.shared.options.project_commands,
             android: self.shared.options.android.clone(),
         };
         let runtime = tokio::task::spawn_blocking(move || ProjectRuntime::open(&options))

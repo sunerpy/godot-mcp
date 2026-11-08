@@ -126,6 +126,7 @@ async fn serve(config: &ServerConfig) -> anyhow::Result<Served> {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })?;
     let transport = bind_configured_transport(&runtime, config, CapabilityProfile::Core)

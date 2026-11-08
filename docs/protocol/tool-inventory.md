@@ -26,9 +26,9 @@ unreachable answers `unavailable` and names the plane. See
 | Profile | Capabilities | Tools | Resources |
 | --- | --- | --- | --- |
 | `core` | 1 | 22 | 4 |
-| `editor` | 3 | 82 | 5 |
+| `editor` | 3 | 84 | 5 |
 | `runtime` | 3 | 74 | 5 |
-| `full` | 5 | 130 | 5 |
+| `full` | 5 | 132 | 5 |
 
 ## Methods
 
@@ -49,6 +49,8 @@ unreachable answers `unavailable` and names the plane. See
 | `editor.addon.update` | `project_write` | `project_files` | no | yes | yes | no |
 | `editor.camera.get` | `read` | `live_editor` | yes | no | yes | no |
 | `editor.camera.set` | `editor_mutate` | `live_editor` | no | no | yes | no |
+| `editor.commands.call` | `editor_mutate` | `live_editor` | no | yes | no | yes |
+| `editor.commands.list` | `read` | `project_files` | yes | no | yes | no |
 | `editor.dialog.respond` | `editor_mutate` | `live_editor` | no | yes | no | no |
 | `editor.dialogs.get` | `read` | `live_editor` | yes | no | yes | no |
 | `editor.filesystem.scan` | `editor_mutate` | `live_editor` | no | yes | yes | no |
@@ -227,6 +229,14 @@ Read what the connected editor's viewports show: the 2D editor's view, its zoom 
 ### `editor.camera.set`
 
 Move the camera of one 3D viewport of the connected editor (`viewport` 0 to 3, 0 by default) to `position`, looking at `target`, which the editor then takes as its view, and answer the camera read back a few frames later; the answer is `uncertain` when the editor did not keep it. The viewport must be on screen: show the 3D main screen with editor.main_screen.set. Needs Godot 4.5.1 or later. Changes editor state only.
+
+### `editor.commands.call`
+
+Call a `command` of a `provider` the project declares in godot_mcp_commands.json, with `arguments` the server first checks against the command's declared input schema. The connected editor loads the provider's tool script, awaits its `mcp_call(command, args)` and answers what it returned as a tagged value, what the editor logged meanwhile (Godot 4.5.1 and later) and every project file that differs from before the call; nothing is undone. The project's code runs with the user's privileges and nothing confines what it does. Godot cannot stop it part way: when `deadline_ms` passes first the answer is `uncertain`, the code may still be running, and writes stay blocked until it is resolved. Refused when the server does not allow project commands; editor.commands.list shows what can be called.
+
+### `editor.commands.list`
+
+Read godot_mcp_commands.json at the project root and list the commands the project declares for editor.commands.call: each provider's script, each command's name, title, description, input schema and `mutates` flag, whether it can be called and why not, every problem the file has, whether the server allows project commands and whether a connected editor serves them. Runs no project code; needs no Godot process.
 
 ### `editor.dialog.respond`
 
@@ -766,6 +776,8 @@ Tools:
 * `editor.addon.update`
 * `editor.camera.get`
 * `editor.camera.set`
+* `editor.commands.call`
+* `editor.commands.list`
 * `editor.dialog.respond`
 * `editor.dialogs.get`
 * `editor.filesystem.scan`
@@ -981,6 +993,8 @@ Tools:
 * `editor.addon.update`
 * `editor.camera.get`
 * `editor.camera.set`
+* `editor.commands.call`
+* `editor.commands.list`
 * `editor.dialog.respond`
 * `editor.dialogs.get`
 * `editor.filesystem.scan`

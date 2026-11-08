@@ -30,9 +30,9 @@ and fails when a profile grows more than 2% past its size here.
 | Profile | Tools | `tools/list` bytes |
 | --- | --- | --- |
 | `core` | 22 | 28,044 |
-| `editor` | 82 | 312,424 |
+| `editor` | 84 | 315,484 |
 | `runtime` | 74 | 193,983 |
-| `full` | 130 | 474,161 |
+| `full` | 132 | 477,221 |
 
 A tool's schema carries only the definitions it refers to, and a tool that takes operations
 defines each field schema it repeats once
@@ -108,6 +108,20 @@ A script is the shorter route for a question no tool asks. For a bulk change,
 `project.batch.apply` takes about as long as a script, 954 ms against 768 ms for five scenes,
 and keeps what the typed tools give: every precondition is checked, and a change that breaks
 part way leaves nothing half done.
+
+## Project commands
+
+The `editor` and `full` profiles hold two tools for the commands a project declares in
+`godot_mcp_commands.json` ([Project commands](project-commands.md)):
+`editor.commands.list` lists them, with each one's description and argument schema, and runs
+nothing; `editor.commands.call` checks a call's arguments against the declared schema and has the
+connected editor run the command. The code is the project's own, so the tools are on unless the
+operator turns them off, and off for `proxied_oidc` unless the operator turns them on
+([Configuration](configuration.md#project-commands)). A call answers like an editor script run:
+`classification`, the value, what the editor logged, every project file that differs from before
+it, `applied: true` and `rolled_back: false`, and `uncertain` when its deadline passes first,
+which blocks every change until the transaction is resolved. A command declared with
+`mutates: false` that changed files is reported in `declaration_mismatch`, not refused.
 
 ## Membership is not availability
 

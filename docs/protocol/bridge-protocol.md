@@ -261,7 +261,7 @@ add-on sends its reports to every later session too; once the transaction is set
 changes nothing. No report makes the server send a request again. How the journal settles a
 bound answer is in [Recovery](../operator/recovery.md#late-editor-answers).
 
-An add-on older than 0.4.1 sends no report, so only an answer on the same session settles a
+An add-on older than 0.5.0 sends no report, so only an answer on the same session settles a
 transaction there; a server that does not know the event ignores it, as it ignores every event
 it does not know.
 

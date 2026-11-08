@@ -32,6 +32,7 @@ Two words in the table stand for a group of tools:
 | Themes | `resource.create` or `resource.batch.apply` editing a `Theme` (`set_color`, `set_font_size`, `set_constant`, `set_stylebox`), as the `theme` recipe does; `scene.recipe.apply` with `hud`; edit `Control` anchors | Read `get_color`, `get_type_list`; in a game, `runtime.ui.get` and `runtime.ui.press` |
 | TileMap | Edit `TileSet` and `TileSetAtlasSource` (`add_source`, `create_tile`, terrains) and `TileMapLayer` (`set_cell`, `erase_cell`, `set_cells_terrain_connect`) | Read `get_used_cells`, `get_cell_source_id`, `get_cell_atlas_coords` |
 | Runtime control | `project.run.start` and `project.run.stop`; `input.action.send`, `input.key.send`, `input.mouse.send`, `input.sequence.send`, `input.replay` | `runtime.tree.get`, `runtime.properties.get`, `runtime.properties.set`, `runtime.wait`, `runtime.ui.get`, `runtime.screenshot.capture`; `test.scenario.run` for a whole scenario |
+| Project tooling | `editor.commands.call` runs a command the project declares in `godot_mcp_commands.json`, in the connected editor, with arguments checked against the command's schema | `editor.commands.list` lists the commands with their descriptions and argument schemas and runs nothing; a call answers what the command returned and every file it changed |
 
 ## Recipes
 
@@ -60,7 +61,7 @@ parameters.
 
 ## Everything else
 
-The [tools reference](../../protocol/tool-inventory.md) lists all 130 tools with their profiles.
+The [tools reference](../../protocol/tool-inventory.md) lists all 132 tools with their profiles.
 A part of Godot with no edit method or recipe here is still reachable: a batch sets a node's
 stored properties with `set_property` and embeds resources in it with `set_subresource`, and,
 once you start the server with `--allow-scripts`, `script.run`, `editor.script.run` and

@@ -45,6 +45,7 @@ async fn serve(http_keys: &str) -> anyhow::Result<Served> {
         limits: Limits::default(),
         process: Default::default(),
         allow_scripts: false,
+        project_commands: true,
         android: Default::default(),
     })?;
     // The configured Host must name the port the listener binds, so the port is

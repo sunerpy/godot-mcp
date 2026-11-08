@@ -61,16 +61,19 @@ pub enum ContractVersion {
     #[serde(rename = "0.4.0")]
     V0_4_0,
     /// Scene recipes applied by name.
-    #[default]
     #[serde(rename = "0.5.0")]
     V0_5_0,
+    /// Commands a project declares, listed and called through the editor.
+    #[default]
+    #[serde(rename = "0.6.0")]
+    V0_6_0,
 }
 
 impl ContractVersion {
     /// Current version marker.
     #[must_use]
     pub const fn current() -> Self {
-        Self::V0_5_0
+        Self::V0_6_0
     }
 
     /// Stable textual representation.
@@ -81,7 +84,8 @@ impl ContractVersion {
             Self::V0_2_0 => "0.2.0",
             Self::V0_3_0 => "0.3.0",
             Self::V0_4_0 => "0.4.0",
-            Self::V0_5_0 => CONTRACT_VERSION,
+            Self::V0_5_0 => "0.5.0",
+            Self::V0_6_0 => CONTRACT_VERSION,
         }
     }
 }

@@ -4,7 +4,7 @@ description: "Read and change a Godot 4 project through a connected godot-mcp MC
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the editor or full profile. The editor tools also need the godot_mcp add-on running in an open Godot editor."
 metadata:
-  contract: "0.5.0"
+  contract: "0.6.0"
   profiles: "editor,full"
 ---
 
@@ -16,7 +16,7 @@ only the engine can do, and act in the open Godot editor through its add-on. Thi
 to combine them. The tool schemas in `tools/list` are the reference for every argument; where
 this skill and a schema disagree, the schema is right.
 
-This skill describes contract 0.5.0, the `contract` of its metadata. `health.get` reports the
+This skill describes contract 0.6.0, the `contract` of its metadata. `health.get` reports the
 contract the server speaks as `schema_version`. When the two differ, follow the schemas and the
 tool descriptions.
 
@@ -303,6 +303,15 @@ settles when the editor answers it, and the gate reopens then: check `health.get
 the editor's work should be done. When the editor was closed or crashed first, or the gate stays
 closed, tell the user that the project's owner resolves it on that machine with
 `godot-mcp transaction repair`, starting with its `reconcile` operation.
+
+## Commands the project declares
+
+A project can declare its own editor commands in `godot_mcp_commands.json`: rebuilding a level,
+checking assets, exporting a table. Before you write a script or a long batch for such work, call
+`editor.commands.list`; it reads the file and runs nothing. When a listed command does the job,
+`editor.commands.call` checks its arguments against the command's schema and has the connected
+editor run it. Nothing a command does is undone, and a call not answered by its deadline is
+`uncertain` and closes the write gate until the editor answers, as an editor change does.
 
 ## Scripts are the operator's decision
 

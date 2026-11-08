@@ -108,9 +108,10 @@ that change only their receiver's stored state, project settings, the editor's o
 shortcuts, saves, closing scenes and script tabs, captures and resource previews, navigation and
 the editor's 3D cameras, rescans, answering dialogs, restarting the editor, and starting and
 stopping the project. It exposes no arbitrary method call and evaluates no expression. The code it compiles
-at runtime is its own logger, from a source constant it carries, and, only on a session whose
-server offered `editor.script.run`, the caller's script; see
-[Script execution](#script-execution). A capture contains
+at runtime is its own logger, from a source constant it carries; only on a session whose
+server offered `editor.script.run`, the caller's script; and only on a session whose server
+offered `editor.commands.call`, a provider script the project declares. See
+[Script execution](#script-execution) and [Project commands](#project-commands). A capture contains
 whatever the editor shows, and its log whatever the editor and the project print. A game the
 editor runs for `editor.play.start` is the editor's own child process, outside every boundary
 this server holds, so it is refused for an untrusted project.
@@ -255,9 +256,11 @@ against a stand-in for adb.
 
 Three tools run caller-written GDScript: `script.run` in a supervised headless Godot,
 `editor.script.run` in the connected editor and `runtime.script.run` in a managed game
-([ADR 0012](../contributor/adr/0012-declared-script-execution.md)). They are the only
-execution surface, and the absence audit proves it: no other advertised name denotes
-execution, and `allow_scripts` is the only key that turns anything on.
+([ADR 0012](../contributor/adr/0012-declared-script-execution.md)). With
+`editor.commands.call`, which runs code the project declares rather than code the caller writes
+([Project commands](#project-commands)), they are the only execution surface, and the absence
+audit proves it: no other advertised name denotes execution, and `allow_scripts` and
+`project_commands` are the only keys that turn anything on.
 
 **Enforces.** Nothing runs unless the operator turned the switch on for the launch
 (`--allow-scripts`, or `allow_scripts = true` with `--config`); a call while it is off is
@@ -280,6 +283,41 @@ script does is undone, and what it does outside the project is not recorded.
 happen: treat `--allow-scripts` like handing the agent a shell in the project directory, and
 leave it off for a project or a client you do not trust.
 
+## Project commands
+
+A project may declare commands in `godot_mcp_commands.json`, each implemented by a `@tool`
+GDScript of the project's; `editor.commands.list` lists them and `editor.commands.call` has the
+connected editor run one ([ADR 0016](../contributor/adr/0016-project-commands.md),
+[Project commands](../operator/project-commands.md)).
+
+**Enforces.** A listing reads the declaration and the provider scripts as files and runs
+nothing. A call runs only a command the declaration names, through the provider script it names,
+with arguments the command's declared schema accepts and the bridge carries exactly; every check
+is made before anything is sent, against the files as they are at that moment, and a refused call
+journals nothing. The caller chooses a command and its arguments, never code. The switch,
+`project_commands`, is off for `proxied_oidc` unless the operator turns it on, and
+`project_commands = false` turns it off for any transport; while it is off nothing is sent, and the
+add-on, which is not offered the method, refuses it too. A call the editor began is a journaled
+transaction over the whole project: its answer lists every project file that differs from before
+it, and an unanswered call quarantines the project, because the editor may still be writing.
+
+**Does not.** Confine the code. A command is the project's own code, run in the editor with your
+privileges, and it can do anything a `@tool` script can: read and write any file you can, start
+processes, open connections. Its declaration describes it and does not bound it: `mutates: false`
+is not enforced, only reported when broken (`declaration_mismatch`), and nothing checks that a
+description says what the code does. Code goes on after the server stops waiting, until it
+returns or the editor closes, and nothing a command does is undone.
+
+**Residual risk.** The switch is on by default for stdio, `trusted_local` and `open`, so whoever
+can call the tools of the `editor` or `full` profile can run every declared command: the agent you
+connected,
+or, on an `open` listener without a token, anyone who can reach the port. For a project you did
+not write, its declaration is part of what you trust, as its `@tool` scripts already are, which
+the editor runs as it opens the project and its scenes; read it before you serve the project, or
+set `project_commands = false`. The arguments are the caller's: a provider that hands one on to a
+file path, a process or an expression runs what the caller sent, and the command's schema is the
+only bound the server applies to it.
+
 ## A loopback address is never an identity
 
 Stated separately because it is the mistake most worth avoiding. Any local process, running
@@ -299,6 +337,10 @@ rendezvous-authenticated through a private file with a constant-time comparison.
   caller code; see [Script execution](#script-execution). `unsafe_script` stays a reserved
   identifier with no capability, no handler, no profile membership, no configuration option
   and no presence in the shipping binary.
+* **Calls to project code the project does not declare, or for a proxied caller by default.**
+  `editor.commands.call` runs only a command the project declares, and nothing for a
+  `proxied_oidc` principal unless the operator turned `project_commands` on; see
+  [Project commands](#project-commands).
 * **A force or bypass path.** A quarantined transaction is resolved only by a
   proof-backed transition; the repair command re-derives every proof field itself and
   independently re-validates a composite transaction's linked sub-proof.

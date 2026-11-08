@@ -115,47 +115,20 @@ pub(crate) const SCRIPT_RUN_METHOD: &str = "editor.script.run";
 /// ([`EditorBridge::begin_restart`]) it is the only mutation the bridge sends.
 pub(crate) const RESTART_METHOD: &str = "editor.restart";
 
-/// [`BRIDGE_METHODS`] and [`SCRIPT_RUN_METHOD`]: what a server whose operator
-/// turned script execution on may send.
-pub(crate) const BRIDGE_METHODS_WITH_SCRIPTS: &[&str] = &[
-    "editor.addon.reload",
-    "editor.camera.read",
-    "editor.camera.set",
-    "editor.capture.chunk",
-    "editor.capture.viewport",
-    "editor.dialog.respond",
-    "editor.dialogs.read",
-    "editor.filesystem.scan",
-    "editor.history.redo",
-    "editor.history.undo",
-    "editor.log.read",
-    "editor.main_screen.set",
-    "editor.node",
-    "editor.performance.read",
-    "editor.play.start",
-    "editor.play.stop",
-    "editor.preferences.read",
-    "editor.preferences.set",
-    "editor.preview.resource",
-    "editor.restart",
-    "editor.scene.batch",
-    "editor.scene.close",
-    "editor.scene.edit",
-    "editor.scene.open",
-    "editor.scene.read",
-    "editor.scene.save",
-    "editor.scene.tree",
-    "editor.script.close",
-    "editor.script.open",
-    SCRIPT_RUN_METHOD,
-    "editor.selection.set",
-    "editor.settings.apply",
-    "editor.shortcuts.read",
-    "editor.shortcuts.set",
-    "editor.state",
-    "editor.types.class",
-    "editor.types.search",
-];
+/// The bridge method that calls a command the project declares (ADR 0016). A
+/// server offers it only when its operator allows project commands, and the
+/// add-on calls one only in a session whose server offered it.
+pub(crate) const COMMANDS_CALL_METHOD: &str = "editor.commands.call";
+
+/// What an editor bridge offers beyond [`BRIDGE_METHODS`], by the operator's
+/// choice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Offers {
+    /// [`SCRIPT_RUN_METHOD`]: caller-written GDScript (ADR 0012).
+    pub(crate) scripts: bool,
+    /// [`COMMANDS_CALL_METHOD`]: the project's declared commands (ADR 0016).
+    pub(crate) commands: bool,
+}
 
 /// The bridge method that tells a connected editor what this server serves:
 /// its version, profile and transport, and the profile's tools with what each
@@ -178,7 +151,7 @@ const STATUS_DEADLINE: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub(crate) struct BridgeConfig {
     pub(crate) rendezvous: PathBuf,
-    pub(crate) methods: &'static [&'static str],
+    pub(crate) methods: Vec<&'static str>,
     label: &'static str,
     events: BridgeEvents,
     liveness: Liveness,
@@ -213,9 +186,25 @@ struct BridgeEvents {
 
 impl BridgeConfig {
     /// This bridge, also offering [`SCRIPT_RUN_METHOD`] when `scripts`.
-    pub(crate) fn allowing_scripts(mut self, scripts: bool) -> Self {
-        if scripts {
-            self.methods = BRIDGE_METHODS_WITH_SCRIPTS;
+    pub(crate) fn allowing_scripts(self, scripts: bool) -> Self {
+        self.offering(SCRIPT_RUN_METHOD, scripts)
+    }
+
+    /// This bridge, also offering [`COMMANDS_CALL_METHOD`] when `commands`.
+    pub(crate) fn allowing_commands(self, commands: bool) -> Self {
+        self.offering(COMMANDS_CALL_METHOD, commands)
+    }
+
+    /// This bridge, also offering what `offers` names.
+    pub(crate) fn offering_all(self, offers: Offers) -> Self {
+        self.allowing_scripts(offers.scripts)
+            .allowing_commands(offers.commands)
+    }
+
+    fn offering(mut self, method: &'static str, offered: bool) -> Self {
+        if offered && !self.methods.contains(&method) {
+            self.methods.push(method);
+            self.methods.sort_unstable();
         }
         self
     }
@@ -224,7 +213,7 @@ impl BridgeConfig {
     pub(crate) fn editor(state_root: &Path) -> Self {
         Self {
             rendezvous: state_root.join(RENDEZVOUS_FILE),
-            methods: BRIDGE_METHODS,
+            methods: BRIDGE_METHODS.to_vec(),
             label: "editor",
             events: BridgeEvents {
                 refused: "editor_bridge_refused",
@@ -242,7 +231,7 @@ impl BridgeConfig {
     pub(crate) fn runtime(rendezvous: PathBuf, methods: &'static [&'static str]) -> Self {
         Self {
             rendezvous,
-            methods,
+            methods: methods.to_vec(),
             label: "runtime",
             events: BridgeEvents {
                 refused: "runtime_bridge_refused",
@@ -258,7 +247,7 @@ impl BridgeConfig {
     /// Every method this bridge may send, as its `capabilities` name them
     /// beside the base methods.
     pub(crate) fn advertised(&self) -> Vec<&'static str> {
-        let mut methods = self.methods.to_vec();
+        let mut methods = self.methods.clone();
         if self.status.is_some() {
             methods.push(SERVER_STATUS_METHOD);
         }
@@ -515,7 +504,7 @@ struct Counters {
 struct Inner {
     stop: AtomicBool,
     server: ServerIdentity,
-    methods: &'static [&'static str],
+    methods: Vec<&'static str>,
     label: &'static str,
     events: BridgeEvents,
     liveness: Liveness,
@@ -593,9 +582,9 @@ impl EditorBridge {
     pub(crate) fn start(
         state_root: &Path,
         project: ProjectClaim,
-        scripts: bool,
+        offers: Offers,
     ) -> Result<Arc<Self>, String> {
-        let config = BridgeConfig::editor(state_root).allowing_scripts(scripts);
+        let config = BridgeConfig::editor(state_root).offering_all(offers);
         remove_stale_rendezvous(&config.rendezvous)?;
         Self::start_with(config, project)
     }
@@ -1627,7 +1616,7 @@ mod tests {
                 std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700))
                     .expect("mode");
             }
-            let bridge = EditorBridge::start(&state, project(), false).expect("start");
+            let bridge = EditorBridge::start(&state, project(), Offers::default()).expect("start");
             let home = scratch.0.join("home");
             std::fs::create_dir_all(&home).expect("home");
             let log_path = scratch.0.join("editor.log");
@@ -1738,11 +1727,11 @@ mod tests {
     fn a_rendezvous_a_killed_server_left_does_not_stop_the_next_one() {
         let scratch = Scratch::new("stale");
         let path = scratch.0.join(RENDEZVOUS_FILE);
-        let first = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let first = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let left = std::fs::read(&path).expect("the first rendezvous");
         // What a killed server leaves: its file, and none of its cleanup.
         std::mem::forget(first);
-        let second = EditorBridge::start(&scratch.0, project(), false)
+        let second = EditorBridge::start(&scratch.0, project(), Offers::default())
             .expect("the next server starts over a stale rendezvous");
         let written = std::fs::read(&path).expect("the second rendezvous");
         assert_ne!(written, left, "the next server writes its own secret");
@@ -1753,7 +1742,7 @@ mod tests {
     #[test]
     fn nothing_is_sent_without_a_session() {
         let scratch = Scratch::new("idle");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         assert!(scratch.0.join(RENDEZVOUS_FILE).is_file());
         assert!(!bridge.status().connected);
         assert_eq!(
@@ -1780,7 +1769,7 @@ mod tests {
     #[test]
     fn an_exclusion_keeps_editors_out_until_it_is_released() {
         let scratch = Scratch::new("exclusion");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let exclusion = bridge
             .exclude_connections()
             .expect("no editor is connected");
@@ -1823,7 +1812,7 @@ mod tests {
     fn no_file_is_free_to_write_while_a_restarted_editor_is_awaited() {
         use crate::router::LiveEditorView as _;
         let scratch = Scratch::new("restart-held");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let boundary = super::super::boundary::BridgeEditorBoundary::new(Arc::clone(&bridge));
         assert_eq!(
             boundary.held_paths(),
@@ -1841,7 +1830,7 @@ mod tests {
     #[test]
     fn an_awaited_restart_holds_every_other_change_back() {
         let scratch = Scratch::new("restart-guard");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&[
@@ -1892,7 +1881,7 @@ mod tests {
     #[test]
     fn a_described_plugin_answers_only_the_methods_it_reported() {
         let scratch = Scratch::new("answers");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&["editor.state", "not.a.bridge.method"]).answering(
@@ -1948,7 +1937,7 @@ mod tests {
     #[test]
     fn a_mutation_whose_connection_drops_is_lost_and_never_sent_again() {
         let scratch = Scratch::new("lost");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let first = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&["editor.scene.batch"])
@@ -1994,7 +1983,7 @@ mod tests {
     #[test]
     fn an_unanswered_request_times_out() {
         let scratch = Scratch::new("silent");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&["editor.state"])
@@ -2147,7 +2136,7 @@ mod tests {
     #[test]
     fn a_newer_session_supersedes_the_older_one() {
         let scratch = Scratch::new("supersede");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let first = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&["editor.state"]),
@@ -2200,7 +2189,7 @@ mod tests {
     #[test]
     fn an_unanswered_mutation_names_the_editor_process_its_session_runs_in() {
         let scratch = Scratch::new("editor-process");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             as_this_process(FakePluginScript::implementing(&["editor.scene.batch"]))
@@ -2233,7 +2222,8 @@ mod tests {
                 .describing("executable", json!(elsewhere.path().display().to_string())),
         ] {
             let scratch = Scratch::new("no-editor-process");
-            let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+            let bridge =
+                EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
             let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
             wait_until("the plugin to connect", || bridge.status().connected);
             let (answer, process) = bridge.call_with_process(
@@ -2253,7 +2243,7 @@ mod tests {
     #[test]
     fn a_request_names_the_process_of_the_session_it_was_sent_on() {
         let scratch = Scratch::new("superseded-process");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let first = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             as_this_process(FakePluginScript::implementing(&["editor.state"])),
@@ -2312,7 +2302,7 @@ mod tests {
     #[test]
     fn the_server_status_reaches_only_an_editor_plugin_that_lists_it() {
         let scratch = Scratch::new("status-listed");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let status = json!({ "server_version": "9.9.9", "observed_at_unix_ms": 1, "tools": [] });
         let (source, _, _) = status_source(status.clone());
         bridge.attach_status_source(source);
@@ -2338,7 +2328,7 @@ mod tests {
         listing.join().expect("the plugin ended");
 
         let scratch = Scratch::new("status-unlisted");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let (source, _, asked) = status_source(json!({}));
         bridge.attach_status_source(source);
         let quiet = FakeEditorPlugin::spawn(
@@ -2435,7 +2425,7 @@ mod tests {
     #[test]
     fn a_status_source_attached_after_the_session_opened_still_reaches_it() {
         let scratch = Scratch::new("status-late");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&[SERVER_STATUS_METHOD]),
@@ -2509,7 +2499,7 @@ mod tests {
         FakeEditorPlugin,
     ) {
         let scratch = Scratch::new(label);
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let (sink, kept) = late_sink();
         bridge.attach_late_answers(sink);
         let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
@@ -2734,7 +2724,7 @@ mod tests {
         let scratch = Scratch::new("late-early");
         // The server listens before it has a sink: the plugin may connect and
         // report in between.
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&["editor.state"]).reporting_late(report),
@@ -2765,7 +2755,7 @@ mod tests {
     #[test]
     fn the_bridge_keeps_only_so_many_reports_for_a_sink_not_yet_attached() {
         let scratch = Scratch::new("late-unclaimed");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let reported = |index: usize| LateAnswer {
             transaction_id: LATE_TRANSACTION.to_owned(),
             idempotency_id: format!("early-{index}"),
@@ -2835,7 +2825,7 @@ mod tests {
     #[test]
     fn an_answer_that_meets_the_deadline_reaches_the_caller_or_the_sink() {
         let scratch = Scratch::new("late-race");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let (sink, kept) = late_sink();
         bridge.attach_late_answers(sink);
         let request = |id: &str| {
@@ -2949,7 +2939,7 @@ mod tests {
     #[test]
     fn the_bridge_keeps_abandoned_requests_only_for_a_sink_and_only_so_many() {
         let scratch = Scratch::new("late-bounded");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let payload = |index: usize| json!({ "transaction_id": format!("00000000-0000-4000-8000-{index:012}") });
         keep_abandoned(
             &bridge.inner,
@@ -3009,18 +2999,66 @@ mod tests {
         bridge.stop();
     }
 
+    /// The base methods, `extra` and the server status, as an editor
+    /// bridge advertises them.
+    fn advertised_with(extra: &[&'static str]) -> Vec<&'static str> {
+        let mut methods: Vec<&str> = BRIDGE_METHODS.to_vec();
+        methods.extend_from_slice(extra);
+        methods.push(SERVER_STATUS_METHOD);
+        methods.sort_unstable();
+        methods
+    }
+
     #[test]
     fn only_a_server_allowing_scripts_offers_the_script_method() {
-        let mut with_scripts: Vec<&str> = BRIDGE_METHODS.to_vec();
-        with_scripts.push(SCRIPT_RUN_METHOD);
-        with_scripts.sort_unstable();
-        assert_eq!(BRIDGE_METHODS_WITH_SCRIPTS, with_scripts.as_slice());
         assert!(!BRIDGE_METHODS.contains(&SCRIPT_RUN_METHOD));
         let plain = BridgeConfig::editor(Path::new("state")).allowing_scripts(false);
         assert!(!plain.advertised().contains(&SCRIPT_RUN_METHOD));
+        assert_eq!(plain.advertised(), advertised_with(&[]));
         let scripting = BridgeConfig::editor(Path::new("state")).allowing_scripts(true);
         assert!(scripting.advertised().contains(&SCRIPT_RUN_METHOD));
         assert!(scripting.advertised().contains(&SERVER_STATUS_METHOD));
+        assert_eq!(
+            scripting.advertised(),
+            advertised_with(&[SCRIPT_RUN_METHOD])
+        );
+    }
+
+    #[test]
+    fn only_a_server_allowing_project_commands_offers_the_commands_method() {
+        assert!(!BRIDGE_METHODS.contains(&COMMANDS_CALL_METHOD));
+        let editor = || BridgeConfig::editor(Path::new("state"));
+        assert_eq!(
+            editor().offering_all(Offers::default()).advertised(),
+            advertised_with(&[])
+        );
+        assert_eq!(
+            editor()
+                .offering_all(Offers {
+                    scripts: false,
+                    commands: true
+                })
+                .advertised(),
+            advertised_with(&[COMMANDS_CALL_METHOD])
+        );
+        assert_eq!(
+            editor()
+                .offering_all(Offers {
+                    scripts: true,
+                    commands: true
+                })
+                .advertised(),
+            advertised_with(&[COMMANDS_CALL_METHOD, SCRIPT_RUN_METHOD])
+        );
+        assert_eq!(
+            editor()
+                .allowing_commands(true)
+                .allowing_scripts(true)
+                .allowing_commands(true)
+                .advertised(),
+            advertised_with(&[COMMANDS_CALL_METHOD, SCRIPT_RUN_METHOD]),
+            "the order of the offers and a repeated offer change nothing"
+        );
     }
 
     #[test]

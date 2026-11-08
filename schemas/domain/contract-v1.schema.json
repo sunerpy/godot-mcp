@@ -400,6 +400,11 @@
           "description": "Scene recipes applied by name.",
           "type": "string",
           "const": "0.5.0"
+        },
+        {
+          "description": "Commands a project declares, listed and called through the editor.",
+          "type": "string",
+          "const": "0.6.0"
         }
       ]
     },

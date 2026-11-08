@@ -110,6 +110,7 @@ impl OutcomeRouterHarness {
             limits: Limits::default(),
             process: Default::default(),
             allow_scripts: false,
+            project_commands: true,
             android: Default::default(),
         };
         let runtime =
