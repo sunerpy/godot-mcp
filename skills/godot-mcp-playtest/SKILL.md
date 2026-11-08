@@ -1,10 +1,10 @@
 ---
 name: godot-mcp-playtest
-description: "Run, play and test a Godot 4 game through a connected godot-mcp MCP server. Use when the game has to be started, played, watched or checked, when input or button presses are sent to it, when its nodes, properties or UI text are read while it runs, when screenshots, recordings or image comparisons are taken, when a repeatable test scenario is written, or when game speed is changed or input is recorded and replayed. Covers project.run.start in a window or headless, runtime.wait, synthetic input and runtime.ui.press, runtime.properties.get, test.scenario.run, captures and runtime.image.compare, and always ending with project.run.stop. Changing the project is the godot-mcp skill; installing and connecting the server is the godot-mcp-setup skill."
+description: "Run, play and test a Godot 4 game through a connected godot-mcp MCP server. Use when the game has to be started, played, watched or checked, when input or button presses are sent to it, when its nodes, properties or UI text are read while it runs, when screenshots, recordings or image comparisons are taken, when a repeatable test scenario is written, or when game speed is changed, the game is stepped by physics frames or input is recorded and replayed. Covers project.run.start in a window or headless, runtime.wait, synthetic input and runtime.ui.press, runtime.properties.get, test.scenario.run, captures and runtime.image.compare, and always ending with project.run.stop. Changing the project is the godot-mcp skill; installing and connecting the server is the godot-mcp-setup skill."
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the runtime or full profile, and a Godot editor build the server can find. Screenshots, recordings and image comparisons need a windowed session, so the server needs a display."
 metadata:
-  contract: "0.6.0"
+  contract: "0.7.0"
   profiles: "runtime,full"
 ---
 
@@ -15,7 +15,7 @@ script passed to Godot on the command line, talks to the running game, so the pr
 changed for it: no autoload is added and no setting is touched. Every runtime tool names the
 session by the id `project.run.start` returned, `run_` followed by 32 hexadecimal digits.
 
-This skill describes contract 0.6.0, the `contract` of its metadata. `health.get` reports the
+This skill describes contract 0.7.0, the `contract` of its metadata. `health.get` reports the
 contract the server speaks as `schema_version`; when the two differ, follow the tool schemas.
 
 ## The loop
@@ -208,6 +208,24 @@ a reference image of the project:
   `input.replay` sends recorded events again at their times, and releases what it pressed when
   it ends.
 
+## Frame by frame
+
+- `runtime.frames.step` advances exactly `frames` physics frames (0 to 600), then holds the game
+  paused (`then: hold`, the default) or lets it run (`then: resume`). `frames: 0` holds a running
+  game at its next physics frame; with `resume` it releases the hold.
+- The answer has the `outcome`, `frames_advanced`, `first_frame`, `last_frame` and `held`. Read,
+  sample, write and capture as usual while held; stopping the session releases the hold.
+- A hold does not stop nodes that process while paused, `physics_frame` signal handlers or
+  SceneTreeTimers. A step while the game paused itself is a `conflict`; a pause the game makes
+  during a step ends it as `interfered`.
+- `runtime.sample` with `cadence: physics_frame` samples every physics frame. `input.replay` with
+  `schedule: physics_frame` delivers each event in the physics frame its `frame` names; recorded
+  events carry their `frame`.
+
+```json tool=runtime.frames.step
+{ "session": "run_0123456789abcdef0123456789abcdef", "frames": 10, "idempotencyId": "step-1" }
+```
+
 ## Always stop the session
 
 Call `project.run.stop` when you are done, and after a failure too. It releases every held
@@ -227,7 +245,7 @@ check `project.run.status` without `session` for sessions you started.
 | `unavailable` | no session runs, the session renders nothing for a capture, or the button lies outside the root viewport | start a session, a windowed one for captures; `health.get` names the cause |
 | `unsupported` | the session's probe does not implement the method, as a probe of an older server does, or the button is in a `SubViewport` | stop the session and start a new one; for a `SubViewport`, use input instead |
 | `uncertain` | whether a step or command did what it asked cannot be decided: a wait ran out, an answer was lost, a time scale reads back otherwise | do not resend it; read the game's state first |
-| `conflict` | a second recording, a button text several buttons show, or an `idempotencyId` reused with other arguments | correct the call; use a new id for a new action |
+| `conflict` | a second recording, a button text several buttons show, a step while the game paused itself, or an `idempotencyId` reused with other arguments | correct the call; use a new id for a new action |
 | `not_found` | the node or property does not exist | read `runtime.tree.get` and the node's properties |
 | `invalid_input` | a comparison that cannot hold, or a disabled or invisible button | correct the call from the message |
 | `permission_denied` | `runtime.script.run` before the operator started the server with `--allow-scripts` | use the typed tools; do not ask for the switch unless the user wants a script run |

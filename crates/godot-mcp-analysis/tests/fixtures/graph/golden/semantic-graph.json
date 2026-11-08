@@ -9,7 +9,7 @@
       "file": "art/icon.png",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "asset art/icon.png",
@@ -23,7 +23,7 @@
       "file": "project.godot",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "asset project.godot",
@@ -37,7 +37,7 @@
       "file": "project.godot",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "autoload ComboUi",
@@ -51,7 +51,7 @@
       "file": "project.godot",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "autoload GameState",
@@ -65,7 +65,7 @@
       "file": "scripts/base_actor.gd",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "script class BaseActor",
@@ -84,7 +84,7 @@
         "end_column": 6
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function shared_helper",
@@ -103,7 +103,7 @@
         "end_column": 25
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function take_damage",
@@ -122,7 +122,7 @@
         "end_column": 28
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function dispatch",
@@ -141,7 +141,7 @@
         "end_column": 6
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function only_here",
@@ -160,7 +160,7 @@
         "end_column": 11
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function register_hit",
@@ -179,7 +179,7 @@
         "end_column": 16
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function take_damage",
@@ -198,7 +198,7 @@
         "end_column": 25
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function _on_player_health_changed",
@@ -217,7 +217,7 @@
         "end_column": 17
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "function take_damage",
@@ -231,7 +231,7 @@
       "file": "project.godot",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "input action jump",
@@ -245,7 +245,7 @@
       "file": null,
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "project",
@@ -259,7 +259,7 @@
       "file": "resources/buff.tres",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "document resources/buff.tres",
@@ -273,7 +273,7 @@
       "file": "main.tscn",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "document main.tscn",
@@ -287,7 +287,7 @@
       "file": "scenes/enemy.tscn",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "document scenes/enemy.tscn",
@@ -301,7 +301,7 @@
       "file": "scenes/hud.tscn",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "document scenes/hud.tscn",
@@ -320,7 +320,7 @@
         "end_column": 33
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node .",
@@ -339,7 +339,7 @@
         "end_column": 59
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node Hud",
@@ -358,7 +358,7 @@
         "end_column": 55
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node Player",
@@ -377,7 +377,7 @@
         "end_column": 59
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node Player/Body",
@@ -396,7 +396,7 @@
         "end_column": 43
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node .",
@@ -415,7 +415,7 @@
         "end_column": 37
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node .",
@@ -434,7 +434,7 @@
         "end_column": 48
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "scene node Overlay",
@@ -448,7 +448,7 @@
       "file": "scripts/base_actor.gd",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "script scripts/base_actor.gd",
@@ -462,7 +462,7 @@
       "file": "scripts/dynamic.gd",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "script scripts/dynamic.gd",
@@ -476,7 +476,7 @@
       "file": "scripts/game_state.gd",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "script scripts/game_state.gd",
@@ -490,7 +490,7 @@
       "file": "scripts/hud.gd",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "script scripts/hud.gd",
@@ -504,7 +504,7 @@
       "file": "scripts/player.gd",
       "span": null,
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "script scripts/player.gd",
@@ -523,7 +523,7 @@
         "end_column": 35
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_syntax",
         "confidence": "exact",
         "subject": "signal health_changed",
@@ -542,7 +542,7 @@
         "end_column": 60
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "sub resource CircleShape2D_body",
@@ -561,7 +561,7 @@
         "end_column": 44
       },
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "project_metadata",
         "confidence": "exact",
         "subject": "sub resource Curve_ramp",
@@ -580,7 +580,7 @@
           "target": "autoload:GameState",
           "hint": "GameState",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "GameState",
@@ -597,7 +597,7 @@
       },
       "detail": "[autoload] GameState",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[autoload] GameState",
@@ -614,7 +614,7 @@
           "target": "autoload:ComboUi",
           "hint": "ComboUi",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "ComboUi",
@@ -631,7 +631,7 @@
       },
       "detail": "[autoload] ComboUi",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[autoload] ComboUi",
@@ -648,7 +648,7 @@
           "target": null,
           "hint": "uid://cneverdeclared1",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "uid://cneverdeclared1",
@@ -665,7 +665,7 @@
       },
       "detail": "[autoload] ComboUi -> singleton",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "[autoload] ComboUi -> singleton",
@@ -682,7 +682,7 @@
           "target": "script:scripts/game_state.gd",
           "hint": "script:scripts/game_state.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/game_state.gd",
@@ -699,7 +699,7 @@
       },
       "detail": "[autoload] GameState -> singleton",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[autoload] GameState -> singleton",
@@ -716,7 +716,7 @@
           "target": null,
           "hint": "set_process",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "set_process",
@@ -733,7 +733,7 @@
       },
       "detail": "set_process()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "set_process()",
@@ -750,7 +750,7 @@
           "target": "function:scripts/base_actor.gd::take_damage",
           "hint": "scripts/base_actor.gd::take_damage",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "dynamic_reference",
             "confidence": "inferred",
             "subject": "scripts/base_actor.gd::take_damage",
@@ -762,7 +762,7 @@
           "target": "function:scripts/game_state.gd::take_damage",
           "hint": "scripts/game_state.gd::take_damage",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "dynamic_reference",
             "confidence": "inferred",
             "subject": "scripts/game_state.gd::take_damage",
@@ -774,7 +774,7 @@
           "target": "function:scripts/player.gd::take_damage",
           "hint": "scripts/player.gd::take_damage",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "dynamic_reference",
             "confidence": "inferred",
             "subject": "scripts/player.gd::take_damage",
@@ -791,7 +791,7 @@
       },
       "detail": "target.take_damage()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "dynamic_reference",
         "confidence": "inferred",
         "subject": "target.take_damage()",
@@ -808,7 +808,7 @@
           "target": "function:scripts/dynamic.gd::only_here",
           "hint": "scripts/dynamic.gd::only_here",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "dynamic_reference",
             "confidence": "inferred",
             "subject": "scripts/dynamic.gd::only_here",
@@ -825,7 +825,7 @@
       },
       "detail": "target.only_here()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "dynamic_reference",
         "confidence": "inferred",
         "subject": "target.only_here()",
@@ -842,7 +842,7 @@
           "target": null,
           "hint": "queue_redraw",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "queue_redraw",
@@ -859,7 +859,7 @@
       },
       "detail": "queue_redraw()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "queue_redraw()",
@@ -876,7 +876,7 @@
           "target": null,
           "hint": "set_process",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "set_process",
@@ -893,7 +893,7 @@
       },
       "detail": "set_process()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "set_process()",
@@ -910,7 +910,7 @@
           "target": null,
           "hint": "set_process",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "set_process",
@@ -927,7 +927,7 @@
       },
       "detail": "set_process()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "set_process()",
@@ -944,7 +944,7 @@
           "target": null,
           "hint": "emit",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "emit",
@@ -961,7 +961,7 @@
       },
       "detail": "health_changed.emit()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "health_changed.emit()",
@@ -978,7 +978,7 @@
           "target": "function:scripts/game_state.gd::register_hit",
           "hint": "scripts/game_state.gd::register_hit",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "dynamic_reference",
             "confidence": "inferred",
             "subject": "scripts/game_state.gd::register_hit",
@@ -995,7 +995,7 @@
       },
       "detail": "GameState.register_hit()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "dynamic_reference",
         "confidence": "inferred",
         "subject": "GameState.register_hit()",
@@ -1012,7 +1012,7 @@
           "target": "function:scripts/base_actor.gd::shared_helper",
           "hint": "scripts/base_actor.gd::shared_helper",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "dynamic_reference",
             "confidence": "inferred",
             "subject": "scripts/base_actor.gd::shared_helper",
@@ -1029,7 +1029,7 @@
       },
       "detail": "shared_helper()",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "dynamic_reference",
         "confidence": "inferred",
         "subject": "shared_helper()",
@@ -1046,7 +1046,7 @@
           "target": null,
           "hint": "Node",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "Node",
@@ -1058,7 +1058,7 @@
       "span": null,
       "detail": "extends Node",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "extends Node",
@@ -1075,7 +1075,7 @@
           "target": null,
           "hint": "Node",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "Node",
@@ -1087,7 +1087,7 @@
       "span": null,
       "detail": "extends Node",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "extends Node",
@@ -1104,7 +1104,7 @@
           "target": null,
           "hint": "Node",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "Node",
@@ -1116,7 +1116,7 @@
       "span": null,
       "detail": "extends Node",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "extends Node",
@@ -1133,7 +1133,7 @@
           "target": null,
           "hint": "CanvasLayer",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "CanvasLayer",
@@ -1145,7 +1145,7 @@
       "span": null,
       "detail": "extends CanvasLayer",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "extends CanvasLayer",
@@ -1162,7 +1162,7 @@
           "target": "script:scripts/base_actor.gd",
           "hint": "BaseActor",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "BaseActor",
@@ -1174,7 +1174,7 @@
       "span": null,
       "detail": "extends BaseActor",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "extends BaseActor",
@@ -1191,7 +1191,7 @@
           "target": "input_action:jump",
           "hint": "jump",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "jump",
@@ -1208,7 +1208,7 @@
       },
       "detail": "[input] jump",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[input] jump",
@@ -1225,7 +1225,7 @@
           "target": "scene:main.tscn",
           "hint": "scene:main.tscn",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "scene:main.tscn",
@@ -1242,7 +1242,7 @@
       },
       "detail": "application/run/main_scene",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "application/run/main_scene",
@@ -1259,7 +1259,7 @@
           "target": "resource:resources/buff.tres",
           "hint": "resource:resources/buff.tres",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "resource:resources/buff.tres",
@@ -1276,7 +1276,7 @@
       },
       "detail": "preload(\"res://resources/buff.tres\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "preload(\"res://resources/buff.tres\")",
@@ -1293,7 +1293,7 @@
           "target": "script:scripts/base_actor.gd",
           "hint": "script:scripts/base_actor.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/base_actor.gd",
@@ -1310,7 +1310,7 @@
       },
       "detail": "[ext_resource id=1_buff]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=1_buff]",
@@ -1327,7 +1327,7 @@
           "target": "script:scripts/player.gd",
           "hint": "script:scripts/player.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/player.gd",
@@ -1344,7 +1344,7 @@
       },
       "detail": "[ext_resource id=1_player]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=1_player]",
@@ -1361,7 +1361,7 @@
           "target": "scene:scenes/hud.tscn",
           "hint": "scene:scenes/hud.tscn",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "scene:scenes/hud.tscn",
@@ -1378,7 +1378,7 @@
       },
       "detail": "[ext_resource id=2_hud]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=2_hud]",
@@ -1395,7 +1395,7 @@
           "target": null,
           "hint": "res://../outside/escape.tres",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "res://../outside/escape.tres",
@@ -1412,7 +1412,7 @@
       },
       "detail": "[ext_resource id=3_escape]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "[ext_resource id=3_escape]",
@@ -1429,7 +1429,7 @@
           "target": null,
           "hint": "art/missing.png",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "art/missing.png",
@@ -1446,7 +1446,7 @@
       },
       "detail": "[ext_resource id=4_missing]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "[ext_resource id=4_missing]",
@@ -1463,7 +1463,7 @@
           "target": "scene:scenes/enemy.tscn",
           "hint": "scene:scenes/enemy.tscn",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "scene:scenes/enemy.tscn",
@@ -1480,7 +1480,7 @@
       },
       "detail": "[ext_resource id=5_enemy]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=5_enemy]",
@@ -1497,7 +1497,7 @@
           "target": "script:scripts/hud.gd",
           "hint": "script:scripts/hud.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/hud.gd",
@@ -1514,7 +1514,7 @@
       },
       "detail": "[ext_resource id=6_hud]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=6_hud]",
@@ -1531,7 +1531,7 @@
           "target": "script:scripts/base_actor.gd",
           "hint": "script:scripts/base_actor.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/base_actor.gd",
@@ -1548,7 +1548,7 @@
       },
       "detail": "[ext_resource id=1_actor]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=1_actor]",
@@ -1565,7 +1565,7 @@
           "target": "script:scripts/hud.gd",
           "hint": "script:scripts/hud.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/hud.gd",
@@ -1582,7 +1582,7 @@
       },
       "detail": "[ext_resource id=1_hud]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[ext_resource id=1_hud]",
@@ -1599,7 +1599,7 @@
           "target": null,
           "hint": "uid://cgraphundeclared",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "uid://cgraphundeclared",
@@ -1616,7 +1616,7 @@
       },
       "detail": "[ext_resource id=2_overlay]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "[ext_resource id=2_overlay]",
@@ -1633,7 +1633,7 @@
           "target": "scene:scenes/enemy.tscn",
           "hint": "scene:scenes/enemy.tscn",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "scene:scenes/enemy.tscn",
@@ -1650,7 +1650,7 @@
       },
       "detail": "spawn_scene = ExtResource(\"5_enemy\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "spawn_scene = ExtResource(\"5_enemy\")",
@@ -1667,7 +1667,7 @@
           "target": null,
           "hint": "art/missing.png",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "art/missing.png",
@@ -1684,7 +1684,7 @@
       },
       "detail": "portrait = ExtResource(\"4_missing\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "portrait = ExtResource(\"4_missing\")",
@@ -1701,7 +1701,7 @@
           "target": "scene:scenes/hud.tscn",
           "hint": "scene:scenes/hud.tscn",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "scene:scenes/hud.tscn",
@@ -1718,7 +1718,7 @@
       },
       "detail": "instance=ExtResource(\"2_hud\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "instance=ExtResource(\"2_hud\")",
@@ -1735,7 +1735,7 @@
           "target": "scene_node:main.tscn::.",
           "hint": ".",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": ".",
@@ -1752,7 +1752,7 @@
       },
       "detail": "parent=\".\"",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "parent=\".\"",
@@ -1769,7 +1769,7 @@
           "target": "scene_node:main.tscn::.",
           "hint": ".",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": ".",
@@ -1786,7 +1786,7 @@
       },
       "detail": "parent=\".\"",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "parent=\".\"",
@@ -1803,7 +1803,7 @@
           "target": "scene_node:main.tscn::Player",
           "hint": "Player",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "Player",
@@ -1820,7 +1820,7 @@
       },
       "detail": "parent=\"Player\"",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "parent=\"Player\"",
@@ -1837,7 +1837,7 @@
           "target": "scene_node:scenes/hud.tscn::.",
           "hint": ".",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": ".",
@@ -1854,7 +1854,7 @@
       },
       "detail": "parent=\".\"",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "parent=\".\"",
@@ -1871,7 +1871,7 @@
           "target": "script:scripts/base_actor.gd",
           "hint": "script:scripts/base_actor.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/base_actor.gd",
@@ -1888,7 +1888,7 @@
       },
       "detail": "script = ExtResource(\"1_buff\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "script = ExtResource(\"1_buff\")",
@@ -1905,7 +1905,7 @@
           "target": "script:scripts/hud.gd",
           "hint": "script:scripts/hud.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/hud.gd",
@@ -1922,7 +1922,7 @@
       },
       "detail": "script = ExtResource(\"6_hud\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "script = ExtResource(\"6_hud\")",
@@ -1939,7 +1939,7 @@
           "target": "script:scripts/player.gd",
           "hint": "script:scripts/player.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/player.gd",
@@ -1956,7 +1956,7 @@
       },
       "detail": "script = ExtResource(\"1_player\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "script = ExtResource(\"1_player\")",
@@ -1973,7 +1973,7 @@
           "target": "script:scripts/base_actor.gd",
           "hint": "script:scripts/base_actor.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/base_actor.gd",
@@ -1990,7 +1990,7 @@
       },
       "detail": "script = ExtResource(\"1_actor\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "script = ExtResource(\"1_actor\")",
@@ -2007,7 +2007,7 @@
           "target": "script:scripts/hud.gd",
           "hint": "script:scripts/hud.gd",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "script:scripts/hud.gd",
@@ -2024,7 +2024,7 @@
       },
       "detail": "script = ExtResource(\"1_hud\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "script = ExtResource(\"1_hud\")",
@@ -2041,7 +2041,7 @@
           "target": null,
           "hint": "uid://cgraphundeclared",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "uid://cgraphundeclared",
@@ -2058,7 +2058,7 @@
       },
       "detail": "script = ExtResource(\"2_overlay\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "script = ExtResource(\"2_overlay\")",
@@ -2075,7 +2075,7 @@
           "target": null,
           "hint": "_on_missing_pressed",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "_on_missing_pressed",
@@ -2092,7 +2092,7 @@
       },
       "detail": "[connection signal=\"pressed\" from=\"Hud\" to=\"Hud\" method=\"_on_missing_pressed\"]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "[connection signal=\"pressed\" from=\"Hud\" to=\"Hud\" method=\"_on_missing_pressed\"]",
@@ -2109,7 +2109,7 @@
           "target": "function:scripts/hud.gd::_on_player_health_changed",
           "hint": "scripts/hud.gd::_on_player_health_changed",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "scripts/hud.gd::_on_player_health_changed",
@@ -2126,7 +2126,7 @@
       },
       "detail": "[connection signal=\"health_changed\" from=\"Player\" to=\"Hud\" method=\"_on_player_health_changed\"]",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "[connection signal=\"health_changed\" from=\"Player\" to=\"Hud\" method=\"_on_player_health_changed\"]",
@@ -2143,7 +2143,7 @@
           "target": "signal:scripts/player.gd::health_changed",
           "hint": "health_changed",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "static_index",
             "confidence": "exact",
             "subject": "health_changed",
@@ -2160,7 +2160,7 @@
       },
       "detail": "signal health_changed",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "static_index",
         "confidence": "exact",
         "subject": "signal health_changed",
@@ -2177,7 +2177,7 @@
           "target": "sub_resource:resources/buff.tres::Curve_ramp",
           "hint": "SubResource(\"Curve_ramp\")",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "SubResource(\"Curve_ramp\")",
@@ -2194,7 +2194,7 @@
       },
       "detail": "ramp = SubResource(\"Curve_ramp\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "ramp = SubResource(\"Curve_ramp\")",
@@ -2211,7 +2211,7 @@
           "target": "sub_resource:main.tscn::CircleShape2D_body",
           "hint": "SubResource(\"CircleShape2D_body\")",
           "provenance": {
-            "schema_version": "0.6.0",
+            "schema_version": "0.7.0",
             "source": "unresolved",
             "confidence": "unresolved",
             "subject": "SubResource(\"CircleShape2D_body\")",
@@ -2228,7 +2228,7 @@
       },
       "detail": "shape = SubResource(\"CircleShape2D_body\")",
       "provenance": {
-        "schema_version": "0.6.0",
+        "schema_version": "0.7.0",
         "source": "unresolved",
         "confidence": "unresolved",
         "subject": "shape = SubResource(\"CircleShape2D_body\")",
@@ -2513,7 +2513,7 @@
     }
   ],
   "provenance": {
-    "schema_version": "0.6.0",
+    "schema_version": "0.7.0",
     "source": "static_index",
     "confidence": "exact",
     "subject": "semantic graph",

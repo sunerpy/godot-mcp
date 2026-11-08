@@ -78,10 +78,11 @@ static func matched_actions(event: InputEvent) -> Array:
 	return matched
 
 
-## `event`, received `t_ms` after the recording started, as a recorded
+## `event`, received `t_ms` after the recording started and seen by the game
+## in the physics `frame` counted from the recording's first, as a recorded
 ## dictionary; `injected` says whether the probe injected it.
-static func describe(event: InputEvent, t_ms: int, injected: bool) -> Dictionary:
-	var entry := {"t_ms": t_ms, "source": "probe" if injected else "external"}
+static func describe(event: InputEvent, t_ms: int, frame: int, injected: bool) -> Dictionary:
+	var entry := {"t_ms": t_ms, "frame": frame, "source": "probe" if injected else "external"}
 	if event is InputEventKey:
 		var key := event as InputEventKey
 		var named = _key_name(key.keycode)

@@ -200,13 +200,51 @@ fn the_control_tools_answer_what_the_probe_did() {
     );
     assert!(kept.get("frame").is_none() && kept.get("revision").is_none());
 
-    // The recorded events are what a replay takes.
+    // The recorded events are what a replay takes, by time or by physics
+    // frame.
     let replayed = structured(&session.call_tool(
         13,
         "input.replay",
         json!({ "session": id, "idempotencyId": "control-replay", "events": recorded["events"] }),
     ));
     assert_eq!(replayed["outcome"], json!("completed"), "{replayed}");
+    assert_eq!(recorded["events"][1]["frame"], json!(15), "{recorded}");
+    let by_frame = structured(&session.call_tool(
+        30,
+        "input.replay",
+        json!({ "session": id, "idempotencyId": "control-replay-frames", "events": recorded["events"], "schedule": "physics_frame" }),
+    ));
+    assert_eq!(by_frame["outcome"], json!("completed"), "{by_frame}");
+    assert_eq!(
+        by_frame["mutation_status"],
+        json!("committed"),
+        "{by_frame}"
+    );
+
+    let per_frame = structured(&session.call_tool(
+        31,
+        "runtime.sample",
+        json!({ "session": id, "series": [{ "monitor": "TIME_FPS" }], "cadence": "physics_frame", "durationMs": 200 }),
+    ));
+    assert_eq!(per_frame["session"], json!(id), "{per_frame}");
+
+    let stepped = structured(&session.call_tool(
+        32,
+        "runtime.frames.step",
+        json!({ "session": id, "idempotencyId": "control-step", "frames": 3 }),
+    ));
+    assert_eq!(stepped["mutation_status"], json!("committed"), "{stepped}");
+    assert!(stepped["transaction_id"].is_string(), "{stepped}");
+    assert_eq!(stepped["frames_advanced"], json!(3), "{stepped}");
+    assert_eq!(
+        (
+            stepped["first_frame"].clone(),
+            stepped["last_frame"].clone()
+        ),
+        (json!(101), json!(103)),
+        "{stepped}"
+    );
+    assert_eq!(stepped["held"], json!(true), "{stepped}");
 
     // Out of bounds is refused before anything reaches the probe.
     for (request, tool, arguments) in [
@@ -229,6 +267,38 @@ fn the_control_tools_answer_what_the_probe_did() {
             17,
             "runtime.properties.set",
             json!({ "session": id, "idempotencyId": "control-engine", "target": { "singleton": "Engine", "properties": { "physics_ticks_per_second": { "type": "integer", "value": 0 } } } }),
+        ),
+        (
+            33,
+            "runtime.frames.step",
+            json!({ "session": id, "idempotencyId": "control-step-far", "frames": 601 }),
+        ),
+        (
+            34,
+            "runtime.frames.step",
+            json!({ "session": id, "idempotencyId": "control-step-then", "frames": 1, "then": "pause" }),
+        ),
+        (
+            35,
+            "runtime.frames.step",
+            json!({ "session": id, "idempotencyId": "control-step-long", "frames": 1, "timeoutMs": 30001 }),
+        ),
+        // Accepted by the schemas, which state no rule across fields, and
+        // refused by the checks before anything is sent.
+        (
+            36,
+            "runtime.sample",
+            json!({ "session": id, "series": [{ "monitor": "TIME_FPS" }], "cadence": "physics_frame", "intervalMs": 50 }),
+        ),
+        (
+            37,
+            "input.replay",
+            json!({ "session": id, "idempotencyId": "control-no-frame", "schedule": "physics_frame", "events": [{ "t_ms": 0, "kind": "action", "action": "jump" }] }),
+        ),
+        (
+            38,
+            "input.replay",
+            json!({ "session": id, "idempotencyId": "control-no-time", "events": [{ "frame": 0, "kind": "action", "action": "jump" }] }),
         ),
     ] {
         let refused = session.call_tool(request, tool, arguments);
@@ -313,6 +383,11 @@ fn an_older_probe_is_told_unsupported_before_anything_is_sent() {
             json!({ "idempotencyId": "old-replay", "events": [{ "t_ms": 0, "kind": "action", "action": "jump" }] }),
             "runtime.input.replay",
         ),
+        (
+            "runtime.frames.step",
+            json!({ "idempotencyId": "old-step", "frames": 1 }),
+            "runtime.frames.step",
+        ),
     ];
     for (index, (tool, mut arguments, method)) in calls.into_iter().enumerate() {
         arguments["session"] = json!(id);
@@ -340,6 +415,70 @@ fn an_older_probe_is_told_unsupported_before_anything_is_sent() {
         21,
         "project.run.stop",
         json!({ "session": id, "idempotencyId": "old-stop" }),
+    ));
+    assert_eq!(stopped["state"], json!("exited"), "{stopped}");
+    let _ = session.finish();
+}
+
+/// A probe that predates frame stepping still samples and replays by time,
+/// and is told `unsupported` before anything is sent or journaled when it is
+/// asked to step, or to sample or replay by physics frame, which it would do
+/// by time instead.
+#[test]
+fn a_probe_without_frame_stepping_keeps_time_cadences_only() {
+    let tree = ProjectTree::new("runtime-control-0-4");
+    tree.write("fake-game.conf", "probe-0.4\n");
+    let mut session = server(&tree);
+    let id = start(&mut session, 2, "probe-0-4-start");
+    let refusals = [
+        (
+            3,
+            "runtime.frames.step",
+            json!({ "session": id, "idempotencyId": "probe-0-4-step", "frames": 2 }),
+            "does not implement runtime.frames.step",
+        ),
+        (
+            4,
+            "runtime.sample",
+            json!({ "session": id, "series": [{ "monitor": "TIME_FPS" }], "cadence": "physics_frame" }),
+            "predates physics-frame cadences",
+        ),
+        (
+            5,
+            "input.replay",
+            json!({ "session": id, "idempotencyId": "probe-0-4-replay", "schedule": "physics_frame", "events": [{ "frame": 0, "kind": "action", "action": "jump" }] }),
+            "predates physics-frame cadences",
+        ),
+    ];
+    for (request, tool, arguments, reason) in refusals {
+        let refused = session.call_tool(request, tool, arguments);
+        assert_eq!(
+            error_code(&refused),
+            json!("unsupported"),
+            "{tool}: {refused}"
+        );
+        assert!(refused.to_string().contains(reason), "{tool}: {refused}");
+        assert!(
+            !refused.to_string().contains("transaction_id"),
+            "{tool} journaled nothing: {refused}"
+        );
+    }
+    let sampled = structured(&session.call_tool(
+        6,
+        "runtime.sample",
+        json!({ "session": id, "series": [{ "monitor": "TIME_FPS" }], "cadence": "interval", "durationMs": 200 }),
+    ));
+    assert_eq!(sampled["stopped_by"], json!("duration"), "{sampled}");
+    let replayed = structured(&session.call_tool(
+        7,
+        "input.replay",
+        json!({ "session": id, "idempotencyId": "probe-0-4-replay-time", "events": [{ "t_ms": 0, "frame": 3, "kind": "action", "action": "jump" }] }),
+    ));
+    assert_eq!(replayed["outcome"], json!("completed"), "{replayed}");
+    let stopped = structured(&session.call_tool(
+        8,
+        "project.run.stop",
+        json!({ "session": id, "idempotencyId": "probe-0-4-stop" }),
     ));
     assert_eq!(stopped["state"], json!("exited"), "{stopped}");
     let _ = session.finish();
@@ -509,5 +648,22 @@ fn a_lost_probe_ends_a_wait_and_leaves_a_replay_undecided() {
         json!({ "session": again, "idempotencyId": "lost-replay", "events": [{ "t_ms": 0, "kind": "action", "action": "jump" }] }),
     );
     assert_eq!(error_code(&replay), json!("uncertain"), "{replay}");
+    let _ = session.finish();
+}
+
+/// A step whose probe loses its connection before it answers is uncertain:
+/// how many frames the game advanced, and whether it is held, is unknown.
+#[test]
+fn a_lost_probe_leaves_a_step_undecided() {
+    let tree = ProjectTree::new("runtime-control-lost-step");
+    tree.write("fake-game.conf", "lossy\n");
+    let mut session = server(&tree);
+    let id = start(&mut session, 2, "lost-step-start");
+    let step = session.call_tool(
+        3,
+        "runtime.frames.step",
+        json!({ "session": id, "idempotencyId": "lost-step", "frames": 30 }),
+    );
+    assert_eq!(error_code(&step), json!("uncertain"), "{step}");
     let _ = session.finish();
 }

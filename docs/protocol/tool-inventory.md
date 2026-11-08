@@ -27,8 +27,8 @@ unreachable answers `unavailable` and names the plane. See
 | --- | --- | --- | --- |
 | `core` | 1 | 22 | 4 |
 | `editor` | 3 | 84 | 5 |
-| `runtime` | 3 | 74 | 5 |
-| `full` | 5 | 132 | 5 |
+| `runtime` | 3 | 75 | 5 |
+| `full` | 5 | 133 | 5 |
 
 ## Methods
 
@@ -134,6 +134,7 @@ unreachable answers `unavailable` and names the plane. See
 | `resource.read` | `runtime_execute` | `headless_engine` | no | no | yes | no |
 | `resource.tree.get` | `read` | `project_files` | yes | no | yes | no |
 | `resource.update` | `project_write` | `headless_engine` | no | yes | yes | no |
+| `runtime.frames.step` | `runtime_execute` | `game_session` | no | yes | no | no |
 | `runtime.image.compare` | `runtime_execute` | `game_session` | no | no | no | no |
 | `runtime.navigation.path.get` | `read` | `game_session` | yes | no | yes | no |
 | `runtime.node.move` | `runtime_execute` | `game_session` | no | yes | no | no |
@@ -432,11 +433,11 @@ Start recording every input event the managed game session's window receives —
 
 ### `input.recording.stop`
 
-Stop the managed game session's input recording and answer every event it kept, in the form input.replay takes, with how many the server injected and how many came from elsewhere and why the recording ended. The recording is also kept as a JSON artifact, whose opaque URI is answered.
+Stop the managed game session's input recording and answer every event it kept, with its time and its physics `frame` from the start, in the form input.replay takes, with how many the server injected and how many came from elsewhere and why the recording ended. The recording is also kept as a JSON artifact, whose opaque URI is answered.
 
 ### `input.replay`
 
-Deliver input `events` — as input.recording.stop answers them, or written by hand — to a managed game session again at their times from now, for at most 30 s. Everything the replay pressed and still holds is released when it ends or is cancelled, when the session stops and when the probe loses the server. Other requests to the session wait while it runs; cancelling the call ends it at the next frame. Answers how many events were sent or skipped and how late the latest was.
+Deliver input `events` — as input.recording.stop answers them, or written by hand — to a managed game session again at their times from now, or with `schedule` physics_frame in the physics `frame` each names, counted from the next one, for at most 30 s. Everything the replay pressed and still holds is released when it ends or is cancelled, when the session stops and when the probe loses the server. Other requests to the session wait while it runs; cancelling the call ends it at the next frame. Answers how many events were sent or skipped, how late the latest was and the physics frame each event reached the game in.
 
 ### `input.sequence.send`
 
@@ -570,6 +571,10 @@ Return the parsed structure of one text `resource` (.tres): its type, properties
 
 Canonicalize one existing text `target` resource through a supervised headless Godot re-save and publish the result with compare-and-swap. `dry_run` validates without writing. Needs a headless Godot editor process; the workspace revision advances after it commits.
 
+### `runtime.frames.step`
+
+Advance the managed game session by exactly `frames` physics frames (0 to 600), then hold it paused (`then` hold, the default) or let it run (`then` resume): the probe pauses the scene tree at the start of the physics frame after the last, before the game's nodes process it. `frames` 0 holds a running game at its next physics frame or, with resume, releases a hold. Refused as a conflict when the game paused itself; nodes that process while paused keep running. Answers the frames advanced, the first and last physics frame, whether the game is held and why the step ended.
+
 ### `runtime.image.compare`
 
 Capture the managed game session's root viewport after the next drawn frame and compare it with the project PNG `reference`, both decoded by the game's probe with Godot's own Image API: answers both sizes, whether they match, how many and what share of the pixels differ by more than `tolerance` (0 to 255) in a channel, the largest channel difference and the box around the differing pixels, with the capture and a difference image as artifacts. A size mismatch fails the comparison; nothing is resized. Needs a windowed session.
@@ -608,7 +613,7 @@ Record `durationMs` (at most 10 s) of the managed game session's root viewport a
 
 ### `runtime.sample`
 
-Sample named properties of running nodes (or the Engine singleton's) and named performance monitors every `intervalMs` for `durationMs` (at most 10 s and 600 samples): each series of values, every sample's time, frames and pause and focus state, and the minimum, maximum, mean and last of each numeric series. Large values and strings over 256 characters are not sampled. Changes nothing in the game.
+Sample named properties of running nodes (or the Engine singleton's) and named performance monitors every `intervalMs` for `durationMs` (at most 10 s and 600 samples), or with `cadence` physics_frame once at the start of every physics frame: each series of values, every sample's time, frames and pause and focus state, and the minimum, maximum, mean and last of each numeric series. Large values and strings over 256 characters are not sampled. Changes nothing in the game.
 
 ### `runtime.screenshot.capture`
 
@@ -923,6 +928,7 @@ Tools:
 * `resource.dependencies.get`
 * `resource.read`
 * `resource.tree.get`
+* `runtime.frames.step`
 * `runtime.image.compare`
 * `runtime.navigation.path.get`
 * `runtime.node.move`
@@ -1076,6 +1082,7 @@ Tools:
 * `resource.read`
 * `resource.tree.get`
 * `resource.update`
+* `runtime.frames.step`
 * `runtime.image.compare`
 * `runtime.navigation.path.get`
 * `runtime.node.move`

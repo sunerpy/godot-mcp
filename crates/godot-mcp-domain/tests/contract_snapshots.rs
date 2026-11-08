@@ -14,6 +14,7 @@ use godot_mcp_domain::contracts::{
 use godot_mcp_domain::manifests::{
     ProfileManifest, canonical_manifest, historical_manifest_v0_1, historical_manifest_v0_2,
     historical_manifest_v0_3, historical_manifest_v0_4, historical_manifest_v0_5,
+    historical_manifest_v0_6,
 };
 use godot_mcp_domain::objid::{LeaseKey, StableObjectId};
 use godot_mcp_domain::{CONTRACT_VERSION, CapabilityProfile};
@@ -120,6 +121,22 @@ const RUNTIME_MANIFEST_V0_6: &str = include_str!(concat!(
 const FULL_MANIFEST_V0_6: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../schemas/domain/profiles/v0.6/full.json"
+));
+const CORE_MANIFEST_V0_7: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.7/core.json"
+));
+const EDITOR_MANIFEST_V0_7: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.7/editor.json"
+));
+const RUNTIME_MANIFEST_V0_7: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.7/runtime.json"
+));
+const FULL_MANIFEST_V0_7: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../schemas/domain/profiles/v0.7/full.json"
 ));
 
 fn roundtrip<T>(value: &T)
@@ -293,7 +310,7 @@ fn union<T: Ord + Clone>(sets: impl IntoIterator<Item = BTreeSet<T>>) -> BTreeSe
 
 #[test]
 fn profile_algebra_and_dto_roundtrip() {
-    assert_eq!(CONTRACT_VERSION, "0.6.0");
+    assert_eq!(CONTRACT_VERSION, "0.7.0");
 
     let project = project();
     let provenance = provenance();
@@ -451,8 +468,8 @@ fn profile_algebra_and_dto_roundtrip() {
         json!("https://json-schema.org/draft/2020-12/schema")
     );
 
-    // The frozen version 0.1 to 0.5 artifacts stay byte-verifiable against the
-    // frozen manifests of those releases; contract 0.6 discovery
+    // The frozen version 0.1 to 0.6 artifacts stay byte-verifiable against the
+    // frozen manifests of those releases; contract 0.7 discovery
     // is pinned to its own committed artifacts, derived from the implemented
     // catalog.
     for (profile, v0_3) in [
@@ -500,10 +517,18 @@ fn profile_algebra_and_dto_roundtrip() {
     ] {
         assert_eq!(historical_manifest_v0_5(profile), committed_manifest(v0_5));
     }
-    assert_eq!(core, committed_manifest(CORE_MANIFEST_V0_6));
-    assert_eq!(editor, committed_manifest(EDITOR_MANIFEST_V0_6));
-    assert_eq!(runtime, committed_manifest(RUNTIME_MANIFEST_V0_6));
-    assert_eq!(full, committed_manifest(FULL_MANIFEST_V0_6));
+    for (profile, v0_6) in [
+        (CapabilityProfile::Core, CORE_MANIFEST_V0_6),
+        (CapabilityProfile::Editor, EDITOR_MANIFEST_V0_6),
+        (CapabilityProfile::Runtime, RUNTIME_MANIFEST_V0_6),
+        (CapabilityProfile::Full, FULL_MANIFEST_V0_6),
+    ] {
+        assert_eq!(historical_manifest_v0_6(profile), committed_manifest(v0_6));
+    }
+    assert_eq!(core, committed_manifest(CORE_MANIFEST_V0_7));
+    assert_eq!(editor, committed_manifest(EDITOR_MANIFEST_V0_7));
+    assert_eq!(runtime, committed_manifest(RUNTIME_MANIFEST_V0_7));
+    assert_eq!(full, committed_manifest(FULL_MANIFEST_V0_7));
     assert_eq!(
         full.capabilities,
         union([
@@ -558,6 +583,10 @@ fn profile_algebra_and_dto_roundtrip() {
         EDITOR_MANIFEST_V0_6.to_owned(),
         RUNTIME_MANIFEST_V0_6.to_owned(),
         FULL_MANIFEST_V0_6.to_owned(),
+        CORE_MANIFEST_V0_7.to_owned(),
+        EDITOR_MANIFEST_V0_7.to_owned(),
+        RUNTIME_MANIFEST_V0_7.to_owned(),
+        FULL_MANIFEST_V0_7.to_owned(),
     ] {
         assert!(!document.contains("unsafe_script"));
         assert!(!document.contains("storage_path"));

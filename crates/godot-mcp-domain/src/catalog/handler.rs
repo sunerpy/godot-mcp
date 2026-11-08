@@ -213,6 +213,7 @@ operations! {
         TimeScaleSet,
         ImageCompare,
         ScenarioRun,
+        FramesStep,
     }
 }
 

@@ -51,8 +51,10 @@ pub mod workspace_root;
 /// Version 0.4.0 adds declared script execution, engine reads and runtime
 /// control; version 0.5.0 adds `scene.recipe.apply`; version 0.6.0 adds the
 /// commands a project declares, `editor.commands.list` and
-/// `editor.commands.call`.
-pub const CONTRACT_VERSION: &str = "0.6.0";
+/// `editor.commands.call`; version 0.7.0 adds `runtime.frames.step` and
+/// physics-frame cadences to `runtime.sample`, `input.replay` and recorded
+/// input.
+pub const CONTRACT_VERSION: &str = "0.7.0";
 
 /// Capability profiles exposed by the public contract. Selection is explicit
 /// and independent of how an outcome is requested.

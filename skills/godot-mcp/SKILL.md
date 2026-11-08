@@ -4,7 +4,7 @@ description: "Read and change a Godot 4 project through a connected godot-mcp MC
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the editor or full profile. The editor tools also need the godot_mcp add-on running in an open Godot editor."
 metadata:
-  contract: "0.6.0"
+  contract: "0.7.0"
   profiles: "editor,full"
 ---
 
@@ -16,7 +16,7 @@ only the engine can do, and act in the open Godot editor through its add-on. Thi
 to combine them. The tool schemas in `tools/list` are the reference for every argument; where
 this skill and a schema disagree, the schema is right.
 
-This skill describes contract 0.6.0, the `contract` of its metadata. `health.get` reports the
+This skill describes contract 0.7.0, the `contract` of its metadata. `health.get` reports the
 contract the server speaks as `schema_version`. When the two differ, follow the schemas and the
 tool descriptions.
 

@@ -11,17 +11,19 @@ extends Node
 ##   several nodes' at once), its signals and their connections (and, once
 ##   watched, how often each was emitted), the visible UI, the held input,
 ##   node searches by class, script, group, name and distance, navigation
-##   paths, waits for a condition, timed samples of properties and monitors,
-##   captures — a screenshot of the root viewport after a drawn frame, or a
+##   paths, waits for a condition, samples of properties and monitors, timed
+##   or taken at the start of every physics frame, captures — a screenshot of the root viewport after a drawn frame, or a
 ##   recording of several — whose PNG bytes the server reads back in bounded
 ##   chunks, a capture compared with an uploaded reference image, and the
 ##   checks of a test scenario's assertions;
 ## * mutations: property writes (converted without loss, then read back),
 ##   synthetic actions, keys and mouse buttons, a timed sequence of them, a
-##   replay of recorded input, a click on a button, moving a node, recording
-##   the input the game receives, releasing everything held, running a
-##   caller's script when the server offers it (`script_runner.gd`), a test
-##   scenario's stress window, and stopping the game.
+##   replay of recorded input by time or by physics frame, a click on a
+##   button, moving a node, recording the input the game receives, releasing
+##   everything held, stepping the game by physics frames and holding it
+##   paused, running a caller's script when the server offers it
+##   (`script_runner.gd`), a test scenario's stress window, and stopping the
+##   game.
 ##
 ## Every read answers with the probe's `revision` (it advances whenever a node
 ## enters, leaves or is renamed) and the engine `frame` it observed.
@@ -35,8 +37,17 @@ extends Node
 ## `PROBE_META` marker, so an input recording says which events came from it.
 ##
 ## Requests run one at a time. A request that spans frames — a wait, a sample,
-## a replay, a move, a click — ends at its next frame when the server withdraws
-## it, when the session stops or when the connection is lost.
+## a replay, a move, a click, a step — ends at its next frame when the server
+## withdraws it, when the session stops or when the connection is lost.
+##
+## The probe processes physics first: its `process_physics_priority` is the
+## lowest there is, so in every physics frame its `_physics_process` runs
+## before every game node's but those that share that priority and come
+## before it in the tree (autoloads). It emits `physics_tick` there, and what
+## is done per physics frame — a step's count and hold, a per-frame sample, a
+## replay's frame schedule — is done in it (ADR 0017). A hold is the probe's
+## own pause of the scene tree; the game's own pause is never changed, and a
+## hold is released when the session stops or the connection ends.
 ##
 ## What differs between the Godot builds the server supports (4.4.1 to 4.7.1)
 ## is probed once, in `_probe_compatibility`, and read from `_compat`.
@@ -48,7 +59,7 @@ const Events = preload("runtime_events.gd")
 const ScriptRunner = preload("script_runner.gd")
 const EditorLog = preload("editor_log.gd")
 
-const PROBE_VERSION := "0.4.0"
+const PROBE_VERSION := "0.5.0"
 const RENDEZVOUS_ENV := "GODOT_MCP_RUNTIME_RENDEZVOUS"
 const PROBE_META := &"godot_mcp_probe"
 const ORPHAN_SECONDS := 15.0
@@ -84,6 +95,11 @@ const MAX_SCANNED := 20000
 const MAX_INPUT_EVENTS := 3000
 const MAX_INPUT_RECORDING_MS := 30000
 const MAX_REPLAY_MS := 30000
+## A replay by physics frame lasts at most this long at the game's own rate.
+const MAX_REPLAY_SECONDS := 30
+const MAX_STEP_FRAMES := 600
+const MAX_STEP_MS := 30000
+const DEFAULT_STEP_MS := 20000
 const MAX_SYNC_MS := 5000
 const MAX_MOVE_MS := 30000
 const MAX_SPEED := 100000.0
@@ -126,6 +142,7 @@ const READS := [
 	"runtime.wait",
 ]
 const MUTATIONS := [
+	"runtime.frames.step",
 	"runtime.input.record.start",
 	"runtime.input.record.stop",
 	"runtime.input.release",
@@ -146,6 +163,23 @@ const MOUSE_BUTTONS := {
 	"wheel_up": MOUSE_BUTTON_WHEEL_UP,
 	"wheel_down": MOUSE_BUTTON_WHEEL_DOWN,
 }
+
+## Emitted from the probe's `_physics_process`, at the start of every physics
+## frame, before the game's nodes process it.
+signal physics_tick
+
+## A pausable child that hears every change of the scene tree's pause: Godot
+## notifies the pausable nodes of the change while it sets `SceneTree.paused`,
+## so a pause the probe did not set is seen as it happens.
+class PauseWatch extends Node:
+	var changed: Callable
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_PAUSED:
+			changed.call(true)
+		elif what == NOTIFICATION_UNPAUSED:
+			changed.call(false)
+
 
 var _client: Node = null
 var _revision := 0
@@ -180,10 +214,30 @@ var _scripts = ScriptRunner.new()
 ## What the engine logs, captured from the first script run on (Godot 4.5 and
 ## later), so a run's report says what it printed and raised.
 var _log = null
+## Whether the probe holds the game: it paused the scene tree, and keeps it
+## paused until the next step, a release, the session's stop or the end of the
+## connection.
+var _holding := false
+## Whether a step is advancing the game.
+var _stepping := false
+## Set while the probe itself writes `SceneTree.paused`.
+var _own_pause := false
+## A pause change the probe did not make while it held or stepped the game:
+## {"physics_frame", "paused"}, or empty.
+var _interference: Dictionary = {}
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# First in every physics frame: a step pauses the tree before the game's
+	# nodes process the frame, and a per-frame sample reads the state the
+	# previous frame left.
+	process_physics_priority = -2147483648
+	var watch := PauseWatch.new()
+	watch.name = "GodotMcpPauseWatch"
+	watch.process_mode = Node.PROCESS_MODE_PAUSABLE
+	watch.changed = _on_pause_changed
+	add_child(watch)
 	_probe_compatibility()
 	var tree := get_tree()
 	tree.node_added.connect(_on_tree_changed)
@@ -220,6 +274,7 @@ func _probe_compatibility() -> void:
 
 func _exit_tree() -> void:
 	_release_all()
+	_release_hold()
 	if _log != null:
 		_log.stop()
 		_log = null
@@ -241,9 +296,14 @@ func _on_session_opened(summary: Dictionary) -> void:
 
 func _on_disconnected(_reason: String) -> void:
 	# Whatever the server pressed is released the moment it loses sight of it,
-	# and every request spanning frames ends.
+	# a game it held runs again, and every request spanning frames ends.
 	_epoch += 1
 	_release_all()
+	_release_hold()
+
+
+func _physics_process(_delta: float) -> void:
+	physics_tick.emit()
 
 
 static func _now_ms() -> int:
@@ -350,6 +410,8 @@ func dispatch(method: String, payload: Dictionary, context: Dictionary) -> Dicti
 			return _record_stop()
 		"runtime.input.replay":
 			return await _replay(payload, message_id)
+		"runtime.frames.step":
+			return await _frames_step(payload, message_id)
 		"runtime.capture.screenshot":
 			return await _screenshot()
 		"runtime.capture.recording":
@@ -1552,6 +1614,14 @@ func _series_of(payload: Dictionary) -> Dictionary:
 ## maximum, mean and last of each numeric series.
 func _sample(payload: Dictionary, message_id: String) -> Dictionary:
 	var epoch := _epoch
+	var cadence := str(payload.get("cadence", "interval"))
+	if cadence != "interval" and cadence != "physics_frame":
+		return fail("invalid_input", "`cadence` is interval or physics_frame")
+	# The physics_frame cadence takes one sample at the start of every
+	# physics frame, before the game's nodes process it; it has no interval.
+	var per_frame := cadence == "physics_frame"
+	if per_frame and payload.has("interval_ms"):
+		return fail("invalid_input", "the physics_frame cadence samples once every physics frame and takes no interval")
 	var duration: int = int(payload.get("duration_ms", 1000))
 	var interval: int = int(payload.get("interval_ms", 100))
 	var most: int = int(payload.get("max_samples", MAX_SAMPLES))
@@ -1582,6 +1652,8 @@ func _sample(payload: Dictionary, message_id: String) -> Dictionary:
 	var paused := 0
 	var unfocused := 0
 	while true:
+		if per_frame:
+			await physics_tick
 		var interrupted := _interrupted(message_id, epoch)
 		if interrupted != "":
 			stopped_by = "cancelled" if interrupted == "cancelled" else "interrupted"
@@ -1589,7 +1661,7 @@ func _sample(payload: Dictionary, message_id: String) -> Dictionary:
 		var now := _now_ms()
 		if now - started > duration:
 			break
-		if now >= next_at:
+		if per_frame or now >= next_at:
 			var is_paused: bool = get_tree().paused
 			var focused: bool = get_tree().root.has_focus()
 			paused += 1 if is_paused else 0
@@ -1634,7 +1706,8 @@ func _sample(payload: Dictionary, message_id: String) -> Dictionary:
 			if spent > MAX_ANSWER_BYTES:
 				stopped_by = "size"
 				break
-		await get_tree().process_frame
+		if not per_frame:
+			await get_tree().process_frame
 	_cancelled.erase(message_id)
 	var answered: Array = []
 	for index in series.size():
@@ -1656,7 +1729,8 @@ func _sample(payload: Dictionary, message_id: String) -> Dictionary:
 			"last_frame": Engine.get_process_frames(),
 			"first_physics_frame": first_physics,
 			"last_physics_frame": Engine.get_physics_frames(),
-			"interval_ms": interval,
+			"cadence": cadence,
+			"interval_ms": null if per_frame else interval,
 			"duration_ms": duration,
 			"display": DisplayServer.get_name(),
 			"focus_observable": _compat["window_focus"],
@@ -1882,7 +1956,11 @@ func _on_window_input(event: InputEvent) -> void:
 		_recording["dropped"] = int(_recording["dropped"]) + 1
 		_end_recording("max_events")
 		return
-	_recording["events"].append(Events.describe(event, elapsed, event.has_meta(PROBE_META)))
+	# The physics frame the game first sees the event in, as Godot decides
+	# it: an event received during or between physics frames is reported by
+	# `Input.is_action_just_pressed` in the next one.
+	var frame := Engine.get_physics_frames() + 1 - int(_recording["first_physics_frame"])
+	_recording["events"].append(Events.describe(event, elapsed, frame, event.has_meta(PROBE_META)))
 
 
 ## Stop capturing input into the recording, which is kept until it is
@@ -1900,8 +1978,8 @@ func _end_recording(reason: String) -> void:
 
 ## `runtime.input.record.start`: record every input event the game's root
 ## window receives — keys, mouse buttons and motion, joypad buttons and axes,
-## actions — with its time from now, at most `max_events` of them for at most
-## `max_duration_ms`.
+## actions — with its time from now and its physics frame counted from the
+## next one, at most `max_events` of them for at most `max_duration_ms`.
 func _record_start(payload: Dictionary) -> Dictionary:
 	if not _recording.is_empty():
 		return fail("conflict", "an input recording is already kept; stop it with input.recording.stop first")
@@ -1918,12 +1996,14 @@ func _record_start(payload: Dictionary) -> Dictionary:
 		"dropped": 0,
 		"ended_by": "",
 		"active": true,
+		"first_physics_frame": Engine.get_physics_frames() + 1,
 	}
 	_next_input_recording += 1
 	get_tree().root.window_input.connect(_on_window_input)
 	return ok(_observed({
 		"recording_id": _recording["id"],
 		"started_ticks_ms": _recording["started_ms"],
+		"first_physics_frame": _recording["first_physics_frame"],
 		"max_events": most,
 		"max_duration_ms": longest,
 	}), "committed")
@@ -1943,6 +2023,7 @@ func _record_stop() -> Dictionary:
 	var answer := {
 		"recording_id": _recording["id"],
 		"started_ticks_ms": _recording["started_ms"],
+		"first_physics_frame": _recording["first_physics_frame"],
 		"duration_ms": int(_recording["ended_ms"]) - int(_recording["started_ms"]),
 		"ended_by": _recording["ended_by"],
 		"max_events": _recording["max_events"],
@@ -1956,14 +2037,29 @@ func _record_stop() -> Dictionary:
 
 
 ## `runtime.input.replay`: deliver recorded `events` again at their recorded
-## times from now. Everything the replay pressed and still holds is released
-## when it ends, is withdrawn or the session stops, and when the connection
-## ends.
+## times from now (`schedule` time), or in the physics frame each names,
+## counted from the next one (`schedule` physics_frame). Everything the replay
+## pressed and still holds is released when it ends, is withdrawn or the
+## session stops, and when the connection ends.
+##
+## By physics frame, the events of frame 0 are delivered at once, between
+## physics frames, and those of a later frame k once every node has processed
+## frame k - 1, from a call deferred to the end of that frame. Either way the
+## game's `_input` sees the event before frame k, and its `_physics_process`
+## in frame k sees it pressed and just pressed, however long a frame takes.
 func _replay(payload: Dictionary, message_id: String) -> Dictionary:
 	var epoch := _epoch
+	var schedule := str(payload.get("schedule", "time"))
+	if schedule != "time" and schedule != "physics_frame":
+		return fail("invalid_input", "`schedule` is time or physics_frame")
+	var by_frame := schedule == "physics_frame"
+	if by_frame and _holding:
+		return fail("conflict", "runtime.frames.step holds the game, so no physics frame of it runs; release it (frames 0, then resume) before a replay by physics frame")
 	var entries = payload.get("events")
 	if typeof(entries) != TYPE_ARRAY or entries.is_empty() or entries.size() > MAX_INPUT_EVENTS:
 		return fail("invalid_input", "`events` is an array of 1 to %d recorded events" % MAX_INPUT_EVENTS)
+	var field := "frame" if by_frame else "t_ms"
+	var bound: int = MAX_REPLAY_SECONDS * Engine.physics_ticks_per_second if by_frame else MAX_REPLAY_MS
 	var plan: Array = []
 	var skipped := 0
 	var last := 0
@@ -1971,9 +2067,11 @@ func _replay(payload: Dictionary, message_id: String) -> Dictionary:
 		var entry = entries[index]
 		if typeof(entry) != TYPE_DICTIONARY:
 			return fail("invalid_input", "event %d is not an object" % index)
-		var at = entry.get("t_ms")
+		var at = entry.get(field)
 		if (typeof(at) != TYPE_INT and typeof(at) != TYPE_FLOAT) or float(at) != floor(float(at)) \
-				or float(at) < last or float(at) > MAX_REPLAY_MS:
+				or float(at) < last or float(at) > bound:
+			if by_frame:
+				return fail("invalid_input", "event %d: `frame` is a whole number from the previous event's to %d, 30 s of physics frames at the game's %d per second" % [index, bound, Engine.physics_ticks_per_second])
 			return fail("invalid_input", "event %d: `t_ms` is a whole number from the previous event's to %d" % [index, MAX_REPLAY_MS])
 		last = int(at)
 		var built: Dictionary = Events.build(entry, index)
@@ -1982,39 +2080,57 @@ func _replay(payload: Dictionary, message_id: String) -> Dictionary:
 		if built.has("skip"):
 			skipped += 1
 			continue
-		plan.append({"t_ms": int(at), "event": built["event"], "key": built["key"]})
+		var place = entry.get("index", index)
+		plan.append({
+			"at": int(at),
+			"event": built["event"],
+			"key": built["key"],
+			"index": int(place) if typeof(place) == TYPE_INT or typeof(place) == TYPE_FLOAT else index,
+		})
 	if plan.is_empty():
 		return fail("invalid_input", "none of the %d events is of a kind a replay delivers" % entries.size())
 	var before: Dictionary = _held.duplicate()
 	var started := _now_ms()
-	var sent := 0
-	var lag := 0
+	# The physics frame the game sees an event delivered now in; a replay by
+	# physics frame counts its frames from it.
+	var first_physics := Engine.get_physics_frames() + 1
+	var state := {"sent": 0, "lag": 0, "deliveries": []}
 	var outcome := "completed"
 	var cursor := 0
-	while cursor < plan.size():
-		var interrupted := _interrupted(message_id, epoch)
-		if interrupted != "":
-			outcome = "cancelled" if interrupted == "cancelled" else "interrupted"
-			break
-		var now := _now_ms() - started
-		while cursor < plan.size() and int(plan[cursor]["t_ms"]) <= now:
-			var step: Dictionary = plan[cursor]
-			var event: InputEvent = step["event"]
-			var key: String = step["key"]
-			if event is InputEventMouse:
-				_mouse_position = (event as InputEventMouse).position
-			if key != "":
-				if Events.presses(event):
-					# Held until the recording releases it or the replay ends.
-					_held[key] = {"event": event, "expires_ms": _now_ms() + MAX_REPLAY_MS + MAX_HOLD_MS}
-				else:
-					_held.erase(key)
-			_inject(event)
-			lag = maxi(lag, now - int(step["t_ms"]))
-			sent += 1
-			cursor += 1
-		if cursor < plan.size():
-			await get_tree().process_frame
+	if by_frame:
+		var last_frame := int(plan[plan.size() - 1]["at"])
+		cursor = _deliver_due(plan, cursor, 0, first_physics, state)
+		while true:
+			await physics_tick
+			var interrupted := _interrupted(message_id, epoch)
+			if interrupted != "":
+				outcome = "cancelled" if interrupted == "cancelled" else "interrupted"
+				break
+			# The physics frame starting now, counted from the first.
+			var offset := Engine.get_physics_frames() - first_physics
+			if offset > last_frame:
+				# The game has processed the frame of the last event.
+				break
+			var due := cursor
+			while due < plan.size() and int(plan[due]["at"]) <= offset + 1:
+				due += 1
+			if due > cursor:
+				_deliver_frame.call_deferred(plan.slice(cursor, due), first_physics, state)
+				cursor = due
+	else:
+		while cursor < plan.size():
+			var interrupted := _interrupted(message_id, epoch)
+			if interrupted != "":
+				outcome = "cancelled" if interrupted == "cancelled" else "interrupted"
+				break
+			var now := _now_ms() - started
+			while cursor < plan.size() and int(plan[cursor]["at"]) <= now:
+				var step: Dictionary = plan[cursor]
+				_deliver(step, false, state)
+				state["lag"] = maxi(int(state["lag"]), now - int(step["at"]))
+				cursor += 1
+			if cursor < plan.size():
+				await get_tree().process_frame
 	_cancelled.erase(message_id)
 	var released: Array = []
 	for key in _held.keys():
@@ -2022,6 +2138,7 @@ func _replay(payload: Dictionary, message_id: String) -> Dictionary:
 			released.append(key)
 			_release(key)
 	released.sort()
+	var sent: int = state["sent"]
 	if sent > 0 and _interrupted(message_id, epoch) in ["", "cancelled"]:
 		# Input is delivered to the game at its next frame: the answer comes
 		# once the game has received every event the replay sent.
@@ -2030,15 +2147,61 @@ func _replay(payload: Dictionary, message_id: String) -> Dictionary:
 		return fail("cancelled", "the replay ended before it sent an event: it was %s" % outcome)
 	return ok(_observed({
 		"outcome": outcome,
+		"schedule": schedule,
 		"events_sent": sent,
 		"events_skipped": skipped,
 		"events_planned": plan.size(),
 		"elapsed_ms": _now_ms() - started,
-		"scheduled_ms": last,
-		"max_lag_ms": lag,
+		"scheduled_ms": null if by_frame else last,
+		"max_lag_ms": null if by_frame else state["lag"],
+		"first_physics_frame": first_physics,
+		"scheduled_frames": last if by_frame else null,
+		"max_lag_frames": state["lag"] if by_frame else null,
+		"deliveries": state["deliveries"],
 		"released": released,
 		"held": _held_snapshot(),
 	}), "committed")
+
+
+## Deliver one planned event to the game, and record the physics frame it
+## sees it in: an event delivered during or between physics frames is
+## reported by `Input.is_action_just_pressed` in the next one. `flush`
+## dispatches it at once instead of with the game's next input.
+func _deliver(step: Dictionary, flush: bool, state: Dictionary) -> int:
+	var event: InputEvent = step["event"]
+	var key: String = step["key"]
+	if event is InputEventMouse:
+		_mouse_position = (event as InputEventMouse).position
+	if key != "":
+		if Events.presses(event):
+			# Held until the recording releases it or the replay ends.
+			_held[key] = {"event": event, "expires_ms": _now_ms() + MAX_REPLAY_MS + MAX_HOLD_MS}
+		else:
+			_held.erase(key)
+	_inject(event)
+	if flush:
+		Input.flush_buffered_events()
+	var seen := Engine.get_physics_frames() + 1
+	state["sent"] = int(state["sent"]) + 1
+	state["deliveries"].append({"index": step["index"], "physics_frame": seen})
+	return seen
+
+
+## Deliver the events of a replay by physics frame due by frame `offset`, now.
+func _deliver_due(plan: Array, cursor: int, offset: int, first_physics: int, state: Dictionary) -> int:
+	while cursor < plan.size() and int(plan[cursor]["at"]) <= offset:
+		var seen := _deliver(plan[cursor], true, state)
+		state["lag"] = maxi(int(state["lag"]), seen - first_physics - int(plan[cursor]["at"]))
+		cursor += 1
+	return cursor
+
+
+## Deliver `steps`, the events of one physics frame, once every node has
+## processed the frame before it.
+func _deliver_frame(steps: Array, first_physics: int, state: Dictionary) -> void:
+	for step in steps:
+		var seen := _deliver(step, true, state)
+		state["lag"] = maxi(int(state["lag"]), seen - first_physics - int(step["at"]))
 
 
 # --- clicking a button -------------------------------------------------------------
@@ -2261,12 +2424,149 @@ func _chunk(payload: Dictionary) -> Dictionary:
 	})
 
 
+# --- stepping by physics frames ----------------------------------------------------
+
+
+## Write `SceneTree.paused` as the probe, so the pause watch knows it was not
+## the game.
+func _set_paused(value: bool) -> void:
+	_own_pause = true
+	get_tree().paused = value
+	_own_pause = false
+
+
+## Hold the game: pause the tree now, at the start of a physics frame before
+## the game's nodes process it, or keep it paused.
+func _hold() -> void:
+	_holding = true
+	if not get_tree().paused:
+		_set_paused(true)
+
+
+## Let a game the probe holds run again. A pause the game set is its own and
+## stays.
+func _release_hold() -> void:
+	if not _holding:
+		return
+	_holding = false
+	if is_inside_tree() and get_tree().paused:
+		_set_paused(false)
+
+
+func _on_pause_changed(paused: bool) -> void:
+	if _own_pause or not (_holding or _stepping):
+		return
+	# Something else paused or unpaused the tree while the probe held or
+	# stepped the game: the pause is theirs now, and a step in flight ends.
+	_holding = false
+	_interference = {"physics_frame": Engine.get_physics_frames(), "paused": paused}
+
+
+func _step_answer(outcome: String, requested: int, advanced: int, first: int, last: int, then: String, started: int) -> Dictionary:
+	return _observed({
+		"outcome": outcome,
+		"frames_requested": requested,
+		"frames_advanced": advanced,
+		"first_frame": first if first >= 0 else null,
+		"last_frame": last if last >= 0 else null,
+		"then": then,
+		"held": _holding,
+		"paused": get_tree().paused,
+		"elapsed_ms": _now_ms() - started,
+		"interference": _interference.duplicate() if not _interference.is_empty() else null,
+	})
+
+
+## `runtime.frames.step`: advance the game by exactly `frames` physics frames,
+## then hold it paused (`then` hold) or let it run on (`then` resume).
+##
+## The probe counts the frames at their start, in its own `_physics_process`,
+## before the game's nodes process them: a running game is counted from its
+## next physics frame, and a held one is released at the start of the first
+## frame it advances. At the start of the frame after the last one the probe
+## pauses the tree again, before the game's nodes process it, or with resume
+## leaves it running. `frames` 0 holds a running game at the start of its next
+## physics frame, keeps a hold, or with resume releases it.
+##
+## A step ends early, holding the game, when `timeout_ms` passes or the server
+## withdraws it; when the session stops or the connection ends it releases
+## the game. The game's own pause is never changed: a step is refused while
+## the game paused itself, and one during which anything else changes the
+## pause ends there, says so and leaves the pause as it is.
+func _frames_step(payload: Dictionary, message_id: String) -> Dictionary:
+	var epoch := _epoch
+	var frames = payload.get("frames")
+	if (typeof(frames) != TYPE_INT and typeof(frames) != TYPE_FLOAT) or float(frames) != floor(float(frames)) \
+			or float(frames) < 0.0 or float(frames) > MAX_STEP_FRAMES:
+		return fail("invalid_input", "`frames` is a whole number from 0 to %d" % MAX_STEP_FRAMES)
+	var count := int(frames)
+	var then := str(payload.get("then", "hold"))
+	if then != "hold" and then != "resume":
+		return fail("invalid_input", "`then` is hold or resume")
+	var timeout = payload.get("timeout_ms", DEFAULT_STEP_MS)
+	if (typeof(timeout) != TYPE_INT and typeof(timeout) != TYPE_FLOAT) or float(timeout) < 1.0 \
+			or float(timeout) > MAX_STEP_MS:
+		return fail("invalid_input", "`timeout_ms` is 1 to %d" % MAX_STEP_MS)
+	if get_tree().paused and not _holding:
+		return fail("conflict", "the game paused itself: SceneTree.paused is true and the probe did not pause it; the probe never changes the game's own pause")
+	var started := _now_ms()
+	_interference = {}
+	if count == 0 and (then == "resume" or _holding):
+		# Nothing advances: a hold is released, or kept.
+		if then == "resume":
+			_release_hold()
+		return ok(_step_answer("completed", 0, 0, -1, -1, then, started), "committed")
+	_stepping = true
+	var advanced := 0
+	var first := -1
+	var last := -1
+	var outcome := "completed"
+	while true:
+		await physics_tick
+		# The start of a physics frame: the game's nodes have not processed it.
+		if not _interference.is_empty():
+			outcome = "interfered"
+			break
+		var interrupted := _interrupted(message_id, epoch)
+		if interrupted != "":
+			outcome = "cancelled" if interrupted == "cancelled" else "interrupted"
+			break
+		if advanced >= count:
+			break
+		if _now_ms() - started > int(timeout):
+			outcome = "timed_out"
+			break
+		if _holding:
+			# A held game is released here, so its nodes process this frame
+			# and no idle frame of it runs before.
+			_holding = false
+			_set_paused(false)
+		advanced += 1
+		last = Engine.get_physics_frames()
+		if first < 0:
+			first = last
+	_stepping = false
+	_cancelled.erase(message_id)
+	match outcome:
+		"completed":
+			if then == "hold":
+				_hold()
+		"timed_out", "cancelled":
+			# An unfinished step holds the game where it stopped.
+			_hold()
+		"interrupted":
+			# The session is stopping or its server is gone: the game runs.
+			_release_hold()
+	return ok(_step_answer(outcome, count, advanced, first, last, then, started), "committed")
+
+
 # --- stopping ----------------------------------------------------------------------
 
 
 func _stop(payload: Dictionary) -> Dictionary:
 	var released: Array = _held_snapshot()
 	_release_all()
+	_release_hold()
 	_end_recording("stopped")
 	_stopping = true
 	_quit_soon.call_deferred(clampi(int(payload.get("exit_code", 0)), 0, 125))

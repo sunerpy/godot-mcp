@@ -20,13 +20,14 @@ pub const RENDEZVOUS_ENV: &str = "GODOT_MCP_RUNTIME_RENDEZVOUS";
 pub const SCENE_ENV: &str = "GODOT_MCP_RUNTIME_SCENE";
 
 /// The probe version, as it reports itself in every envelope.
-pub const PROBE_VERSION: &str = "0.4.0";
+pub const PROBE_VERSION: &str = "0.5.0";
 
 /// The bridge methods the probe implements, as the server may send them.
 pub const METHODS: &[&str] = &[
     "runtime.capture.chunk",
     "runtime.capture.recording",
     "runtime.capture.screenshot",
+    "runtime.frames.step",
     "runtime.image.compare",
     "runtime.image.reference",
     "runtime.input.record.start",
@@ -63,6 +64,7 @@ pub const METHODS_WITH_SCRIPTS: &[&str] = &[
     "runtime.capture.chunk",
     "runtime.capture.recording",
     "runtime.capture.screenshot",
+    "runtime.frames.step",
     "runtime.image.compare",
     "runtime.image.reference",
     "runtime.input.record.start",

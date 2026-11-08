@@ -6,8 +6,10 @@
 //! stand-in; this suite checks that the probe a session runs does what those
 //! cases assume, in the exact Godot builds the lock names: conversions and
 //! read-backs, waits, samples, searches, navigation, presses, mouse input and
-//! watched signals, input recording and replay, withdrawals, and the timing of
-//! synthetic input.
+//! watched signals, input recording and replay, withdrawals, the timing of
+//! synthetic input, and stepping a game by physics frames, sampling it per
+//! physics frame and replaying input by physics frame against the frame
+//! fixture `frames.tscn`.
 //!
 //! It needs real Godot builds, so every case is ignored on a plain
 //! `cargo test`:
@@ -35,7 +37,7 @@ use support::{ProjectTree, Spawn, StdioSession, error_code};
 const EDITORS: &str = "GODOT_MCP_TEST_EDITORS";
 const ARTIFACT: &str = "GODOT_MCP_LOCKED_ARTIFACT";
 
-const FIXTURE: [(&str, &str); 5] = [
+const FIXTURE: [(&str, &str); 8] = [
     (
         "project.godot",
         include_str!("fixtures/runtime_control/project.godot"),
@@ -49,6 +51,18 @@ const FIXTURE: [(&str, &str); 5] = [
     (
         "anchor.gd",
         include_str!("fixtures/runtime_control/anchor.gd"),
+    ),
+    (
+        "frames.tscn",
+        include_str!("fixtures/runtime_control/frames.tscn"),
+    ),
+    (
+        "frames.gd",
+        include_str!("fixtures/runtime_control/frames.gd"),
+    ),
+    (
+        "early.gd",
+        include_str!("fixtures/runtime_control/early.gd"),
     ),
 ];
 
@@ -107,6 +121,15 @@ struct Game {
 
 impl Game {
     fn start(binary: &Path, label: &str, display: &str) -> Self {
+        Self::launch(binary, label, display, None, "HUD/StartButton")
+    }
+
+    /// A game running the frame fixture, `frames.tscn`.
+    fn start_frames(binary: &Path, label: &str, display: &str) -> Self {
+        Self::launch(binary, label, display, Some("res://frames.tscn"), "Faller")
+    }
+
+    fn launch(binary: &Path, label: &str, display: &str, scene: Option<&str>, ready: &str) -> Self {
         let tree = ProjectTree::new(label);
         for (name, text) in FIXTURE {
             tree.write(name, text);
@@ -117,11 +140,11 @@ impl Game {
             profile: "full",
             godot: Some(binary),
         });
-        let started = session.call_tool(
-            2,
-            "project.run.start",
-            json!({ "idempotencyId": "live-start", "display": display }),
-        );
+        let mut start = json!({ "idempotencyId": "live-start", "display": display });
+        if let Some(scene) = scene {
+            start["scene"] = json!(scene);
+        }
+        let started = session.call_tool(2, "project.run.start", start);
         assert!(
             started.get("error").is_none() && started["result"]["isError"] != json!(true),
             "{}: the game did not start: {started}",
@@ -141,7 +164,7 @@ impl Game {
         // The fixture is ready once its scene built the world.
         game.read(
             "runtime.wait",
-            json!({ "condition": { "node_exists": { "node": "HUD/StartButton" } }, "timeoutMs": 10000 }),
+            json!({ "condition": { "node_exists": { "node": ready } }, "timeoutMs": 10000 }),
         );
         game
     }
@@ -1472,5 +1495,970 @@ fn live_held_input_is_released_when_the_server_goes_away() {
             binary.display()
         );
         let _ = next.finish();
+    }
+}
+
+// --- stepping, sampling and replaying by physics frame -----------------------------
+
+/// What the frame fixture counted, read in one request: the scene's own
+/// counters, its `Always` child's and the `FrameEarly` autoload's.
+#[derive(Debug, Clone)]
+struct Counts {
+    physics_calls: i64,
+    process_calls: i64,
+    last_physics_frame: i64,
+    physics_frames: Vec<i64>,
+    signal_calls: i64,
+    timer_fires: i64,
+    scene_timer_fires: i64,
+    faller_steps: i64,
+    always_calls: i64,
+    early_calls: i64,
+    early_frames: Vec<i64>,
+}
+
+impl Counts {
+    /// The physics frames the scene processed since `before` was read.
+    fn frames_since(&self, before: &Self) -> Vec<i64> {
+        after_last(&self.physics_frames, &before.physics_frames)
+    }
+
+    /// The physics frames `FrameEarly` processed since `before` was read.
+    fn early_frames_since(&self, before: &Self) -> Vec<i64> {
+        after_last(&self.early_frames, &before.early_frames)
+    }
+}
+
+/// The frames of `now` later than the last one of `then`.
+fn after_last(now: &[i64], then: &[i64]) -> Vec<i64> {
+    let seen = then.last().copied().unwrap_or(i64::MIN);
+    now.iter().copied().filter(|frame| *frame > seen).collect()
+}
+
+impl Game {
+    /// What the frame fixture counted, in one read.
+    fn counts(&mut self) -> Counts {
+        let read = self.read(
+            "runtime.properties.batch.get",
+            json!({ "targets": [
+                { "node": ".", "properties": [
+                    "physics_calls", "process_calls", "last_physics_frame", "physics_frames",
+                    "signal_calls", "timer_fires", "scene_timer_fires", "faller_steps"
+                ] },
+                { "node": "Always", "properties": ["physics_calls"] },
+                { "node": "/root/FrameEarly", "properties": ["physics_calls", "physics_frames"] }
+            ] }),
+        );
+        let value = |target: usize, name: &str| -> Value {
+            let value = read["targets"][target]["properties"][name]["value"].clone();
+            assert!(
+                !value.is_null(),
+                "{name} of target {target} is unread: {read}"
+            );
+            value
+        };
+        let whole = |target: usize, name: &str| -> i64 {
+            let found = value(target, name);
+            found
+                .as_i64()
+                .unwrap_or_else(|| panic!("{name} is not a whole number: {found}"))
+        };
+        Counts {
+            physics_calls: whole(0, "physics_calls"),
+            process_calls: whole(0, "process_calls"),
+            last_physics_frame: whole(0, "last_physics_frame"),
+            physics_frames: whole_numbers(&value(0, "physics_frames")),
+            signal_calls: whole(0, "signal_calls"),
+            timer_fires: whole(0, "timer_fires"),
+            scene_timer_fires: whole(0, "scene_timer_fires"),
+            faller_steps: whole(0, "faller_steps"),
+            always_calls: whole(1, "physics_calls"),
+            early_calls: whole(2, "physics_calls"),
+            early_frames: whole_numbers(&value(2, "physics_frames")),
+        }
+    }
+
+    /// One of the frame fixture's recorded lists of physics frames.
+    fn frames(&mut self, name: &str) -> Vec<i64> {
+        whole_numbers(&self.property(".", name))
+    }
+
+    /// Step the game, and check the step completed and holds or releases it
+    /// as `then` says.
+    fn step(&mut self, arguments: Value) -> Value {
+        let stepped = self.read("runtime.frames.step", arguments.clone());
+        let frames = arguments["frames"].as_i64().expect("a frame count");
+        let held = arguments["then"] != json!("resume");
+        assert_step(&stepped, "completed", frames, held, &self.binary);
+        assert_eq!(stepped["paused"], json!(held), "{}: {stepped}", self.binary);
+        stepped
+    }
+
+    /// Wait, at most 10 s, until the fixture noted `line` after its first
+    /// `from` lines.
+    fn marker_since(&self, from: usize, line: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.markers().iter().skip(from).any(|noted| noted == line) {
+            assert!(
+                Instant::now() < deadline,
+                "{}: the game never noted `{line}` after line {from}: {:?}",
+                self.binary,
+                self.markers()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Wait, at most 5 s, until the scene processed more than `calls`
+    /// physics frames.
+    fn runs_past(&mut self, calls: i64) {
+        let ran = self.read(
+            "runtime.wait",
+            json!({ "condition": { "property": {
+                "node": ".", "property": "physics_calls", "op": ">", "value": tagged("integer", json!(calls))
+            } }, "timeoutMs": 5000 }),
+        );
+        assert_eq!(
+            ran["satisfied"],
+            json!(true),
+            "{}: the game did not run: {ran}",
+            self.binary
+        );
+    }
+}
+
+/// Check a step's answer: its outcome, the frames it advanced, whether it
+/// holds the game, and that its first and last frames span what it advanced.
+fn assert_step(answer: &Value, outcome: &str, advanced: i64, held: bool, binary: &str) {
+    assert_eq!(answer["outcome"], json!(outcome), "{binary}: {answer}");
+    assert_eq!(
+        answer["frames_advanced"],
+        json!(advanced),
+        "{binary}: {answer}"
+    );
+    assert_eq!(answer["held"], json!(held), "{binary}: {answer}");
+    if advanced > 0 {
+        let (first, last) = span(answer);
+        assert_eq!(last - first + 1, advanced, "{binary}: {answer}");
+    } else {
+        assert_eq!(answer["first_frame"], Value::Null, "{binary}: {answer}");
+        assert_eq!(answer["last_frame"], Value::Null, "{binary}: {answer}");
+    }
+}
+
+/// The first and last physics frame a step advanced.
+fn span(answer: &Value) -> (i64, i64) {
+    (
+        answer["first_frame"].as_i64().expect("a first frame"),
+        answer["last_frame"].as_i64().expect("a last frame"),
+    )
+}
+
+/// The whole numbers of a list the probe encoded, each a tagged integer.
+fn whole_numbers(list: &Value) -> Vec<i64> {
+    list.as_array()
+        .unwrap_or_else(|| panic!("{list} is not a list"))
+        .iter()
+        .map(|item| {
+            item["value"]
+                .as_i64()
+                .unwrap_or_else(|| panic!("{item} is not a tagged whole number"))
+        })
+        .collect()
+}
+
+/// The physics frame of each sample a sample took.
+fn sample_frames(sampled: &Value) -> Vec<i64> {
+    sampled["samples"]
+        .as_array()
+        .expect("samples")
+        .iter()
+        .map(|sample| sample["physics_frame"].as_i64().expect("a physics frame"))
+        .collect()
+}
+
+/// Whether each number is one more than the one before.
+fn consecutive(numbers: &[i64]) -> bool {
+    numbers.windows(2).all(|pair| pair[1] == pair[0] + 1)
+}
+
+/// The deliveries a replay answered: the caller's index of each event and
+/// the physics frame the game sees it in, in delivery order.
+fn deliveries(replayed: &Value) -> Vec<(i64, i64)> {
+    replayed["deliveries"]
+        .as_array()
+        .expect("deliveries")
+        .iter()
+        .map(|delivery| {
+            (
+                delivery["index"].as_i64().expect("an index"),
+                delivery["physics_frame"].as_i64().expect("a physics frame"),
+            )
+        })
+        .collect()
+}
+
+/// The jump events `_input` received, from a tagged list of
+/// `[physics frame counter, in a physics frame, pressed]`.
+fn input_seen(list: &Value) -> Vec<(i64, bool, bool)> {
+    list.as_array()
+        .unwrap_or_else(|| panic!("{list} is not a list"))
+        .iter()
+        .map(|item| {
+            let fields = item["value"].as_array().expect("an entry");
+            (
+                fields[0]["value"].as_i64().expect("a counter"),
+                fields[1]["value"].as_bool().expect("in a physics frame"),
+                fields[2]["value"].as_bool().expect("pressed"),
+            )
+        })
+        .collect()
+}
+
+/// The frames of `list` from `from` on.
+fn from_frame(list: &[i64], from: i64) -> Vec<i64> {
+    list.iter()
+        .copied()
+        .filter(|frame| *frame >= from)
+        .collect()
+}
+
+#[test]
+#[ignore = "needs real Godot builds: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn live_a_step_advances_exactly_its_frames_and_holds() {
+    let (binaries, _unpacked) = binaries();
+    for binary in &binaries {
+        let mut game = Game::start_frames(binary, "live-step", "headless");
+        game.runs_past(5);
+
+        // `frames` 0 holds the running game at the start of its next physics
+        // frame.
+        game.step(json!({ "frames": 0 }));
+        game.marker("tree paused");
+
+        // Held, the scene stands still while the engine's physics frames go
+        // on, sampled at the start of each of 20 of them.
+        let still = game.counts();
+        let held = game.read(
+            "runtime.sample",
+            json!({ "series": [
+                { "node": ".", "property": "physics_calls" },
+                { "node": ".", "property": "process_calls" },
+                { "node": ".", "property": "timer_fires" },
+                { "node": ".", "property": "faller_steps" },
+                { "node": "/root/FrameEarly", "property": "physics_calls" },
+                { "node": "Always", "property": "physics_calls" },
+                { "node": ".", "property": "signal_calls" },
+                { "node": ".", "property": "scene_timer_fires" }
+            ], "cadence": "physics_frame", "durationMs": 10000, "maxSamples": 20 }),
+        );
+        assert_eq!(held["stopped_by"], json!("max_samples"), "{held}");
+        assert_eq!(held["paused_samples"], json!(20), "{held}");
+        assert!(consecutive(&sample_frames(&held)), "{held}");
+        let column = |index: usize| whole_numbers(&held["series"][index]["values"]);
+        for (index, expected) in [
+            (0, still.physics_calls),
+            (1, still.process_calls),
+            (2, still.timer_fires),
+            (3, still.faller_steps),
+            (4, still.early_calls),
+        ] {
+            assert_eq!(
+                column(index),
+                vec![expected; 20],
+                "{}: series {index} moved while held: {held}",
+                game.binary
+            );
+        }
+        // What processes while the tree is paused goes on: a node set to
+        // process always, the SceneTree's physics_frame signal, and a
+        // SceneTreeTimer, which processes always unless told otherwise.
+        assert!(consecutive(&column(5)), "{}: {held}", game.binary);
+        assert!(consecutive(&column(6)), "{}: {held}", game.binary);
+        let scene_timer = column(7);
+        assert!(
+            scene_timer.last() > scene_timer.first(),
+            "{}: {held}",
+            game.binary
+        );
+        eprintln!(
+            "{}: held for 20 physics frames: the scene, its Timer node, its physics body and an autoload stood still; an always-processing node and the physics_frame signal ran once a frame; a SceneTreeTimer fired {} times",
+            game.binary,
+            scene_timer.last().unwrap_or(&0) - scene_timer.first().unwrap_or(&0)
+        );
+
+        // From a hold, exactly the frames asked for advance, each processed
+        // by the scene and stepped by the physics server once.
+        for frames in [1_i64, 3, 10, 60] {
+            let before = game.counts();
+            let began = Instant::now();
+            let stepped = game.step(json!({ "frames": frames }));
+            let took = began.elapsed();
+            let after = game.counts();
+            let (first, last) = span(&stepped);
+            assert_eq!(
+                after.physics_calls - before.physics_calls,
+                frames,
+                "{}: a {frames}-frame step: {stepped}",
+                game.binary
+            );
+            assert_eq!(
+                after.frames_since(&before),
+                (first..=last).collect::<Vec<_>>(),
+                "{}: the scene processed other frames than the step's: {stepped}",
+                game.binary
+            );
+            assert_eq!(after.last_physics_frame, last, "{stepped}");
+            assert_eq!(
+                after.faller_steps - before.faller_steps,
+                frames,
+                "{}: the physics server stepped otherwise: {stepped}",
+                game.binary
+            );
+            // A node at the probe's own priority that comes before it in the
+            // tree, an autoload, sees the frames one later: the probe
+            // releases the hold after it in the first frame, and holds again
+            // after it in the frame after the last.
+            assert_eq!(after.early_calls - before.early_calls, frames, "{stepped}");
+            assert_eq!(
+                after.early_frames_since(&before),
+                (first + 1..=last + 1).collect::<Vec<_>>(),
+                "{}: {stepped}",
+                game.binary
+            );
+            eprintln!(
+                "{}: a {frames}-frame step from a hold advanced frames {first}..={last} in {} ms ({took:?} round trip); between the reads around it the scene's _process ran {} times, an always-processing node's _physics_process {} times, its Timer fired {} times, a SceneTreeTimer {} times, the physics_frame signal {} times",
+                game.binary,
+                stepped["elapsed_ms"],
+                after.process_calls - before.process_calls,
+                after.always_calls - before.always_calls,
+                after.timer_fires - before.timer_fires,
+                after.scene_timer_fires - before.scene_timer_fires,
+                after.signal_calls - before.signal_calls
+            );
+        }
+
+        // Other requests keep working while the game is held.
+        let timed = game.read(
+            "runtime.sample",
+            json!({ "series": [{ "node": ".", "property": "physics_calls" }], "durationMs": 300, "intervalMs": 50 }),
+        );
+        let count = timed["samples"].as_array().map_or(0, Vec::len);
+        assert!(count >= 4, "{timed}");
+        assert_eq!(timed["paused_samples"], json!(count), "{timed}");
+        assert_eq!(
+            timed["series"][0]["stats"]["min"], timed["series"][0]["stats"]["max"],
+            "{timed}"
+        );
+        let tree = game.read("runtime.tree.get", json!({ "depth": 1 }));
+        assert!(tree["nodes"].is_array(), "{tree}");
+
+        // `then` resume releases the hold, and the game runs on.
+        let held_calls = game.counts().physics_calls;
+        game.step(json!({ "frames": 0, "then": "resume" }));
+        game.runs_past(held_calls + 5);
+
+        // From a running game a step counts from its next physics frame, and
+        // the game holds from the frame after the last.
+        let stepped = game.step(json!({ "frames": 10 }));
+        let after = game.counts();
+        let (first, last) = span(&stepped);
+        assert_eq!(after.last_physics_frame, last, "{stepped}");
+        let tail = &after.physics_frames[after.physics_frames.len() - 12..];
+        assert_eq!(
+            tail,
+            (first - 2..=last).collect::<Vec<_>>().as_slice(),
+            "{}: the scene ran up to the step and through it: {stepped}",
+            game.binary
+        );
+        let early = &after.early_frames[after.early_frames.len() - 13..];
+        assert_eq!(
+            early,
+            (first - 2..=last + 1).collect::<Vec<_>>().as_slice(),
+            "{}: {stepped}",
+            game.binary
+        );
+        assert_eq!(game.counts().physics_calls, after.physics_calls);
+
+        // A step that runs out of time holds the game where it stopped.
+        let before = game.counts();
+        let timed_out = game.read(
+            "runtime.frames.step",
+            json!({ "frames": 600, "timeoutMs": 200 }),
+        );
+        let after = game.counts();
+        let advanced = timed_out["frames_advanced"].as_i64().expect("advanced");
+        assert!(
+            advanced > 0 && advanced < 600,
+            "{}: {timed_out}",
+            game.binary
+        );
+        assert_step(&timed_out, "timed_out", advanced, true, &game.binary);
+        assert_eq!(timed_out["paused"], json!(true), "{timed_out}");
+        let (first, last) = span(&timed_out);
+        assert_eq!(after.physics_calls - before.physics_calls, advanced);
+        assert_eq!(
+            after.frames_since(&before),
+            (first..=last).collect::<Vec<_>>()
+        );
+        assert!(timed_out["elapsed_ms"].as_u64() >= Some(200), "{timed_out}");
+        eprintln!(
+            "{}: a 600-frame step with a 200 ms timeout advanced {advanced} frames in {} ms and held",
+            game.binary, timed_out["elapsed_ms"]
+        );
+
+        // A withdrawn step holds the game where it stopped too.
+        let before = game.counts();
+        let from = game.markers().len();
+        let stepping = game.send("runtime.frames.step", json!({ "frames": 600 }));
+        // The step released the hold in its first frame: it is advancing.
+        game.marker_since(from, "tree unpaused");
+        game.session.notify(
+            "notifications/cancelled",
+            json!({ "requestId": stepping, "reason": "the client gave up" }),
+        );
+        let after = game.counts();
+        let withdrawn = game.read(
+            "runtime.sample",
+            json!({ "series": [{ "node": ".", "property": "physics_calls" }], "cadence": "physics_frame", "maxSamples": 10 }),
+        );
+        assert_eq!(withdrawn["paused_samples"], json!(10), "{withdrawn}");
+        assert_eq!(
+            whole_numbers(&withdrawn["series"][0]["values"]),
+            vec![after.physics_calls; 10],
+            "{}: a withdrawn step left the game running: {withdrawn}",
+            game.binary
+        );
+        let advanced = after.physics_calls - before.physics_calls;
+        assert!(advanced > 0 && advanced < 600, "{advanced}");
+        assert!(consecutive(&after.frames_since(&before)));
+        game.marker_since(from, "tree paused");
+        eprintln!(
+            "{}: a withdrawn 600-frame step had advanced {advanced} frames and held",
+            game.binary
+        );
+
+        // The game's own pause is never changed: a step is refused while the
+        // game paused itself, and nothing moves.
+        game.step(json!({ "frames": 0, "then": "resume" }));
+        game.set(".", json!({ "paused": tagged("bool", json!(true)) }));
+        let before = game.counts();
+        for arguments in [
+            json!({ "frames": 3 }),
+            json!({ "frames": 0 }),
+            json!({ "frames": 0, "then": "resume" }),
+        ] {
+            let (code, message) = game.refused("runtime.frames.step", arguments);
+            assert_eq!(code, json!("conflict"), "{}: {message}", game.binary);
+        }
+        let paused = game.read(
+            "runtime.sample",
+            json!({ "series": [{ "node": ".", "property": "physics_calls" }], "cadence": "physics_frame", "maxSamples": 5 }),
+        );
+        assert_eq!(paused["paused_samples"], json!(5), "{paused}");
+        assert_eq!(game.counts().physics_calls, before.physics_calls);
+        assert_eq!(game.property(".", "paused"), json!(true));
+        game.set(".", json!({ "paused": tagged("bool", json!(false)) }));
+
+        // A pause the game makes during a step ends the step there: the
+        // step says so and leaves the game's pause as it is.
+        game.step(json!({ "frames": 0 }));
+        game.set(
+            ".",
+            json!({ "pause_after_physics": tagged("integer", json!(5)) }),
+        );
+        let before = game.counts();
+        let interfered = game.read("runtime.frames.step", json!({ "frames": 60 }));
+        let after = game.counts();
+        assert_step(&interfered, "interfered", 5, false, &game.binary);
+        assert_eq!(interfered["paused"], json!(true), "{interfered}");
+        assert_eq!(
+            interfered["interference"]["paused"],
+            json!(true),
+            "{interfered}"
+        );
+        assert_eq!(
+            interfered["interference"]["physics_frame"], interfered["last_frame"],
+            "{interfered}"
+        );
+        assert_eq!(after.physics_calls - before.physics_calls, 5);
+        // Pausing the tree stops the physics server at once, so the pause in
+        // the fifth frame comes before that frame's step.
+        assert_eq!(
+            after.faller_steps - before.faller_steps,
+            4,
+            "{}: the physics server steps in the four frames before the game's pause",
+            game.binary
+        );
+        assert_eq!(game.property(".", "paused"), json!(true));
+        eprintln!(
+            "{}: a game that paused itself in the 5th frame of a 60-frame step ended it there; the physics server took {} steps",
+            game.binary,
+            after.faller_steps - before.faller_steps
+        );
+        let (code, message) = game.refused("runtime.frames.step", json!({ "frames": 1 }));
+        assert_eq!(code, json!("conflict"), "{message}");
+        game.set(".", json!({ "paused": tagged("bool", json!(false)) }));
+
+        // A game that unpauses the tree while the probe holds it takes the
+        // pause over: it runs, and the probe holds nothing.
+        game.step(json!({ "frames": 0 }));
+        let held_calls = game.counts().physics_calls;
+        game.set(".", json!({ "paused": tagged("bool", json!(false)) }));
+        game.runs_past(held_calls + 3);
+        game.step(json!({ "frames": 0, "then": "resume" }));
+
+        // A session stopped while the probe holds its game releases the hold
+        // before the game quits.
+        game.step(json!({ "frames": 0 }));
+        let from = game.markers().len();
+        game.stop();
+        assert!(
+            game.markers()
+                .iter()
+                .skip(from)
+                .any(|line| line == "tree unpaused"),
+            "{}: the stop released no hold: {:?}",
+            game.binary,
+            game.markers()
+        );
+        game.finish();
+    }
+}
+
+#[test]
+#[ignore = "needs real Godot builds: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn live_a_held_game_runs_again_when_its_server_goes_away() {
+    let (binaries, _unpacked) = binaries();
+    for binary in &binaries {
+        let mut game = Game::start_frames(binary, "live-orphan-hold", "headless");
+        game.step(json!({ "frames": 0 }));
+        game.marker("tree paused");
+        let from = game.markers().len();
+        game.assert_no_errors();
+        let Game {
+            session, tree, id, ..
+        } = game;
+        let base = tree.base.clone();
+        let killed = Instant::now();
+        session.kill();
+        let deadline = killed + Duration::from_secs(20);
+        while !markers_under(&base)
+            .iter()
+            .skip(from)
+            .any(|line| line == "tree unpaused")
+        {
+            assert!(
+                Instant::now() < deadline,
+                "{}: the probe kept holding the game when its server went away: {:?}",
+                binary.display(),
+                markers_under(&base)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        eprintln!(
+            "{}: a held game ran again within {} ms of its server being killed",
+            binary.display(),
+            killed.elapsed().as_millis()
+        );
+        // The next server ends the game the killed one left.
+        let mut next = StdioSession::initialized(&Spawn {
+            project: &tree.root,
+            current_dir: None,
+            profile: "full",
+            godot: Some(binary),
+        });
+        let listed = next.call_tool(2, "project.run.status", json!({ "session": id }));
+        assert!(listed.get("error").is_none(), "{listed}");
+        assert_eq!(
+            listed["result"]["structuredContent"]["state"],
+            json!("reconciled"),
+            "{}: {listed}",
+            binary.display()
+        );
+        let _ = next.finish();
+    }
+}
+
+#[test]
+#[ignore = "needs real Godot builds: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn live_a_running_game_is_sampled_every_physics_frame() {
+    let (binaries, _unpacked) = binaries();
+    for binary in &binaries {
+        let mut game = Game::start_frames(binary, "live-sample-frames", "headless");
+        // Every idle frame stalls 35 ms, so physics frames run in bursts of
+        // two or three to catch up.
+        game.set(".", json!({ "stall_ms": tagged("integer", json!(35)) }));
+        let sampled = game.read(
+            "runtime.sample",
+            json!({ "series": [
+                { "node": ".", "property": "physics_calls" },
+                { "node": ".", "property": "last_physics_frame" },
+                { "node": ".", "property": "last_signal_frame" },
+                { "node": ".", "property": "faller_steps" }
+            ], "cadence": "physics_frame", "durationMs": 10000, "maxSamples": 60 }),
+        );
+        assert_eq!(sampled["stopped_by"], json!("max_samples"), "{sampled}");
+        assert_eq!(
+            sampled["time_base"]["cadence"],
+            json!("physics_frame"),
+            "{sampled}"
+        );
+        assert_eq!(
+            sampled["time_base"]["interval_ms"],
+            Value::Null,
+            "{sampled}"
+        );
+        assert_eq!(sampled["paused_samples"], json!(0), "{sampled}");
+        let frames = sample_frames(&sampled);
+        assert_eq!(frames.len(), 60, "{sampled}");
+        assert!(
+            consecutive(&frames),
+            "{}: a physics frame went unsampled: {frames:?}",
+            game.binary
+        );
+        let column = |index: usize| whole_numbers(&sampled["series"][index]["values"]);
+        assert!(consecutive(&column(0)), "{}: {sampled}", game.binary);
+        // Each sample is taken at the start of its physics frame: the scene
+        // processed the frame before it, and the physics_frame signal, which
+        // the SceneTree emits before any node processes a frame, has reached
+        // it for this one.
+        assert_eq!(
+            column(1),
+            frames.iter().map(|frame| frame - 1).collect::<Vec<_>>(),
+            "{}: {sampled}",
+            game.binary
+        );
+        assert_eq!(column(2), frames, "{}: {sampled}", game.binary);
+        assert!(consecutive(&column(3)), "{}: {sampled}", game.binary);
+        let mut per_idle: std::collections::BTreeMap<i64, usize> =
+            std::collections::BTreeMap::new();
+        for sample in sampled["samples"].as_array().expect("samples") {
+            *per_idle
+                .entry(sample["frame"].as_i64().expect("a frame"))
+                .or_default() += 1;
+        }
+        let burst = per_idle.values().max().copied().unwrap_or(0);
+        assert!(burst >= 2, "{}: no burst: {per_idle:?}", game.binary);
+        // Timed samples, one per idle frame at most, miss the physics frames
+        // of a burst.
+        let timed = game.read(
+            "runtime.sample",
+            json!({ "series": [{ "node": ".", "property": "physics_calls" }], "durationMs": 500, "intervalMs": 1 }),
+        );
+        let timed_frames = sample_frames(&timed);
+        let skipped = timed_frames
+            .windows(2)
+            .filter(|pair| pair[1] - pair[0] > 1)
+            .count();
+        assert!(skipped > 0, "{}: {timed_frames:?}", game.binary);
+        eprintln!(
+            "{}: with 35 ms idle frames, 60 per-frame samples saw 60 consecutive physics frames, up to {burst} in one idle frame; 1 ms timed samples skipped physics frames {skipped} of {} times",
+            game.binary,
+            timed_frames.len().saturating_sub(1)
+        );
+        game.set(".", json!({ "stall_ms": tagged("integer", json!(0)) }));
+        game.stop();
+        game.finish();
+    }
+}
+
+#[test]
+#[ignore = "needs real Godot builds: GODOT_MCP_TEST_EDITORS or GODOT_MCP_LOCKED_ARTIFACT"]
+fn live_input_is_replayed_by_physics_frame() {
+    let (binaries, _unpacked) = binaries();
+    for binary in &binaries {
+        let mut game = Game::start_frames(binary, "live-replay-frames", "headless");
+
+        // A recording names the physics frame in which the game first sees
+        // each event: the one in which it is just pressed or just released.
+        let started = game.read("input.recording.start", json!({}));
+        let origin = started["first_physics_frame"]
+            .as_i64()
+            .expect("the recording's first physics frame");
+        game.read(
+            "input.sequence.send",
+            json!({ "steps": [
+                { "kind": "action", "action": "jump", "state": "press" },
+                { "kind": "wait", "ms": 100 },
+                { "kind": "action", "action": "jump", "state": "release" }
+            ] }),
+        );
+        game.read(
+            "runtime.sample",
+            json!({ "series": [{ "monitor": "TIME_FPS" }], "cadence": "physics_frame", "maxSamples": 3 }),
+        );
+        let recorded = game.read("input.recording.stop", json!({}));
+        assert_eq!(recorded["first_physics_frame"], json!(origin), "{recorded}");
+        let jumps: Vec<Value> = recorded["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .filter(|event| event["kind"] == json!("action") && event["action"] == json!("jump"))
+            .cloned()
+            .collect();
+        assert_eq!(jumps.len(), 2, "{}: {recorded}", game.binary);
+        let pressed = jumps[0]["frame"].as_i64().expect("a frame");
+        let released = jumps[1]["frame"].as_i64().expect("a frame");
+        assert_eq!(jumps[0]["pressed"], json!(true), "{recorded}");
+        assert!(released > pressed, "{recorded}");
+        assert!(
+            game.frames("just_pressed").contains(&(origin + pressed)),
+            "{}: {recorded}",
+            game.binary
+        );
+        assert!(
+            game.frames("just_released").contains(&(origin + released)),
+            "{}: {recorded}",
+            game.binary
+        );
+        assert!(game.frames("pressed_from").contains(&(origin + pressed)));
+        assert!(game.frames("released_from").contains(&(origin + released)));
+
+        // Replayed by physics frame, the recording lands in the frames it
+        // names, counted from the replay's first.
+        let rebased: Vec<Value> = jumps
+            .iter()
+            .map(|event| {
+                let mut event = event.clone();
+                event["frame"] = json!(event["frame"].as_i64().unwrap_or(0) - pressed);
+                event
+            })
+            .collect();
+        let replayed = game.read(
+            "input.replay",
+            json!({ "events": rebased, "schedule": "physics_frame" }),
+        );
+        let base = replayed["first_physics_frame"].as_i64().expect("a frame");
+        assert_eq!(replayed["outcome"], json!("completed"), "{replayed}");
+        assert_eq!(replayed["schedule"], json!("physics_frame"), "{replayed}");
+        assert_eq!(replayed["max_lag_frames"], json!(0), "{replayed}");
+        assert_eq!(
+            deliveries(&replayed),
+            vec![(0, base), (1, base + released - pressed)],
+            "{replayed}"
+        );
+        assert!(game.frames("just_pressed").contains(&base), "{replayed}");
+        assert!(
+            game.frames("just_released")
+                .contains(&(base + released - pressed)),
+            "{replayed}"
+        );
+
+        // Events by frame, out of order and two of them in one frame, while
+        // every idle frame stalls 35 ms and physics frames run in bursts.
+        game.set(".", json!({ "stall_ms": tagged("integer", json!(35)) }));
+        let events = json!([
+            { "frame": 5, "kind": "key", "key": "Space", "pressed": true },
+            { "frame": 0, "kind": "action", "action": "jump", "pressed": true },
+            { "frame": 2, "kind": "action", "action": "jump", "pressed": false },
+            { "frame": 9, "kind": "key", "key": "Space", "pressed": false },
+            { "frame": 12, "kind": "joypad_button", "device": 0, "button": 0, "pressed": true },
+            { "frame": 14, "kind": "joypad_button", "device": 0, "button": 0, "pressed": false },
+            { "frame": 17, "kind": "action", "action": "jump", "pressed": true },
+            { "frame": 17, "kind": "action", "action": "jump", "pressed": false }
+        ]);
+        let replayed = game.read(
+            "input.replay",
+            json!({ "events": events, "schedule": "physics_frame" }),
+        );
+        let base = replayed["first_physics_frame"].as_i64().expect("a frame");
+        assert_eq!(replayed["outcome"], json!("completed"), "{replayed}");
+        assert_eq!(replayed["events_sent"], json!(8), "{replayed}");
+        assert_eq!(replayed["scheduled_frames"], json!(17), "{replayed}");
+        assert_eq!(replayed["max_lag_frames"], json!(0), "{replayed}");
+        assert_eq!(replayed["released"], json!([]), "{replayed}");
+        assert_eq!(
+            deliveries(&replayed),
+            [
+                (1, 0),
+                (2, 2),
+                (0, 5),
+                (3, 9),
+                (4, 12),
+                (5, 14),
+                (6, 17),
+                (7, 17)
+            ]
+            .iter()
+            .map(|(index, frame)| (*index, base + frame))
+            .collect::<Vec<_>>(),
+            "{}: {replayed}",
+            game.binary
+        );
+        let at = |frames: &[i64]| frames.iter().map(|frame| base + frame).collect::<Vec<_>>();
+        assert_eq!(
+            from_frame(&game.frames("just_pressed"), base),
+            at(&[0, 5, 12, 17]),
+            "{}: {replayed}",
+            game.binary
+        );
+        assert_eq!(
+            from_frame(&game.frames("just_released"), base),
+            at(&[2, 9, 14, 17]),
+            "{}: {replayed}",
+            game.binary
+        );
+        assert_eq!(
+            from_frame(&game.frames("pressed_from"), base),
+            at(&[0, 5, 12]),
+            "{}: {replayed}",
+            game.binary
+        );
+        assert_eq!(
+            from_frame(&game.frames("released_from"), base),
+            at(&[2, 9, 14]),
+            "{}: {replayed}",
+            game.binary
+        );
+        // `_input` received each event before the frame it lands in: those of
+        // frame 0 between physics frames, the others at the end of the frame
+        // before theirs, in list order within one frame.
+        let seen: Vec<(i64, bool, bool)> = input_seen(&game.property(".", "input_seen"))
+            .into_iter()
+            .filter(|(frame, _, _)| *frame >= base - 1)
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                (base - 1, false, true),
+                (base + 1, true, false),
+                (base + 4, true, true),
+                (base + 8, true, false),
+                (base + 11, true, true),
+                (base + 13, true, false),
+                (base + 16, true, true),
+                (base + 16, true, false),
+            ],
+            "{}: {replayed}",
+            game.binary
+        );
+        let unhandled: Vec<(i64, bool, bool)> = input_seen(&game.property(".", "unhandled_seen"))
+            .into_iter()
+            .filter(|(frame, _, _)| *frame >= base - 1)
+            .collect();
+        eprintln!(
+            "{}: 8 events replayed by physics frame under 35 ms idle frames landed in their frames in {} ms; _unhandled_input saw {unhandled:?} from frame {}",
+            game.binary,
+            replayed["elapsed_ms"],
+            base - 1
+        );
+
+        // Replayed by time, each delivery names the frame the game saw it in.
+        let replayed = game.read(
+            "input.replay",
+            json!({ "events": [
+                { "t_ms": 0, "kind": "action", "action": "jump", "pressed": true },
+                { "t_ms": 150, "kind": "action", "action": "jump", "pressed": false }
+            ] }),
+        );
+        assert_eq!(replayed["schedule"], json!("time"), "{replayed}");
+        assert_eq!(replayed["max_lag_frames"], Value::Null, "{replayed}");
+        assert_eq!(replayed["scheduled_frames"], Value::Null, "{replayed}");
+        assert!(replayed["max_lag_ms"].is_number(), "{replayed}");
+        let timed = deliveries(&replayed);
+        assert_eq!(timed.len(), 2, "{replayed}");
+        assert!(
+            game.frames("just_pressed").contains(&timed[0].1),
+            "{}: {replayed}",
+            game.binary
+        );
+        assert!(
+            game.frames("just_released").contains(&timed[1].1),
+            "{}: {replayed}",
+            game.binary
+        );
+        game.set(".", json!({ "stall_ms": tagged("integer", json!(0)) }));
+
+        // A held game runs no physics frame, so it takes no replay by frame.
+        game.step(json!({ "frames": 0 }));
+        let (code, message) = game.refused(
+            "input.replay",
+            json!({ "schedule": "physics_frame", "events": [
+                { "frame": 0, "kind": "action", "action": "jump", "pressed": true }
+            ] }),
+        );
+        assert_eq!(code, json!("conflict"), "{}: {message}", game.binary);
+        game.step(json!({ "frames": 0, "then": "resume" }));
+        game.stop();
+        game.finish();
+    }
+}
+
+#[test]
+#[ignore = "needs real Godot builds and a display: GODOT_MCP_DISPLAY_REQUIRED=1 under xvfb-run"]
+fn live_a_window_is_held_captured_and_stepped() {
+    if std::env::var("GODOT_MCP_DISPLAY_REQUIRED").as_deref() != Ok("1") {
+        eprintln!("GODOT_MCP_DISPLAY_REQUIRED is not 1; windowed frame stepping was not checked");
+        return;
+    }
+    assert!(
+        std::env::var_os("DISPLAY").is_some(),
+        "GODOT_MCP_DISPLAY_REQUIRED=1 needs a display: run under xvfb-run"
+    );
+    let (binaries, _unpacked) = binaries();
+    for binary in &binaries {
+        let mut game = Game::start_frames(binary, "live-step-window", "window");
+        game.runs_past(5);
+        game.step(json!({ "frames": 0 }));
+        // A held window still draws: it is captured, and nothing advances.
+        let before = game.counts();
+        let shot = game.read("runtime.screenshot.capture", json!({}));
+        assert!(
+            shot["artifact"]["byte_length"].as_u64() > Some(0),
+            "{}: {shot}",
+            game.binary
+        );
+        let after = game.counts();
+        assert_eq!(after.physics_calls, before.physics_calls, "{shot}");
+        assert_eq!(after.process_calls, before.process_calls, "{shot}");
+
+        let stepped = game.step(json!({ "frames": 10 }));
+        let (first, last) = span(&stepped);
+        let stepped_counts = game.counts();
+        assert_eq!(stepped_counts.physics_calls - after.physics_calls, 10);
+        assert_eq!(
+            stepped_counts.frames_since(&after),
+            (first..=last).collect::<Vec<_>>()
+        );
+        assert_eq!(stepped_counts.faller_steps - after.faller_steps, 10);
+
+        game.step(json!({ "frames": 0, "then": "resume" }));
+        let sampled = game.read(
+            "runtime.sample",
+            json!({ "series": [{ "node": ".", "property": "physics_calls" }], "cadence": "physics_frame", "maxSamples": 20 }),
+        );
+        assert!(consecutive(&sample_frames(&sampled)), "{sampled}");
+        assert!(
+            consecutive(&whole_numbers(&sampled["series"][0]["values"])),
+            "{sampled}"
+        );
+        let replayed = game.read(
+            "input.replay",
+            json!({ "schedule": "physics_frame", "events": [
+                { "frame": 0, "kind": "key", "key": "Space", "pressed": true },
+                { "frame": 3, "kind": "key", "key": "Space", "pressed": false }
+            ] }),
+        );
+        let base = replayed["first_physics_frame"].as_i64().expect("a frame");
+        assert_eq!(replayed["max_lag_frames"], json!(0), "{replayed}");
+        assert_eq!(
+            from_frame(&game.frames("just_pressed"), base),
+            vec![base],
+            "{}: {replayed}",
+            game.binary
+        );
+        assert_eq!(
+            from_frame(&game.frames("just_released"), base),
+            vec![base + 3],
+            "{}: {replayed}",
+            game.binary
+        );
+        eprintln!(
+            "{}: a held window was captured ({} bytes) without advancing; a 10-frame step advanced {first}..={last}",
+            game.binary, shot["artifact"]["byte_length"]
+        );
+        game.stop();
+        game.finish();
     }
 }

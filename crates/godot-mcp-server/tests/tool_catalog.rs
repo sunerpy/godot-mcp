@@ -167,6 +167,8 @@ const RUNTIME_SCENARIO: [&str; 3] = [
     "runtime.time_scale.set",
     "test.scenario.run",
 ];
+/// Contract 0.7 frame-level control of a managed game session (ADR 0017).
+const FRAME_CONTROL: [&str; 1] = ["runtime.frames.step"];
 /// Contract 0.2.0 managed editor sessions and their receipt-bound language
 /// server and debug adapter.
 const DEBUG_PLANE: [&str; 4] = [
@@ -202,6 +204,7 @@ fn expected(profile: &str) -> BTreeSet<String> {
         tools.extend(RUNTIME_PLANE.iter().map(|tool| (*tool).to_owned()));
         tools.extend(RUNTIME_CONTROL.iter().map(|tool| (*tool).to_owned()));
         tools.extend(RUNTIME_SCENARIO.iter().map(|tool| (*tool).to_owned()));
+        tools.extend(FRAME_CONTROL.iter().map(|tool| (*tool).to_owned()));
         tools.extend(RUNTIME_SCRIPT.iter().map(|tool| (*tool).to_owned()));
         tools.extend(ENGINE_READS.iter().map(|tool| (*tool).to_owned()));
         tools.extend(EDITOR_PLAY.iter().map(|tool| (*tool).to_owned()));
@@ -284,10 +287,10 @@ fn discovery_lists_only_implemented_tools_with_strict_descriptions() {
     }
 }
 
-/// The capability report carries the 0.6.0 contract and the same tool sets
+/// The capability report carries the 0.7.0 contract and the same tool sets
 /// discovery lists.
 #[test]
-fn the_capability_report_is_contract_0_6_0_and_matches_discovery() {
+fn the_capability_report_is_contract_0_7_0_and_matches_discovery() {
     let tree = ProjectTree::new("m1-capabilities");
     let mut session = StdioSession::initialized(&Spawn {
         project: &tree.root,
@@ -301,7 +304,7 @@ fn the_capability_report_is_contract_0_6_0_and_matches_discovery() {
         let manifest = &manifests[profile];
         assert_eq!(
             manifest["schema_version"],
-            json!("0.6.0"),
+            json!("0.7.0"),
             "{profile} manifest version: {manifest}"
         );
         let tools: BTreeSet<String> = manifest["tools"]
