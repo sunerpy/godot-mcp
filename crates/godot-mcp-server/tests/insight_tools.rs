@@ -854,18 +854,32 @@ async fn every_text_argument_follows_one_rule_in_the_schema_and_the_check() {
         ),
     )
     .await;
-    agree(
-        &harness,
-        "project.search",
-        &named(
-            NameRule {
-                limit: MAX_GLOB_LENGTH,
-                ..name
-            },
-            |glob| json!({ "query": "func", "include": [glob] }),
-        ),
-    )
-    .await;
+    for (tool, arguments) in [
+        ("project.dependencies.audit", json!({})),
+        // `include` and `exclude` apply to the `complexity` view only.
+        ("project.metrics.get", json!({ "view": "complexity" })),
+        ("project.search", json!({ "query": "func" })),
+        ("scene.nodes.find", json!({})),
+    ] {
+        for list in ["include", "exclude"] {
+            agree(
+                &harness,
+                tool,
+                &named(
+                    NameRule {
+                        limit: MAX_GLOB_LENGTH,
+                        ..name
+                    },
+                    |glob| {
+                        let mut arguments = arguments.clone();
+                        arguments[list] = json!([glob]);
+                        arguments
+                    },
+                ),
+            )
+            .await;
+        }
+    }
     agree(
         &harness,
         "project.signals.get",
