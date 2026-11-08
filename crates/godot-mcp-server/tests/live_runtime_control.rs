@@ -1225,12 +1225,28 @@ fn live_input_is_recorded_and_replayed() {
             "input.key.send",
             json!({ "key": "D", "state": "tap", "holdMs": 250 }),
         );
-        // The game taps E itself 50 ms from now, before the D tap ends.
+        // The game taps E itself 50 ms after it reads this write, which a slow
+        // runner may do after the D tap has ended.
         game.set(
             ".",
             json!({ "external_key_in_ms": tagged("integer", json!(50)) }),
         );
         let tapped = game.measured_hold();
+        // The recording stops only once the game has received its own E: the
+        // root window reports an event to the recording before the game's
+        // `_input` sees it, so the E is recorded whatever the runner's speed.
+        let own_key = game.read(
+            "runtime.wait",
+            json!({ "condition": { "property": {
+                "node": ".", "property": "seen", "op": "contains", "value": tagged("string", json!("E"))
+            } }, "timeoutMs": 5000 }),
+        );
+        assert_eq!(
+            own_key["satisfied"],
+            json!(true),
+            "{}: the game's own E never reached it: {own_key}",
+            game.binary
+        );
         let recorded = game.read("input.recording.stop", json!({}));
         let events = recorded["events"].as_array().expect("events").clone();
         let probe: Vec<&Value> = events
