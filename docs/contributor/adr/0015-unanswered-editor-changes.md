@@ -96,13 +96,18 @@ proof that the editor's process has ended.
   this one carries the outcome `uncertain`, so nothing reads it as a success.
 - Which session carries the answer follows the bridge's silence rule, which this decision does
   not change: the server closes a session that stays silent for 30 seconds while it awaits no
-  request, and a server status the add-on has not taken is such a request
-  ([Editor bridge protocol](../../protocol/bridge-protocol.md)). Measured on Linux x86_64 under
-  Xvfb: with `deadline_ms` 1000, a run that held Godot 4.4.1's main thread for 34 s, and another
-  for 50 s, kept its session, because the status the quarantine changed was outstanding, and
-  its answer settled it there. With `deadline_ms` 29000 and the main thread held for 40 s, Godot
-  4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2 each lost the session to the silence rule, dialled again
-  when the run ended, and settled the run from its report 43.0 to 44.1 s after the call.
+  request a caller waits on ([Editor bridge protocol](../../protocol/bridge-protocol.md)).
+  Release 0.6.0 also counted a server status the add-on had not taken. Measured then on Linux
+  x86_64 under Xvfb: with `deadline_ms` 1000, a run that held Godot 4.4.1's main thread for
+  34 s, and another for 50 s, kept its session, because the status the quarantine changed was
+  outstanding, and its answer settled it there; with `deadline_ms` 29000 and the main thread
+  held for 40 s, Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2 each lost the session and settled
+  the run from its report 43.0 to 44.1 s after the call. An editor that never answered again
+  kept its session the same way and was shown as connected, so the status no longer counts.
+  Measured after that change, on the same machine with the main thread held for 40 s: with
+  `deadline_ms` 29000 and with 1000, each of the five builds lost the session to the silence
+  rule, dialled again when the run ended, and settled the run from its report 42.7 to 44.4 s
+  after the call.
 - An add-on older than 0.5.0 sends no report and names no executable, so only an answer on the
   same session settles a change made through it, and the operator's repair cannot.
 - The repair is unavailable where the server cannot identify the editor's process: on Windows,

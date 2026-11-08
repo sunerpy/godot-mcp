@@ -205,13 +205,14 @@ until it is done, so a long scan is not mistaken for a lost editor. Once the dea
 passes without an answer the request is unresolved, and the silence rule applies again.
 
 The server's own status request, method bridge.server_status
-([The server's status](#the-servers-status)), is such a request too, and one not answered
-within its 30 seconds is sent again while the add-on has not taken the latest
-status, so a silent session stays open while that status is outstanding. A quarantine changes
-the status. An editor that holds its main thread past a mutation's deadline therefore keeps its
-session when the changed status was sent before the silence reached 30 seconds, and the answer
-comes on that session; otherwise the session closes, and the answer comes in a report to the
-next one ([Late mutation answers](#late-mutation-answers)).
+([The server's status](#the-servers-status)), is not such a request: no caller waits on it,
+and an add-on whose main thread is free answers it at once. A session that answers neither a
+heartbeat nor that status for 30 seconds is closed even while the status waits, so an editor
+whose main thread hangs is shown as disconnected. An editor that holds its main thread past a
+mutation's deadline and 30 seconds of silence therefore loses its session, and the answer comes
+in a report to the next one ([Late mutation answers](#late-mutation-answers)). Release 0.6.0
+and earlier counted an untaken status as such a request, so a hung editor whose status had
+changed, as a quarantine changes it, kept its session indefinitely.
 
 ## Late mutation answers
 

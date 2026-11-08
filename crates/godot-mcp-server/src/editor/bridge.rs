@@ -542,6 +542,10 @@ struct Pending {
     sender: AnswerSender,
     /// What the bridge keeps of the request if it stops waiting for it.
     late: Option<Abandoned>,
+    /// Whether the peer runs the request for a caller, so that its silence
+    /// meanwhile is not its absence. The server's own status is not such a
+    /// request: a peer that answers nothing while one waits is silent.
+    busy: bool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -975,6 +979,7 @@ fn send_request(
             generation,
             sender,
             late: late.clone(),
+            busy: method != SERVER_STATUS_METHOD,
         },
     );
     if writer.send(&envelope).is_err() {
@@ -1473,11 +1478,12 @@ fn read_loop(
 /// heartbeat until the request is done, so its silence then is not its absence;
 /// once every such caller has given up, the silence limit applies again. A
 /// caller gives up by removing its request, so the request's own timeout is
-/// always what it reports, even when it wakes after its deadline.
+/// always what it reports, even when it wakes after its deadline. The server's
+/// own status is no caller's request and does not count.
 fn running_a_request(inner: &Inner, generation: u64) -> bool {
     lock(&inner.pending)
         .values()
-        .any(|waiting| waiting.generation == generation)
+        .any(|waiting| waiting.generation == generation && waiting.busy)
 }
 
 /// Hand one message the plugin sent on session `generation` to whoever waits
@@ -2107,6 +2113,34 @@ mod tests {
         let _ = plugin.join();
     }
 
+    /// The server status is the server's own request, not work the editor
+    /// runs for a caller: while a status the plugin has not taken waits, a
+    /// plugin that answers nothing is still silent, so an editor whose main
+    /// thread hangs is let go after the silence limit.
+    #[test]
+    fn an_untaken_status_does_not_keep_a_silent_session_open() {
+        let scratch = Scratch::new("status-silent");
+        let bridge = impatient(&scratch);
+        let (source, _, _) = status_source(json!({ "profile": "editor" }));
+        bridge.attach_status_source(source);
+        let mut script = FakePluginScript::implementing(&[SERVER_STATUS_METHOD])
+            .answering(SERVER_STATUS_METHOD, FakeAnswer::Ignore);
+        script.answer_heartbeats = false;
+        let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
+        wait_until("the status to reach the plugin", || {
+            !sent(&plugin, SERVER_STATUS_METHOD).is_empty()
+        });
+        wait_until("the silent session to close", || {
+            bridge.status().sessions_closed == 1
+        });
+        assert_eq!(
+            bridge.status().last_close_reason.as_deref(),
+            Some("the plugin went silent")
+        );
+        bridge.stop();
+        let _ = plugin.join();
+    }
+
     /// A caller's deadline and the reader's silence check fall on the same
     /// instant, so the silence rule must not apply again until the caller
     /// itself has given up on its request: otherwise a caller woken late
@@ -2122,6 +2156,7 @@ mod tests {
                 generation: 7,
                 sender,
                 late: None,
+                busy: true,
             },
         );
         assert!(
@@ -2862,6 +2897,7 @@ mod tests {
                 generation: 9,
                 sender,
                 late: request("request-first"),
+                busy: true,
             },
         );
         assert_eq!(deliver(&bridge.inner, 9, &answer("request-first")), None);
@@ -2892,6 +2928,7 @@ mod tests {
                 generation: 9,
                 sender,
                 late: request("request-second"),
+                busy: true,
             },
         );
         assert!(matches!(
@@ -2922,6 +2959,7 @@ mod tests {
                 generation: 9,
                 sender,
                 late: request("request-third"),
+                busy: true,
             },
         );
         fail_pending(&bridge.inner, Some(9));

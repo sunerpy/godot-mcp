@@ -421,24 +421,35 @@ fn a_run_that_outlasts_its_server_is_settled_by_the_next_one_in(binary: &Path) {
 fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer() {
     let (binaries, _unpacked) = editors();
     for binary in &binaries {
-        let _turn = take_turn();
-        a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(binary);
+        for deadline_ms in [29_000, 1_000] {
+            let _turn = take_turn();
+            a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(
+                binary,
+                deadline_ms,
+            );
+        }
     }
 }
 
-/// A run holds the editor's main thread past its deadline, which is past the
-/// bridge's 30-second silence window, so the editor answers nothing meanwhile.
-/// When the server stops waiting it awaits nothing else on the session unless
-/// it has just sent a changed status, so it usually closes the silent session;
-/// the editor dials again once the run ends and reports the answer on the new
-/// session. Either way the answer settles the run.
-fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(binary: &Path) {
+/// A run holds the editor's main thread for 40 s, past its deadline and past
+/// the bridge's 30-second silence window, so the editor answers nothing
+/// meanwhile. Once the server stops waiting for the run, it awaits nothing the
+/// editor runs for a caller, so it closes the silent session; the editor dials
+/// again once the run ends and reports the answer on the new session, which
+/// settles the run. With a 1-second deadline the quarantine changes the server
+/// status long before the silence limit; the editor cannot take that status,
+/// and an untaken status must not keep the silent session open.
+fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(
+    binary: &Path,
+    deadline_ms: u64,
+) {
     let (tree, mut session, mut ids) = scripting_project("live-editor-script-silent");
     let editor = Editor::launch(binary, &tree.root, &tree.base.join("home"));
     let before = wait_connected(&mut session, &mut ids, &editor);
     let started = Instant::now();
     let source = "extends Node\n\nfunc run():\n\tOS.delay_msec(40000)\n\tvar file := FileAccess.open(\"res://silent.txt\", FileAccess.WRITE)\n\tfile.store_string(\"silent\")\n\tfile.close()\n\treturn 2\n";
-    let arguments = json!({ "source": source, "deadline_ms": 29000, "idempotencyId": "silent" });
+    let arguments =
+        json!({ "source": source, "deadline_ms": deadline_ms, "idempotencyId": "silent" });
     let late = session.call_tool(ids.next(), "editor.script.run", arguments.clone());
     assert_eq!(
         error_code(&late),
@@ -459,15 +470,17 @@ fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(bin
         editor.binary
     );
     let after = wait_connected(&mut session, &mut ids, &editor);
-    let reconnected = after["sessions_opened"].as_u64() > before["sessions_opened"].as_u64();
-    if reconnected {
-        assert_eq!(
-            after["last_close_reason"],
-            json!("the plugin went silent"),
-            "{}: {after}",
-            editor.binary
-        );
-    }
+    assert!(
+        after["sessions_opened"].as_u64() > before["sessions_opened"].as_u64(),
+        "{}: with a {deadline_ms} ms deadline the silent session stayed open: {after}",
+        editor.binary
+    );
+    assert_eq!(
+        after["last_close_reason"],
+        json!("the plugin went silent"),
+        "{}: {after}",
+        editor.binary
+    );
     ok(
         &session.call_tool(
             ids.next(),
@@ -484,10 +497,9 @@ fn a_run_that_holds_the_editor_past_its_deadline_is_settled_by_its_answer_in(bin
         editor.binary
     );
     eprintln!(
-        "{}: settled {:.1} s after the call, on {} session",
+        "{}: a run with a {deadline_ms} ms deadline settled {:.1} s after the call, on the next session",
         editor.binary,
-        settled_after.as_secs_f64(),
-        if reconnected { "the next" } else { "the same" }
+        settled_after.as_secs_f64()
     );
     let _ = session.finish();
     drop(editor);

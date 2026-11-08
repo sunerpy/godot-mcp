@@ -43,7 +43,9 @@ file. A loopback connection without the secret is refused.
 - One editor session is served at a time; a newer authenticated session replaces an older one.
 - The server sends a heartbeat every 5 seconds and closes a session that stays silent for 30,
   except while the plugin runs a request whose deadline has not passed: the editor runs one
-  request at a time on its main thread and answers no heartbeat meanwhile.
+  request at a time on its main thread and answers no heartbeat meanwhile. The status the
+  server sends the panel is not such a request, so an editor that hangs is shown as
+  disconnected after 30 seconds.
 - The plugin dials again every second while no server answers, rereading the rendezvous file,
   so a restarted server is found with its new secret.
 - When it connects, the plugin lists what it implements. A tool an older plugin does not
