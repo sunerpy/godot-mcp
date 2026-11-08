@@ -30,7 +30,7 @@ use godot_mcp_engine::supervision::journal::{
 use godot_mcp_engine::validation::diagnostic::{
     Diagnostic, DiagnosticCategory, DiagnosticSeverity, SourceLocation,
 };
-use godot_mcp_engine::validation::is_valid_project_relative_path;
+use godot_mcp_engine::validation::{PROJECT_RELATIVE_PATH_PATTERN, is_valid_project_relative_path};
 use serde_json::{Map, Value, json};
 
 use super::outcome_error;
@@ -214,6 +214,45 @@ pub(crate) fn calls_schema(kind: ReadKind) -> Value {
     })
 }
 
+/// The longest path a read tool takes, in characters, its `res://` prefix
+/// included.
+const MAX_PATH_CHARS: usize = 1024;
+
+/// The pattern of a read tool's `path`: at most one `res://`, which the check
+/// takes off first, before a path [`PROJECT_RELATIVE_PATH_PATTERN`] matches,
+/// ending in `.extension` in any letter case.
+fn read_path_pattern(extension: &str) -> String {
+    format!(
+        r"^(?:res://)?(?=[^{control}]*\.{extension}$){relative}",
+        control = crate::schema::CONTROL,
+        extension = crate::schema::caseless(extension),
+        relative = PROJECT_RELATIVE_PATH_PATTERN
+            .strip_prefix('^')
+            .expect("the project-relative pattern is anchored"),
+    )
+}
+
+/// The project-relative spelling of a read tool's `path`, which the engine is
+/// given: the path is 1 to [`MAX_PATH_CHARS`] characters and, once at most one
+/// `res://` is taken off, in a spelling [`is_valid_project_relative_path`]
+/// takes.
+fn read_path<'a>(arguments: &'a Map<String, Value>, tool: &str) -> Result<&'a str, OutcomeError> {
+    let raw_path = arguments
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid(format!("{tool}: `path` is required")))?;
+    let target = raw_path.strip_prefix("res://").unwrap_or(raw_path);
+    if raw_path.chars().count() > MAX_PATH_CHARS
+        || !is_valid_project_relative_path(target)
+        || target.starts_with('/')
+    {
+        return Err(invalid(format!(
+            "{tool}: `path` must be project-relative, 1 to {MAX_PATH_CHARS} characters"
+        )));
+    }
+    Ok(target)
+}
+
 /// The strict input schema of one read tool.
 pub(super) fn input_schema(kind: ReadKind) -> Map<String, Value> {
     let mut schema = json!({
@@ -223,7 +262,8 @@ pub(super) fn input_schema(kind: ReadKind) -> Map<String, Value> {
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 1024,
+                "maxLength": MAX_PATH_CHARS,
+                "pattern": read_path_pattern(kind.extension()),
                 "description": match kind {
                     ReadKind::Scene => "Project-relative .tscn path, optionally res://-prefixed.",
                     ReadKind::Resource => "Project-relative .tres path, optionally res://-prefixed.",
@@ -380,14 +420,7 @@ pub(super) fn parse(
             "invalid engine request: unknown field `{unknown}`, expected one of path, calls"
         )));
     }
-    let raw_path = arguments
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid(format!("{tool}: `path` is required")))?;
-    let target = raw_path.strip_prefix("res://").unwrap_or(raw_path);
-    if target.len() > 1024 || !is_valid_project_relative_path(target) || target.starts_with('/') {
-        return Err(invalid(format!("{tool}: `path` must be project-relative")));
-    }
+    let target = read_path(&arguments, tool)?;
     let extension = target
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
@@ -506,7 +539,8 @@ pub(super) fn shader_check_schema() -> Map<String, Value> {
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 1024,
+                "maxLength": MAX_PATH_CHARS,
+                "pattern": read_path_pattern("gdshader"),
                 "description": "Project-relative .gdshader path, optionally res://-prefixed."
             }
         },
@@ -539,14 +573,7 @@ pub(super) fn parse_shader_check(
             "invalid engine request: unknown field `{unknown}`, expected path"
         )));
     }
-    let raw_path = arguments
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid(format!("{tool}: `path` is required")))?;
-    let target = raw_path.strip_prefix("res://").unwrap_or(raw_path);
-    if target.len() > 1024 || !is_valid_project_relative_path(target) || target.starts_with('/') {
-        return Err(invalid(format!("{tool}: `path` must be project-relative")));
-    }
+    let target = read_path(&arguments, tool)?;
     if !target.to_ascii_lowercase().ends_with(".gdshader") {
         return Err(invalid(format!(
             "{tool}: `path` must be a .gdshader file; a .gdshaderinc include is checked through \
@@ -970,6 +997,82 @@ mod tests {
             let value = json!({ "method": "get_length", "resource": { "property": property } });
             for kind in [ReadKind::Scene, ReadKind::Resource] {
                 agree(kind, &value, expected, &format!("property {property:?}"));
+            }
+        }
+    }
+
+    /// A read's path is 1 to 1024 characters, whatever the bytes each takes
+    /// and counting a `res://` prefix, without a control character, in the
+    /// spelling engine paths take after that prefix, and ends in the tool's
+    /// extension in any letter case. The schema and the check hold each tool
+    /// to that, `shader.check` too.
+    #[test]
+    fn the_path_of_a_read_follows_one_rule_in_the_schema_and_the_check() {
+        let rule = NameRule {
+            limit: 1024,
+            empty: false,
+            control: true,
+        };
+        // Each tool: its extension, that extension in other letter cases,
+        // and the read it is, `None` for `shader.check`.
+        for (extension, upper, kind) in [
+            ("tscn", "TSCN", Some(ReadKind::Scene)),
+            ("tres", "TRES", Some(ReadKind::Resource)),
+            ("gdshader", "GDShader", None),
+        ] {
+            let schema = Value::Object(kind.map_or_else(shader_check_schema, input_schema));
+            let check = |arguments: Map<String, Value>| match kind {
+                Some(kind) => parse(kind, arguments).is_ok(),
+                None => parse_shader_check(arguments).is_ok(),
+            };
+            let mut cases = Vec::new();
+            for prefix in ["", "res://", "levels/"] {
+                cases.extend(name_cases(rule, prefix, &format!(".{extension}")));
+            }
+            for (path, expected) in [
+                (format!("a.{upper}"), true),
+                (format!(".{extension}"), true),
+                (format!("a/./b.{extension}"), true),
+                (format!("a//b.{extension}"), true),
+                (format!("..a/b...{extension}"), true),
+                (format!("a\u{2028}b/c\u{2029}d.{extension}"), true),
+                (format!("res://res://a.{extension}"), true),
+                (format!("res://res://res://a.{extension}"), false),
+                (format!("res:///a.{extension}"), false),
+                (format!("/a.{extension}"), false),
+                (format!("-a.{extension}"), false),
+                (format!("C:/a.{extension}"), false),
+                (format!("../a.{extension}"), false),
+                (format!("a/../b.{extension}"), false),
+                (format!("a/..b/../c.{extension}"), false),
+                (format!("a\\b.{extension}"), false),
+                (format!("a://b.{extension}"), false),
+                (format!("a\nb.{extension}"), false),
+                (format!("a.{extension}/b"), false),
+                (format!("a.{extension}x"), false),
+                ("a.gd".to_owned(), false),
+            ] {
+                cases.push((path, expected));
+            }
+            for (index, (path, expected)) in cases.into_iter().enumerate() {
+                let mut value = json!({ "path": path });
+                if kind.is_some() {
+                    value["calls"] = json!([{ "method": "get_length" }]);
+                }
+                let case = format!(
+                    ".{extension} case {index} ({} characters)",
+                    path.chars().count()
+                );
+                assert_eq!(
+                    conforms(&schema, &value),
+                    expected,
+                    "the schema's verdict on {case}: {path:?}"
+                );
+                assert_eq!(
+                    check(arguments(value)),
+                    expected,
+                    "the handler's verdict on {case}: {path:?}"
+                );
             }
         }
     }
