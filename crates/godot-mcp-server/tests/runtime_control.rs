@@ -49,6 +49,14 @@ fn start(session: &mut StdioSession, id: u64, key: &str) -> String {
         .to_owned()
 }
 
+/// How long a stop may take once the fake game received the request the stop
+/// withdraws. The fake game ends a request nobody withdraws 10 s after it
+/// received it, so a stop queued behind the request takes at least that long;
+/// the `withdrawn` marker and the `cancelled` answer prove the withdrawal
+/// itself. The bound only keeps the stop prompt, with room for a loaded
+/// Windows runner, where a clean stop behind a withdrawn wait took 5.3 s.
+const PROMPT_STOP: Duration = Duration::from_secs(9);
+
 /// Wait, at most 20 s, until `<project>/<file>` reads `expected`.
 fn marker(tree: &ProjectTree, file: &str, expected: &str) {
     let path = tree.root.join(file);
@@ -403,13 +411,14 @@ fn stopping_a_session_withdraws_the_wait_it_runs() {
         json!({ "session": id, "idempotencyId": "stop-stop" }),
     ));
     let took = began.elapsed();
+    eprintln!("the stop took {took:?}");
     assert_eq!(
         stopped["exit"]["termination"],
         json!("exited_clean"),
         "{stopped}"
     );
     assert!(
-        took < Duration::from_secs(5),
+        took < PROMPT_STOP,
         "the stop waited {took:?}: it was queued behind the wait"
     );
     marker(&tree, "fake-game.wait", "withdrawn runtime.wait");
@@ -460,13 +469,14 @@ fn stopping_a_session_withdraws_the_replay_it_runs() {
         json!({ "session": id, "idempotencyId": "replay-stop" }),
     ));
     let took = began.elapsed();
+    eprintln!("the stop took {took:?}");
     assert_eq!(
         stopped["exit"]["termination"],
         json!("exited_clean"),
         "{stopped}"
     );
     assert!(
-        took < Duration::from_secs(5),
+        took < PROMPT_STOP,
         "the stop waited {took:?}: it was queued behind the replay"
     );
     marker(&tree, "fake-game.replay", "withdrawn runtime.input.replay");

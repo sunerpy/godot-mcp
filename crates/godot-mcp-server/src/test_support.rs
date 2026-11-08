@@ -489,24 +489,38 @@ mod deterministic_ports_contract {
         }
     }
 
-    #[test]
-    fn allocate_reports_an_exhausted_window_instead_of_scanning_on() {
-        const FIRST: u16 = 41_800;
-
-        let mut occupied = Vec::new();
-        for offset in 0..DeterministicPorts::SCAN_WINDOW {
-            let port = FIRST + offset;
-            match bind(port) {
-                Ok(listener) => occupied.push(listener),
-                // A port we cannot take is already owned by somebody else, which
-                // serves this test's premise just as well as one we hold.
-                Err(error) if error.kind() == io::ErrorKind::AddrInUse => {}
-                Err(error) => panic!("unexpected bind failure on {port}: {error}"),
+    /// Bind every port of one whole scan window at or after `from`, and return
+    /// the window's first port with the listeners that hold it.
+    ///
+    /// The test holds the whole window itself. A port another process holds
+    /// does not serve the premise: it may be an outgoing connection's local
+    /// port, inside the host's ephemeral range, released before the allocator
+    /// probes it. So a window with such a port is given up for the next one.
+    fn hold_a_whole_window(from: u16) -> (u16, Vec<TcpListener>) {
+        let mut first = from;
+        loop {
+            let held: io::Result<Vec<TcpListener>> = (0..DeterministicPorts::SCAN_WINDOW)
+                .map(|offset| bind(first + offset))
+                .collect();
+            match held {
+                Ok(listeners) => return (first, listeners),
+                Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+                    first = first
+                        .checked_add(DeterministicPorts::SCAN_WINDOW)
+                        .filter(|next| next.checked_add(DeterministicPorts::SCAN_WINDOW).is_some())
+                        .unwrap_or_else(|| panic!("no wholly free window of ports above {from}"));
+                }
+                Err(error) => panic!("unexpected bind failure in the window at {first}: {error}"),
             }
         }
+    }
+
+    #[test]
+    fn allocate_reports_an_exhausted_window_instead_of_scanning_on() {
+        let (first, occupied) = hold_a_whole_window(41_800);
 
         let sandbox = tempfile::tempdir().expect("sandbox");
-        let fixture = DeterministicFixture::new(sandbox.path(), "ports-exhausted", 5, FIRST)
+        let fixture = DeterministicFixture::new(sandbox.path(), "ports-exhausted", 5, first)
             .expect("fixture");
 
         let error = fixture
@@ -521,17 +535,18 @@ mod deterministic_ports_contract {
         );
         let message = error.to_string();
         for expected in [
-            FIRST.to_string(),
-            (FIRST + DeterministicPorts::SCAN_WINDOW).to_string(),
+            first.to_string(),
+            (first + DeterministicPorts::SCAN_WINDOW).to_string(),
         ] {
             assert!(
                 message.contains(&expected),
                 "the error must name the window it probed ({expected}), got {message}"
             );
         }
-        assert!(
-            !occupied.is_empty(),
-            "the window must be held by live listeners while the assertion runs"
+        assert_eq!(
+            occupied.len(),
+            usize::from(DeterministicPorts::SCAN_WINDOW),
+            "the whole window must be held by this test's listeners while the assertion runs"
         );
     }
 }
