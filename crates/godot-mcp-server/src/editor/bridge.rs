@@ -2189,7 +2189,7 @@ mod tests {
     #[test]
     fn an_unanswered_mutation_names_the_editor_process_its_session_runs_in() {
         let scratch = Scratch::new("editor-process");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             as_this_process(FakePluginScript::implementing(&["editor.scene.batch"]))
@@ -2222,7 +2222,8 @@ mod tests {
                 .describing("executable", json!(elsewhere.path().display().to_string())),
         ] {
             let scratch = Scratch::new("no-editor-process");
-            let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+            let bridge =
+                EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
             let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
             wait_until("the plugin to connect", || bridge.status().connected);
             let (answer, process) = bridge.call_with_process(
@@ -2242,7 +2243,7 @@ mod tests {
     #[test]
     fn a_request_names_the_process_of_the_session_it_was_sent_on() {
         let scratch = Scratch::new("superseded-process");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let first = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             as_this_process(FakePluginScript::implementing(&["editor.state"])),
@@ -2498,7 +2499,7 @@ mod tests {
         FakeEditorPlugin,
     ) {
         let scratch = Scratch::new(label);
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let (sink, kept) = late_sink();
         bridge.attach_late_answers(sink);
         let plugin = FakeEditorPlugin::spawn(&scratch.0.join(RENDEZVOUS_FILE), script);
@@ -2723,7 +2724,7 @@ mod tests {
         let scratch = Scratch::new("late-early");
         // The server listens before it has a sink: the plugin may connect and
         // report in between.
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let plugin = FakeEditorPlugin::spawn(
             &scratch.0.join(RENDEZVOUS_FILE),
             FakePluginScript::implementing(&["editor.state"]).reporting_late(report),
@@ -2754,7 +2755,7 @@ mod tests {
     #[test]
     fn the_bridge_keeps_only_so_many_reports_for_a_sink_not_yet_attached() {
         let scratch = Scratch::new("late-unclaimed");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let reported = |index: usize| LateAnswer {
             transaction_id: LATE_TRANSACTION.to_owned(),
             idempotency_id: format!("early-{index}"),
@@ -2824,7 +2825,7 @@ mod tests {
     #[test]
     fn an_answer_that_meets_the_deadline_reaches_the_caller_or_the_sink() {
         let scratch = Scratch::new("late-race");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let (sink, kept) = late_sink();
         bridge.attach_late_answers(sink);
         let request = |id: &str| {
@@ -2938,7 +2939,7 @@ mod tests {
     #[test]
     fn the_bridge_keeps_abandoned_requests_only_for_a_sink_and_only_so_many() {
         let scratch = Scratch::new("late-bounded");
-        let bridge = EditorBridge::start(&scratch.0, project(), false).expect("start");
+        let bridge = EditorBridge::start(&scratch.0, project(), Offers::default()).expect("start");
         let payload = |index: usize| json!({ "transaction_id": format!("00000000-0000-4000-8000-{index:012}") });
         keep_abandoned(
             &bridge.inner,
