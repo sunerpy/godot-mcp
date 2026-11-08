@@ -24,12 +24,14 @@ pub(crate) fn pattern_matches(pattern: &str, text: &str) -> bool {
 /// The rule one name-like string field follows: at most `limit` characters,
 /// empty only when `empty` allows it, and without a control character
 /// ([`char::is_control`]) when `control` refuses them.
-#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct NameRule {
-    pub(crate) limit: usize,
-    pub(crate) empty: bool,
-    pub(crate) control: bool,
+pub struct NameRule {
+    /// The most characters the field takes.
+    pub limit: usize,
+    /// Whether the field takes the empty string.
+    pub empty: bool,
+    /// Whether the field refuses a control character.
+    pub control: bool,
 }
 
 /// The cases every name-like field is held to, each with the verdict `rule`
@@ -39,8 +41,8 @@ pub(crate) struct NameRule {
 /// string. A value is `prefix`, the varying part and `suffix`, so a field
 /// with a shape of its own (a `res://` path with an extension) can take every
 /// case; the prefix and the suffix count toward the limit.
-#[cfg(test)]
-pub(crate) fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(String, bool)> {
+#[must_use]
+pub fn name_cases(rule: NameRule, prefix: &str, suffix: &str) -> Vec<(String, bool)> {
     let fixed = prefix.chars().count() + suffix.chars().count();
     assert!(
         fixed < rule.limit,

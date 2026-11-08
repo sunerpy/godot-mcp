@@ -24,6 +24,9 @@ mod task34_fixture;
 /// partial checker the schema tests and docs-check use can tell; a keyword it
 /// does not know panics instead of passing.
 pub use crate::schema::conformance::conforms;
+/// The cases a name-like field's schema and check are held to, and the rule
+/// that gives each its verdict.
+pub use crate::schema::conformance::{NameRule, name_cases};
 pub use audit_limits_harness::{
     AttemptRefusal, AttemptReport, AttemptSpec, AuditLimitsConfig, AuditLimitsHarness,
     KernelAuditCallReport, LimitGate, NegativeCallReport,

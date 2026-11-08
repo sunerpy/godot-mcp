@@ -16,7 +16,8 @@ use serde::Serialize;
 use super::glob::GlobSet;
 use super::model::{Coverage, CoverageBuilder, FileContent, ProjectSources};
 
-/// Longest pattern accepted, in bytes.
+/// Longest pattern accepted, in characters: Unicode scalar values, as a
+/// schema's `maxLength` counts them.
 pub const MAX_PATTERN_LENGTH: usize = 1024;
 
 /// Most context lines accepted on each side of a match.
@@ -78,9 +79,9 @@ impl Matcher {
         if query.pattern.is_empty() {
             return Err("the search pattern must not be empty".to_owned());
         }
-        if query.pattern.len() > MAX_PATTERN_LENGTH {
+        if query.pattern.chars().count() > MAX_PATTERN_LENGTH {
             return Err(format!(
-                "the search pattern must not exceed {MAX_PATTERN_LENGTH} bytes"
+                "the search pattern must not exceed {MAX_PATTERN_LENGTH} characters"
             ));
         }
         let body = if query.regex {

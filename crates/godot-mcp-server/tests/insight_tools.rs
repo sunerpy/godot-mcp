@@ -24,6 +24,7 @@ use godot_mcp_domain::CapabilityProfile;
 use godot_mcp_domain::contracts::{ErrorKind, OutcomeError, PrincipalId, SessionId};
 use godot_mcp_server::core::{CoreLimits, CoreSession, register_core_tools};
 use godot_mcp_server::kernel::{AccessContext, ProgressReporter, ServiceKernel};
+use godot_mcp_server::test_support::{NameRule, conforms, name_cases};
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -780,6 +781,143 @@ async fn scene_exports_join_script_defaults_and_stored_values() {
 
 /// Every project-wide view answers a call with no arguments (or the one it
 /// requires) instead of reporting an unimplemented handler.
+/// Hold `tool`'s advertised schema and its handler to the same verdict on
+/// whether each case's arguments are well formed. A handler that finds a
+/// well-formed request names nothing the project has (`not_found`) has not
+/// refused its arguments.
+async fn agree(harness: &Harness, tool: &str, cases: &[(Value, bool)]) {
+    let schema = harness
+        .kernel
+        .tools()
+        .into_iter()
+        .find(|listed| listed.name == tool)
+        .map(|listed| Value::Object(listed.input_schema))
+        .unwrap_or_else(|| panic!("the core profile lists {tool}"));
+    for (arguments, expected) in cases {
+        let shown = arguments.to_string();
+        let shown: String = shown.chars().take(160).collect();
+        assert_eq!(
+            conforms(&schema, arguments),
+            *expected,
+            "the {tool} schema's verdict on {shown}"
+        );
+        let accepted = match harness
+            .call(tool, arguments.clone(), CancellationToken::new())
+            .await
+        {
+            Ok(_) => true,
+            Err(error) if error.kind() == ErrorKind::InvalidInput => false,
+            Err(error) if error.kind() == ErrorKind::NotFound => true,
+            Err(error) => panic!("{tool} {shown}: {error}"),
+        };
+        assert_eq!(
+            accepted, *expected,
+            "the {tool} handler's verdict on {shown}"
+        );
+    }
+}
+
+/// The name cases of `rule`, each as the arguments `wrap` makes of it.
+fn named(rule: NameRule, wrap: impl Fn(String) -> Value) -> Vec<(Value, bool)> {
+    name_cases(rule, "", "")
+        .into_iter()
+        .map(|(name, expected)| (wrap(name), expected))
+        .collect()
+}
+
+/// Every text argument of the project-wide views is bounded in characters,
+/// whatever the bytes each takes, as its schema's `maxLength` counts them.
+/// None refuses a control character: a search's text and a stored value are
+/// free text, and a name, a glob or a node path is matched against what the
+/// project's files hold.
+#[tokio::test]
+async fn every_text_argument_follows_one_rule_in_the_schema_and_the_check() {
+    use godot_mcp_analysis::insight::glob::MAX_GLOB_LENGTH;
+    use godot_mcp_analysis::insight::search::MAX_PATTERN_LENGTH;
+    use godot_mcp_analysis::insight::uid::MAX_UID_LENGTH;
+
+    let harness = harness();
+    let name = NameRule {
+        limit: 1024,
+        empty: false,
+        control: false,
+    };
+    agree(
+        &harness,
+        "project.search",
+        &named(
+            NameRule {
+                limit: MAX_PATTERN_LENGTH,
+                ..name
+            },
+            |query| json!({ "query": query }),
+        ),
+    )
+    .await;
+    agree(
+        &harness,
+        "project.search",
+        &named(
+            NameRule {
+                limit: MAX_GLOB_LENGTH,
+                ..name
+            },
+            |glob| json!({ "query": "func", "include": [glob] }),
+        ),
+    )
+    .await;
+    agree(
+        &harness,
+        "project.signals.get",
+        &named(name, |signal| json!({ "signal": signal })),
+    )
+    .await;
+    agree(
+        &harness,
+        "scene.exports.get",
+        &named(name, |node| json!({ "scene": "main.tscn", "node": node })),
+    )
+    .await;
+    for field in ["type", "group", "name", "property"] {
+        agree(
+            &harness,
+            "scene.nodes.find",
+            &named(name, |text| {
+                let mut arguments = Map::new();
+                arguments.insert(field.to_owned(), Value::String(text));
+                Value::Object(arguments)
+            }),
+        )
+        .await;
+    }
+    agree(
+        &harness,
+        "scene.nodes.find",
+        &named(
+            NameRule {
+                empty: true,
+                ..name
+            },
+            |value| json!({ "property": "position", "value": value }),
+        ),
+    )
+    .await;
+    let longest = format!("uid://{}", "a".repeat(MAX_UID_LENGTH - 6));
+    let uids = [
+        ("uid://abc123", true),
+        (longest.as_str(), true),
+        (&format!("{longest}a"), false),
+        ("uid://", false),
+        ("uid://ABC", false),
+        ("uid://a-b", false),
+        ("uid://\u{1F600}", false),
+        ("uid://\u{E9}", false),
+        ("abcdefg", false),
+    ]
+    .map(|(uid, expected)| (json!({ "uid": uid }), expected));
+    agree(&harness, "project.uid.get", &uids).await;
+}
+
 #[tokio::test]
 async fn every_project_wide_view_has_a_real_handler() {
     let harness = harness();
