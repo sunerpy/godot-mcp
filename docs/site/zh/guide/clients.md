@@ -91,3 +91,7 @@ Claude Desktop、Cursor 和大多数客户端读取下面这种形状的 JSON：
 ## 另一台机器上的客户端
 
 如果 Agent 运行在开发网络里的另一台机器上，用 `--http 0.0.0.0:8765` 启动服务器，再把服务器打印的 URL 交给客户端：见 [HTTP](../operate/http.md#open)。
+
+## Agent Skills
+
+要让 Agent 也用上 godot-mcp 的 Agent Skills，运行 `godot-mcp skill install`；每个客户端该用哪个 target，见 [Agent Skills](skills.md)。

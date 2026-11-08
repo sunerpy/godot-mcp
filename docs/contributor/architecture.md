@@ -80,8 +80,8 @@ answer without any ability to launch Godot, which is checked rather than assumed
 ### `godot-mcp-cli`
 
 The `godot-mcp` binary — project discovery, configuration validation, stdio serving, asset
-installation, package self-check and the local operator-repair command — plus the
-non-shipping audit, packaging, documentation and fixture tools.
+installation, Agent Skills installation, package self-check and the local operator-repair
+command — plus the non-shipping audit, packaging, documentation and fixture tools.
 
 Every tool that must never reach a user's machine is gated behind the `test-hooks` feature,
 which a release build does not enable. That is a construction, not a policy: a packaging or

@@ -20,7 +20,7 @@
 mod addon;
 pub(crate) mod assets;
 mod base64;
-mod diff;
+pub mod diff;
 mod files;
 mod md5;
 mod patch;

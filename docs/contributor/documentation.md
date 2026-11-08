@@ -56,6 +56,32 @@ the code, the schema or the lock.
 | `unverified-tool-count` | Repeating an unverified third-party tool count |
 | `lint-self-check` | The lint's own exemptions were widened into a bypass |
 | `secret-scanner-self-check` | The credential scanner would report clean without detecting anything |
+| `skill-layout` | `skills/` holding anything but one directory per skill the binary embeds, each holding only its `SKILL.md` |
+| `skill-frontmatter` | A skill frontmatter outside the Agent Skills rules: a missing or unknown key, `allowed-tools`, a value on more than one line, a `name` other than the directory's, a `description` longer than 1,024 characters or not plain ASCII |
+| `skill-contract` | A skill whose metadata names a contract other than the server's |
+| `skill-budget` | A `SKILL.md` over its pinned line or byte budget, or over 400 lines |
+| `skill-tool` | A back-ticked dotted name in a skill that is not a tool of every profile the skill declares |
+| `skill-example` | A `json tool=<name>` block in a skill that the tool's advertised input schema refuses |
+| `skill-link` | A relative link in a skill, which points nowhere once the skill is installed |
+
+## Agent Skills
+
+The skills under `skills/` are checked with the pages. Each is one `SKILL.md` that the binary
+embeds and `godot-mcp skill install` copies into an agent's skill directory, where the agent
+reads it and godot-mcp never does, so nothing else would notice a renamed tool or an example a
+schema refuses. Mark every request example with the tool it calls, and the checker validates it
+against the input schema `tools/list` serves for that tool:
+
+````markdown
+```json tool=health.get
+{}
+```
+````
+
+A change of contract updates every skill's `contract` in the same change. Each skill's budget
+is its size when the budget was pinned plus about 10%, held next to the checker; a skill that
+outgrows it is measured again and its budget raised in the same change, never past 400 lines.
+[Agent Skills](../operator/skills.md) describes the commands that install them.
 
 ## Writing a configuration example
 

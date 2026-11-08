@@ -5,6 +5,9 @@
 //! line comparison runs only over the region between the common prefix and
 //! suffix, and only while that region is small enough to compare exactly, and
 //! the rendered text stops at a fixed number of lines and bytes, saying so.
+//!
+//! The crate exports it as `godot_mcp_server::diff`, so `godot-mcp skill update
+//! --diff` renders an installed skill against the embedded one the same way.
 
 use serde_json::{Value, json};
 
@@ -19,11 +22,15 @@ const MAX_RENDERED_BYTES: usize = 32 * 1024;
 
 /// One rendered, bounded diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct BoundedDiff {
-    pub(super) text: String,
-    pub(super) added: usize,
-    pub(super) removed: usize,
-    pub(super) truncated: bool,
+pub struct BoundedDiff {
+    /// The rendered unified diff, one line per `\n`.
+    pub text: String,
+    /// Lines the diff adds.
+    pub added: usize,
+    /// Lines the diff removes.
+    pub removed: usize,
+    /// Whether rendering stopped at the line or byte limit.
+    pub truncated: bool,
 }
 
 impl BoundedDiff {
@@ -47,7 +54,7 @@ enum Op {
 
 /// Render a unified diff from `before` to `after`. `None` stands for an absent
 /// file on that side.
-pub(super) fn unified(
+pub fn unified(
     old_path: Option<&str>,
     new_path: Option<&str>,
     before: &str,
