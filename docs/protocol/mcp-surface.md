@@ -24,8 +24,15 @@ fixed token. See [HTTP: `trusted_local`](../operator/http-trusted-local.md),
 
 ## Discovery
 
-`initialize` is answered by the shared kernel and identifies the server. After
-initialization:
+`initialize` is answered by the shared kernel and identifies the server. Its
+`instructions` are generated from the selected profile's manifest: they name only tools
+that profile lists, stay within 2,000 bytes (a test holds both rules), and cover reading
+before writing, scenes open in the editor, recipes, `unavailable` and `uncertain`
+outcomes, the `--allow-scripts` switch, and where the Agent Skills come from
+(`godot-mcp skill install`). A server started with `--workspace` and no project bound
+also says to call `workspace.projects.list` and then `project.bind`.
+
+After initialization:
 
 * `tools/list` returns exactly the selected profile's tools;
 * `resources/list` returns exactly the selected profile's resources;

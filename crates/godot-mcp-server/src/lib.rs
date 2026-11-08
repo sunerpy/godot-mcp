@@ -37,6 +37,7 @@ pub mod evidence;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod idempotency;
+pub mod instructions;
 pub(crate) mod journal;
 pub mod kernel;
 pub mod limits;
