@@ -254,6 +254,18 @@ fn engine_value_schema(whole: bool, low: f64, high: f64) -> Value {
     })
 }
 
+/// The properties a write sets on a running node: names mapped to tagged
+/// values.
+pub(super) fn node_properties_schema() -> Value {
+    json!({
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": MAX_SET_PROPERTIES,
+        "propertyNames": { "minLength": 1, "maxLength": MAX_NAME },
+        "additionalProperties": crate::schema::writable_value()
+    })
+}
+
 fn set_target_schema(node: &Value) -> Value {
     let mut engine = Map::new();
     for (name, whole, low, high) in ENGINE_PROPERTIES {
@@ -266,13 +278,7 @@ fn set_target_schema(node: &Value) -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "node": node,
-                    "properties": {
-                        "type": "object",
-                        "minProperties": 1,
-                        "maxProperties": MAX_SET_PROPERTIES,
-                        "propertyNames": { "minLength": 1, "maxLength": MAX_NAME },
-                        "additionalProperties": crate::schema::writable_value()
-                    }
+                    "properties": node_properties_schema()
                 },
                 "required": ["node", "properties"]
             }),

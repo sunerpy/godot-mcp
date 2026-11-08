@@ -428,12 +428,13 @@ fn shipped_binary_rejects_invalid_main_scene_before_engine_discovery() {
 /// last set: contract 0.7.0 with `runtime.frames.step`, the physics-frame
 /// `cadence`, `schedule` and `frame` fields and the corrections that state
 /// more of the checks' rules in the schemas, its schemas carrying only the
-/// definitions they refer to and sharing what one tool repeats.
+/// definitions they refer to, and every tool that carries definitions
+/// defining once each field schema it repeats.
 const MEASURED_TOOLS_BYTES: [(&str, usize); 4] = [
     ("core", 28_074),
-    ("editor", 316_607),
-    ("runtime", 198_347),
-    ("full", 482_678),
+    ("editor", 316_228),
+    ("runtime", 193_118),
+    ("full", 477_070),
 ];
 
 /// Every profile's `tools/list` stays within 2% of its measured size. A client

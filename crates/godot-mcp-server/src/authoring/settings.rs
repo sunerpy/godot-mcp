@@ -1556,7 +1556,14 @@ pub(super) fn patch_schema() -> Value {
         &["expectedSha256", "operations"],
         true,
     );
-    crate::schema::define_values(&mut schema);
+    // `set_setting` and `clear_setting` name a setting the same way.
+    crate::schema::define_shared(
+        &mut schema,
+        &[(
+            "SettingName",
+            settings_field_schema("set_setting", "setting"),
+        )],
+    );
     schema
 }
 

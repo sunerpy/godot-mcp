@@ -656,3 +656,136 @@ fn every_discovered_schema_carries_exactly_the_definitions_it_refers_to() {
         let _ = session.finish();
     }
 }
+
+/// The value definitions a tagged value roots in. A tool whose schema takes a
+/// tagged value carries one of them.
+const TAGGED_VALUES: [&str; 2] = ["WritableGodotValue", "PlainGodotValue"];
+
+/// A tool carries `$defs` only when it takes a tagged value: every tool that
+/// carries definitions carries a tagged value's. A tool that takes none writes
+/// every field schema where it is used, even one it repeats.
+#[test]
+fn a_tool_carries_definitions_only_when_it_takes_a_tagged_value() {
+    let tree = ProjectTree::new("w1-tagged-definitions");
+    for profile in ["core", "editor", "runtime", "full"] {
+        let mut session = StdioSession::initialized(&Spawn {
+            project: &tree.root,
+            current_dir: None,
+            profile,
+            godot: None,
+        });
+        for tool in listed(&mut session, 2) {
+            let name = tool["name"].as_str().expect("tool name");
+            if let Some(definitions) = tool["inputSchema"].get("$defs") {
+                assert!(
+                    TAGGED_VALUES
+                        .iter()
+                        .any(|value| definitions.get(*value).is_some()),
+                    "{profile} {name}: it carries $defs but takes no tagged value"
+                );
+            }
+        }
+        let _ = session.finish();
+    }
+}
+
+/// The bytes of `value` as the server writes it.
+fn written(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .expect("a schema serializes")
+        .len()
+}
+
+/// How many subschemas strictly inside `value` equal `target`.
+fn occurrences_inside(value: &Value, target: &Value) -> usize {
+    let items: Vec<&Value> = match value {
+        Value::Object(map) => map.values().collect(),
+        Value::Array(items) => items.iter().collect(),
+        _ => Vec::new(),
+    };
+    items
+        .into_iter()
+        .map(|item| {
+            if item == target {
+                1
+            } else {
+                occurrences_inside(item, target)
+            }
+        })
+        .sum()
+}
+
+/// Push every field schema strictly inside `value`, each subschema that carries
+/// a `description`, onto `found`.
+fn field_schemas_inside(value: &Value, found: &mut Vec<Value>) {
+    let items: Vec<&Value> = match value {
+        Value::Object(map) => map.values().collect(),
+        Value::Array(items) => items.iter().collect(),
+        _ => Vec::new(),
+    };
+    for item in items {
+        if item.get("description").is_some_and(Value::is_string) {
+            found.push(item.clone());
+        }
+        field_schemas_inside(item, found);
+    }
+}
+
+/// A tool that carries `$defs` defines each field schema it repeats, a
+/// subschema with a `description` that its properties hold more than once,
+/// when a reference to it makes the schema shorter. The rule is the one the
+/// server shares by, counted with a 24-character definition name. A top-level
+/// property describes itself and is not counted.
+#[test]
+fn a_tool_with_definitions_writes_each_field_schema_it_repeats_once() {
+    let name = "D".repeat(24);
+    let reference = json!({ "$ref": format!("#/$defs/{name}") });
+    let tree = ProjectTree::new("w1-repeated-fields");
+    let mut repeated = Vec::new();
+    for profile in ["core", "editor", "runtime", "full"] {
+        let mut session = StdioSession::initialized(&Spawn {
+            project: &tree.root,
+            current_dir: None,
+            profile,
+            godot: None,
+        });
+        for tool in listed(&mut session, 2) {
+            let tool_name = tool["name"].as_str().expect("tool name");
+            let schema = &tool["inputSchema"];
+            if schema.get("$defs").is_none() {
+                continue;
+            }
+            let properties: Vec<&Value> = schema["properties"]
+                .as_object()
+                .expect("a tool schema declares its properties")
+                .values()
+                .collect();
+            let mut fields = Vec::new();
+            properties
+                .iter()
+                .for_each(|property| field_schemas_inside(property, &mut fields));
+            for field in fields {
+                let count: usize = properties
+                    .iter()
+                    .map(|property| occurrences_inside(property, &field))
+                    .sum();
+                let defined = name.len() + written(&field) + 4;
+                if count >= 2 && count * written(&field) > count * written(&reference) + defined {
+                    let entry = format!(
+                        "{profile} {tool_name}: {count} x {}",
+                        field["description"].as_str().unwrap_or_default()
+                    );
+                    if !repeated.contains(&entry) {
+                        repeated.push(entry);
+                    }
+                }
+            }
+        }
+        let _ = session.finish();
+    }
+    assert!(
+        repeated.is_empty(),
+        "these tools repeat a field schema a definition would shorten:\n{}",
+        repeated.join("\n")
+    );
+}

@@ -303,34 +303,10 @@ impl SessionCall for SessionOperation {
             "maxLength": 39,
             "description": "The export ID project.export returned."
         });
-        let node = json!({
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 1024,
-            "description": "A node of the running game: an absolute path (/root/...) or a path \
-                            relative to the current scene (`.` is the current scene)."
-        });
-        let state = json!({
-            "type": "string",
-            "enum": ["press", "release", "tap"],
-            "description": "press holds it (until released, holdMs passes, the session stops or \
-                            the probe loses the server), release lets go, tap presses and \
-                            releases after holdMs. Default tap."
-        });
-        let hold = json!({
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 30000,
-            "description": "How long a press or tap is held, in ms (default 500); a press is \
-                            released at the latest then."
-        });
-        let position = json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
-            "required": ["x", "y"],
-            "description": "Viewport coordinates in pixels."
-        });
+        let node = node_schema();
+        let state = state_schema();
+        let hold = hold_schema();
+        let position = position_schema();
         let modifiers = json!({
             "type": "object",
             "additionalProperties": false,
@@ -733,17 +709,72 @@ impl SessionCall for SessionOperation {
             // The handler refuses a mutation without one before anything runs.
             required.push("idempotencyId");
         }
-        let mut schema = json!({
+        json!({
             "type": "object",
             "additionalProperties": false,
             "properties": properties,
             "required": required,
-        });
-        if control::uses_values(self) || scenario::uses_values(self) {
-            crate::schema::define_values(&mut schema);
-        }
-        schema
+        })
     }
+}
+
+/// A node of the running game, as every session tool that names one takes it.
+pub(super) fn node_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "A node of the running game: an absolute path (/root/...) or a path \
+                        relative to the current scene (`.` is the current scene)."
+    })
+}
+
+/// How an input is pressed: held, let go, or both.
+fn state_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["press", "release", "tap"],
+        "description": "press holds it (until released, holdMs passes, the session stops or \
+                        the probe loses the server), release lets go, tap presses and \
+                        releases after holdMs. Default tap."
+    })
+}
+
+/// How long a press or tap holds its input.
+fn hold_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 30000,
+        "description": "How long a press or tap is held, in ms (default 500); a press is \
+                        released at the latest then."
+    })
+}
+
+/// A point of the game's viewport.
+fn position_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+        "required": ["x", "y"],
+        "description": "Viewport coordinates in pixels."
+    })
+}
+
+/// The field schemas a session tool that takes tagged values defines once
+/// when it repeats them, each under its name. A tool that takes none writes
+/// each field where it is used.
+fn shared_fields() -> Vec<(&'static str, Value)> {
+    let mut shared = vec![
+        ("RuntimeNode", node_schema()),
+        ("InputState", state_schema()),
+        ("HoldMs", hold_schema()),
+        ("ViewportPosition", position_schema()),
+        ("NodeProperties", control::node_properties_schema()),
+    ];
+    shared.extend(scenario::shared_fields());
+    shared
 }
 
 /// A withdrawal of one request from a game session's probe: it fires when the
@@ -792,10 +823,17 @@ impl Drop for Withdrawal {
     }
 }
 
-/// The input schema of one managed-session tool.
+/// The input schema of one managed-session tool: its fields, and for a tool
+/// that takes tagged values the definitions it refers to, among them each
+/// field schema it repeats. The schema [`SessionCall::input_schema`] answers
+/// carries no definitions, so a tool that takes another's field takes it as
+/// that tool writes it.
 pub(crate) fn input_schema(operation: SessionOperation) -> Map<String, Value> {
-    operation
-        .input_schema()
+    let mut schema = operation.input_schema();
+    if control::uses_values(operation) || scenario::uses_values(operation) {
+        crate::schema::define_shared(&mut schema, &shared_fields());
+    }
+    schema
         .as_object()
         .cloned()
         .expect("session schemas are objects")

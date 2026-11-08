@@ -30,13 +30,15 @@ and fails when a profile grows more than 2% past its size here.
 | Profile | Tools | `tools/list` bytes |
 | --- | --- | --- |
 | `core` | 22 | 28,074 |
-| `editor` | 84 | 316,607 |
-| `runtime` | 75 | 198,347 |
-| `full` | 133 | 482,678 |
+| `editor` | 84 | 316,228 |
+| `runtime` | 75 | 193,118 |
+| `full` | 133 | 477,070 |
 
-A tool's schema carries only the definitions it refers to, and a tool that takes operations
-defines each field schema it repeats once
-([Schema evolution](../protocol/schema-evolution.md#060-schema-writing)).
+A tool's schema carries only the definitions it refers to, and a tool that carries definitions
+defines once each field schema it repeats
+([Schema evolution](../protocol/schema-evolution.md#060-schema-writing),
+[0.7.0 schema writing](../protocol/schema-evolution.md#070-schema-writing)). A tool that takes
+no tagged value carries no definitions.
 
 ## Script execution
 
