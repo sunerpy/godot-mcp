@@ -4,7 +4,7 @@ description: "Export, build or package a Godot 4 game through a connected godot-
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the runtime or full profile, and a Godot editor build the server can find. A project export needs the export templates of exactly that build; an Android export needs a Linux host and the Android SDK and JDK the server was started with."
 metadata:
-  contract: "0.7.0"
+  contract: "0.8.0"
   profiles: "runtime,full"
 ---
 
@@ -15,7 +15,7 @@ of the resolved Godot build that it starts, owns and can cancel. The output neve
 project. Every file a finished export produces becomes an artifact, and a build this host can
 run is started once, on request, to check that it runs.
 
-This skill describes contract 0.7.0, the `contract` of its metadata. `health.get` reports the
+This skill describes contract 0.8.0, the `contract` of its metadata. `health.get` reports the
 contract the server speaks as `schema_version`; when the two differ, follow the tool schemas.
 
 ## The loop

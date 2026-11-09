@@ -62,13 +62,17 @@ another file of the same batch sees the new content only once both are written. 
 the connected editor is refused; change an open scene with `scene.batch.apply`, which goes
 through the editor. `dryRun` answers every file's diff and tree and writes nothing.
 
-Common setups — a 2D or 3D physics body, lights with a sky and a camera, particles from six
-presets, navigation, a sound, a shader material, a HUD, a grid map, an on-screen joystick — go
-into a scene by name with `scene.recipe.apply`, with their parameters: the server turns the
-recipe into one batch like the ones above, or, for a scene your editor holds, into one undoable
-action, and answers every value it used. A theme recipe goes to `resource.create`. The
+Common setups — a 2D or 3D physics body, lights with a sky and a camera, 2D or 3D particles
+from six presets, 2D or 3D navigation, a sound, a shader material, a HUD, a grid map, an
+on-screen joystick, an AnimationTree state machine or blend space — go into a scene by name with
+`scene.recipe.apply`, with their parameters: the server turns the recipe into one batch like the
+ones above, or, for a scene your editor holds, into one undoable action, and answers every value
+it used. `resource.create` makes a theme or a 3D material from a recipe the same way. The
 [recipes reference](../../operator/recipes.md) shows each recipe's call and the operations it
 becomes, and [What it covers](capabilities.md) lists the tools for each part of a project.
+godot-mcp 0.7.0 and earlier have no recipe for 3D particles, 3D navigation, a 3D sound or an
+AnimationTree, and make a theme from its operations, sent to `resource.create` with `class`
+`Theme`.
 
 ## Settings and assets
 

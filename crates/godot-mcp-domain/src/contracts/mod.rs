@@ -68,16 +68,21 @@ pub enum ContractVersion {
     V0_6_0,
     /// Frame-level runtime control: stepping a game by physics frames, and
     /// sampling and replaying input per physics frame.
-    #[default]
     #[serde(rename = "0.7.0")]
     V0_7_0,
+    /// Recipes for AnimationTree state machines and blend spaces, 3D
+    /// particles, navigation and sound, and resource recipes in
+    /// `resource.create`.
+    #[default]
+    #[serde(rename = "0.8.0")]
+    V0_8_0,
 }
 
 impl ContractVersion {
     /// Current version marker.
     #[must_use]
     pub const fn current() -> Self {
-        Self::V0_7_0
+        Self::V0_8_0
     }
 
     /// Stable textual representation.
@@ -90,7 +95,8 @@ impl ContractVersion {
             Self::V0_4_0 => "0.4.0",
             Self::V0_5_0 => "0.5.0",
             Self::V0_6_0 => "0.6.0",
-            Self::V0_7_0 => CONTRACT_VERSION,
+            Self::V0_7_0 => "0.7.0",
+            Self::V0_8_0 => CONTRACT_VERSION,
         }
     }
 }

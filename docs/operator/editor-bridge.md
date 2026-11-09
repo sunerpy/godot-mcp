@@ -289,7 +289,8 @@ refused as `scene_not_loadable`; import it first with `project.import.run` or
 `editor.filesystem.scan`.
 
 [Recipes](recipes.md) has common setups — physics bodies, lights and a sky, particles,
-navigation, a sound, a theme, a HUD, a grid map — written as these operations.
+navigation, a sound, a HUD, a grid map, an AnimationTree state machine and blend space, a theme
+and a 3D material — written as these operations.
 
 ## Editing calls
 
@@ -312,7 +313,9 @@ an AnimationPlayer or AnimationTree, `{ "library": "" }` one of its animation li
 resource must be one the scene embeds. A resource saved in its own file is refused as
 `external_resource`, because the call would change that file too; edit it with
 `resource.batch.apply`, whose calls go to the resource itself, or, with a `property` selector,
-to a resource it embeds.
+to a resource it embeds. The `animation-state-machine` and `blend-space-1d`
+[recipes](recipes.md) make these calls for a whole state machine or blend space, and the state
+machine's tuning batch adds a blend space as a state through a `resource` property path.
 
 **The methods** are this table, matched by class and inheritance. Nothing else can be called.
 Every method changes only its receiver's own stored state, or, for the two navigation regions,

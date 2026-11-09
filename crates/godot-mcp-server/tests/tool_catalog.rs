@@ -287,10 +287,10 @@ fn discovery_lists_only_implemented_tools_with_strict_descriptions() {
     }
 }
 
-/// The capability report carries the 0.7.0 contract and the same tool sets
+/// The capability report carries the 0.8.0 contract and the same tool sets
 /// discovery lists.
 #[test]
-fn the_capability_report_is_contract_0_7_0_and_matches_discovery() {
+fn the_capability_report_is_contract_0_8_0_and_matches_discovery() {
     let tree = ProjectTree::new("m1-capabilities");
     let mut session = StdioSession::initialized(&Spawn {
         project: &tree.root,
@@ -304,7 +304,7 @@ fn the_capability_report_is_contract_0_7_0_and_matches_discovery() {
         let manifest = &manifests[profile];
         assert_eq!(
             manifest["schema_version"],
-            json!("0.7.0"),
+            json!("0.8.0"),
             "{profile} manifest version: {manifest}"
         );
         let tools: BTreeSet<String> = manifest["tools"]

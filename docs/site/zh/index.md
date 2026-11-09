@@ -323,7 +323,7 @@ home:
           text: 它是怎样组织的
           link: /zh/guide/introduction#它是怎样组织的
       - q: 它能处理 Godot 项目的哪些部分？
-        a: 动画、AnimationTree、物理、3D、粒子、导航、音频、着色器、主题、TileMap 和运行中的游戏，每一项都有 Agent 可以调用的工具。`scene.recipe.apply` 按名字把一种常见设置加进场景，例如物理体或烟雾粒子；每个配方同时也是一个 Agent 能找到的 MCP prompt。
+        a: 动画、AnimationTree、物理、3D、粒子、导航、音频、着色器、主题、TileMap 和运行中的游戏，每一项都有 Agent 可以调用的工具。`scene.recipe.apply` 按名字把一种常见设置加进场景，例如物理体、烟雾粒子或 AnimationTree 状态机；每个配方同时也是一个 Agent 能找到的 MCP prompt。
         guide:
           text: 覆盖范围
           link: /zh/guide/capabilities

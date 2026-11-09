@@ -30,9 +30,9 @@ and fails when a profile grows more than 2% past its size here.
 | Profile | Tools | `tools/list` bytes |
 | --- | --- | --- |
 | `core` | 22 | 28,074 |
-| `editor` | 84 | 316,228 |
+| `editor` | 84 | 332,607 |
 | `runtime` | 75 | 193,118 |
-| `full` | 133 | 477,070 |
+| `full` | 133 | 493,449 |
 
 A tool's schema carries only the definitions it refers to, and a tool that carries definitions
 defines once each field schema it repeats

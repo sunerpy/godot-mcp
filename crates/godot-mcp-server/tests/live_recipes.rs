@@ -1,11 +1,13 @@
 //! Live acceptance of the recipes page and of `scene.recipe.apply`: every
 //! call of `docs/operator/recipes.md`, read from the page itself, is applied
-//! headless in a real Godot build to a scene `scene.create` made, and the theme
-//! is made by `resource.create`. Each is read back, then changed by its tuning
-//! batch in a live editor, undone, redone, saved, reloaded from its file and
-//! read again. Further variants of the body and particle recipes are applied
-//! headless, and one recipe is applied to a scene open in the editor, where it
-//! is one undoable action. Everything goes through the production MCP server.
+//! headless in a real Godot build to a scene `scene.create` made, and the
+//! theme and the material are made by `resource.create` from their calls. Each
+//! is read back, then changed by its tuning batch in a live editor, undone,
+//! redone, saved, reloaded from its file and read again. Further variants of
+//! the body, particle and 3D navigation recipes, and state machines and blend
+//! spaces at the registry's limits, are applied headless, and two recipes are
+//! applied to scenes open in the editor, where each is one undoable action.
+//! Everything goes through the production MCP server.
 //!
 //! Like the other live suites it needs real editors, named by
 //! `GODOT_MCP_TEST_EDITORS` or `GODOT_MCP_LOCKED_ARTIFACT`, so every case is
@@ -31,8 +33,9 @@ use support::{ProjectTree, Spawn, StdioSession, sha256_hex};
 enum Made {
     /// A `scene.recipe.apply` call on a scene whose root has this class.
     Scene { root: String, call: Value },
-    /// A resource of this class, made by `resource.create`.
-    Resource { class: String },
+    /// A resource of this class, made by a `resource.create` call with the
+    /// recipe.
+    Resource { class: String, call: Value },
 }
 
 /// One recipe of the page, with its tuning batch.
@@ -43,8 +46,7 @@ struct Recipe {
     made: Made,
     /// The oldest locked build that has every class the recipe uses.
     since: Option<String>,
-    /// The operations the page shows: what the call becomes, or what
-    /// `resource.create` takes.
+    /// The operations the page shows the call becomes.
     operations: Value,
     tune: Value,
 }
@@ -119,8 +121,8 @@ fn recipe_files() -> Vec<(String, String)> {
     files
 }
 
-/// Every recipe of the page, in page order: a scene recipe from its call and
-/// the operations below it, a resource recipe from its operations alone.
+/// Every recipe of the page, in page order, from its call and the operations
+/// below it: a call that names a `class` makes a resource, any other a scene.
 fn recipes() -> Vec<Recipe> {
     let text = page();
     let lines: Vec<&str> = text.lines().collect();
@@ -139,37 +141,31 @@ fn recipes() -> Vec<Recipe> {
         } else if let Some(found) = attributes(line, "recipe") {
             let id = found["id"].clone();
             let operations = block_after(&lines, index);
-            let recipe = if let Some(class) = found.get("class") {
-                Recipe {
-                    path: found["path"].clone(),
-                    made: Made::Resource {
-                        class: class.clone(),
-                    },
-                    since: None,
-                    id,
-                    operations,
-                    tune: Value::Null,
+            let (call_attributes, call) = calls.remove(&id).unwrap_or_else(|| {
+                panic!(
+                    "line {}: {id} shows its call before its operations",
+                    index + 1
+                )
+            });
+            let made = if let Some(class) = call_attributes.get("class") {
+                Made::Resource {
+                    class: class.clone(),
+                    call,
                 }
             } else {
-                let (call_attributes, call) = calls.remove(&id).unwrap_or_else(|| {
-                    panic!(
-                        "line {}: {id} shows its call before its operations",
-                        index + 1
-                    )
-                });
-                Recipe {
-                    path: call_attributes["path"].clone(),
-                    made: Made::Scene {
-                        root: call_attributes["root"].clone(),
-                        call,
-                    },
-                    since: call_attributes.get("since").cloned(),
-                    id,
-                    operations,
-                    tune: Value::Null,
+                Made::Scene {
+                    root: call_attributes["root"].clone(),
+                    call,
                 }
             };
-            recipes.push(recipe);
+            recipes.push(Recipe {
+                path: call_attributes["path"].clone(),
+                made,
+                since: call_attributes.get("since").cloned(),
+                id,
+                operations,
+                tune: Value::Null,
+            });
         } else if let Some(found) = attributes(line, "recipe-tune") {
             tunes.insert(found["id"].clone(), block_after(&lines, index));
         }
@@ -187,12 +183,16 @@ fn recipes() -> Vec<Recipe> {
     recipes
 }
 
-/// Numbers compared as numbers: the registry writes `12.0` where a page may
-/// write `12`, and the server answers what the registry wrote.
+/// Numbers compared as numbers, as a client reads them: the registry writes
+/// `12.0` where a page may write `12`, and the server answers what the
+/// registry wrote as JSON text. serde_json reads a 17-digit decimal such as
+/// `-10.100000000000001` only to within one unit in the last place, so a
+/// number computed here is read back from its own text the same way.
 fn normalized(value: &Value) -> Value {
     match value {
-        Value::Number(number) => number
-            .as_f64()
+        Value::Number(number) => serde_json::from_str::<Value>(&number.to_string())
+            .ok()
+            .and_then(|read| read.as_f64())
             .and_then(serde_json::Number::from_f64)
             .map_or_else(|| value.clone(), Value::Number),
         Value::Array(items) => Value::Array(items.iter().map(normalized).collect()),
@@ -257,6 +257,20 @@ fn created_lines(id: &str) -> &'static [&'static str] {
             "[sub_resource type=\"Gradient\"",
             "offsets = PackedFloat32Array(0, 0.6, 1)",
         ],
+        "particles-3d" => &[
+            "[node name=\"Rain\" type=\"GPUParticles3D\" parent=\".\"",
+            "amount = 200",
+            "lifetime = 1.2",
+            "visibility_aabb = AABB(",
+            "[sub_resource type=\"ParticleProcessMaterial\"",
+            "emission_shape = 3",
+            "emission_box_extents = Vector3(10, 0.5, 10)",
+            "[sub_resource type=\"QuadMesh\"",
+            "size = Vector2(0.05, 0.05)",
+            "[sub_resource type=\"StandardMaterial3D\"",
+            "billboard_mode = 3",
+            "vertex_color_use_as_albedo = true",
+        ],
         "navigation-2d" => &[
             "[node name=\"Floor\" type=\"NavigationRegion2D\" parent=\".\"",
             "navigation_layers = 3",
@@ -269,12 +283,40 @@ fn created_lines(id: &str) -> &'static [&'static str] {
             "radius = 12.0",
             "avoidance_enabled = true",
         ],
+        "navigation-3d" => &[
+            "[node name=\"Floor\" type=\"NavigationRegion3D\" parent=\".\"",
+            "navigation_layers = 3",
+            "[sub_resource type=\"NavigationMesh\"",
+            "geometry_parsed_geometry_type = 1",
+            "agent_height = 2.0",
+            "agent_radius = 0.75",
+            "vertices = PackedVector3Array(",
+            "[node name=\"Ground\" type=\"StaticBody3D\" parent=\"Floor\"",
+            "[sub_resource type=\"BoxShape3D\"",
+            "size = Vector3(30, 1, 20)",
+            "[sub_resource type=\"BoxMesh\"",
+            "[node name=\"Agent\" type=\"NavigationAgent3D\" parent=\"Walker\"",
+            "path_desired_distance = 0.5",
+            "target_desired_distance = 1.5",
+            "radius = 0.75",
+            "avoidance_enabled = true",
+        ],
         "audio-2d" => &[
             "[node name=\"Steps\" type=\"AudioStreamPlayer2D\" parent=\".\"",
             "path=\"res://audio/step.wav\"",
             "stream = ExtResource(",
             "volume_db = -6.0",
             "max_distance = 600.0",
+            "bus = &\"SFX\"",
+        ],
+        "audio-3d" => &[
+            "[node name=\"Steps\" type=\"AudioStreamPlayer3D\" parent=\".\"",
+            "path=\"res://audio/step.wav\"",
+            "stream = ExtResource(",
+            "volume_db = -6.0",
+            "max_distance = 40.0",
+            "unit_size = 4.0",
+            "attenuation_model = 1",
             "bus = &\"SFX\"",
         ],
         "shader-2d" => &[
@@ -329,6 +371,33 @@ fn created_lines(id: &str) -> &'static [&'static str] {
             "action_down = &\"move_down\"",
             "anchors_preset = 2",
         ],
+        "animation-state-machine" => &[
+            "[node name=\"AnimationTree\" type=\"AnimationTree\" parent=\".\"",
+            "anim_player = NodePath(\"../AnimationPlayer\")",
+            "[sub_resource type=\"AnimationNodeStateMachine\"",
+            "[sub_resource type=\"AnimationNodeAnimation\"",
+            "animation = &\"walk\"",
+            "states/idle/node = SubResource(",
+            "states/run/position = Vector2(600, 250)",
+            "[sub_resource type=\"AnimationNodeStateMachineTransition\"",
+            "advance_mode = 2",
+            "xfade_time = 0.2",
+            "transitions = [\"Start\", \"idle\", SubResource(",
+        ],
+        "blend-space-1d" => &[
+            "[node name=\"AnimationTree\" type=\"AnimationTree\" parent=\".\"",
+            "anim_player = NodePath(\"../AnimationPlayer\")",
+            "[sub_resource type=\"AnimationNodeBlendSpace1D\"",
+            "blend_point_0/node = SubResource(",
+            "blend_point_1/pos = 0.5",
+            "blend_point_2/pos = 1.0",
+            "animation = &\"run\"",
+        ],
+        "material-3d" => &[
+            "[gd_resource type=\"StandardMaterial3D\"",
+            "albedo_color = Color(0.8, 0.5, 0.2, 1)",
+            "roughness = 0.7",
+        ],
         other => panic!("the page has a recipe this suite does not check: {other}"),
     }
 }
@@ -340,12 +409,18 @@ fn tuned_line(id: &str) -> &'static str {
         "body-3d" => "bounce = 0.5",
         "light-3d" => "light_energy = 0.8",
         "particles-2d" => "spread = 40.0",
+        "particles-3d" => "amount = 400",
         "navigation-2d" => "target_desired_distance = 12.0",
+        "navigation-3d" => "target_desired_distance = 2.0",
         "audio-2d" => "volume_db = -3.0",
+        "audio-3d" => "unit_size = 6.0",
         "shader-2d" => "shader_parameter/strength = 0.8",
         "theme" => "Label/font_sizes/font_size = 22",
         "hud" => "theme_override_font_sizes/font_size = 32",
         "joystick" => "deadzone_ratio = 0.3",
+        "animation-state-machine" => "states/move/node = SubResource(",
+        "blend-space-1d" => "blend_point_1/pos = 0.4",
+        "material-3d" => "metallic = 0.3",
         // The cells of a grid map are one packed list; the tuned one is counted.
         "gridmap-3d" => "\"cells\": PackedInt32Array(",
         other => panic!("no tuned line for {other}"),
@@ -498,7 +573,8 @@ fn expansion(id: &str, parameters: &Value) -> Value {
 }
 
 /// The variants applied besides the page's calls: every body and shape the
-/// physics recipes take beyond the page's, and every particle preset.
+/// physics recipes take beyond the page's, every particle preset in 2D and
+/// 3D, and the 3D floor alone.
 fn variants() -> Vec<(&'static str, Value)> {
     let mut variants = vec![
         ("body-2d", json!({ "body": "rigid", "shape": "circle" })),
@@ -514,7 +590,85 @@ fn variants() -> Vec<(&'static str, Value)> {
     for preset in recipes::PARTICLE_PRESETS {
         variants.push(("particles-2d", json!({ "preset": preset })));
     }
+    for preset in recipes::PARTICLE_PRESETS {
+        variants.push(("particles-3d", json!({ "preset": preset })));
+    }
+    variants.push(("navigation-3d", json!({ "mesh": false, "walker": false })));
     variants
+}
+
+/// Requests beside the page's and the variants, each read back from the
+/// engine: a state machine and a blend space at the registry's limits, and a
+/// blend space whose axis lies below zero.
+fn extras() -> Vec<(&'static str, &'static str, Value)> {
+    let states = recipes::MAX_RECIPE_STATES;
+    let steps = recipes::MAX_RECIPE_TRANSITIONS / states;
+    let state = |index: usize| format!("s{index}");
+    let machine = json!({
+        "anim_player": "../AnimationPlayer",
+        "states": (0..states)
+            .map(|index| json!({ "name": state(index), "animation": format!("a{index}") }))
+            .collect::<Vec<_>>(),
+        "transitions": (1..=steps)
+            .flat_map(|step| {
+                (0..states).map(move |index| {
+                    json!({ "from": state(index), "to": state((index + step) % states) })
+                })
+            })
+            .collect::<Vec<_>>(),
+    });
+    let points = recipes::RECIPE_BLEND_POINTS.1;
+    let last = f64::from(u32::try_from(points - 1).expect("a few points"));
+    let space = json!({
+        "anim_player": "../AnimationPlayer",
+        "points": (0..points)
+            .map(|index| {
+                let at = f64::from(u32::try_from(index).expect("a few points"));
+                json!({ "animation": format!("b{index}"), "position": -1.0 + 2.0 * at / last })
+            })
+            .collect::<Vec<_>>(),
+    });
+    let below_zero = json!({
+        "anim_player": "../AnimationPlayer", "min_space": -10, "max_space": -5,
+        "points": [
+            { "animation": "idle", "position": -10 },
+            { "animation": "walk", "position": -7.5 },
+            { "animation": "run", "position": -5 }
+        ]
+    });
+    vec![
+        (
+            "animation-state-machine",
+            "limits/state-machine.tscn",
+            machine,
+        ),
+        ("blend-space-1d", "limits/blend-space.tscn", space),
+        ("blend-space-1d", "variants/blend-range.tscn", below_zero),
+    ]
+}
+
+/// The tagged values `scene.read` answers for `calls` on the scene at `path`.
+fn read_values(
+    session: &mut StdioSession,
+    ids: &mut Ids,
+    path: &str,
+    calls: Value,
+    context: &str,
+) -> Vec<Value> {
+    let read = ok(
+        &session.call_tool(
+            ids.next(),
+            "scene.read",
+            json!({ "path": path, "calls": calls }),
+        ),
+        context,
+    );
+    read["calls"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context}: {read}"))
+        .iter()
+        .map(|call| call["value"].clone())
+        .collect()
 }
 
 /// Make an empty scene with a `root` root at `path`, then apply `call` to it
@@ -643,12 +797,16 @@ fn the_page_holds_a_call_or_operations_and_a_tuning_batch_for_each_recipe() {
                 assert_eq!(root, registered.parent_class, "{}", recipe.id);
                 assert_eq!(recipe.since.as_deref(), registered.since, "{}", recipe.id);
             }
-            Made::Resource { class } => match registered.target {
-                recipes::RecipeTarget::Resource { class: registered } => {
-                    assert_eq!(class, registered, "{}", recipe.id);
+            Made::Resource { class, call } => {
+                assert_eq!(call["path"], json!(recipe.path), "{}", recipe.id);
+                assert!(call["recipe"].get(&recipe.id).is_some(), "{}", recipe.id);
+                match registered.target {
+                    recipes::RecipeTarget::Resource { class: registered } => {
+                        assert_eq!(class, registered, "{}", recipe.id);
+                    }
+                    recipes::RecipeTarget::Scene => panic!("{} is a scene recipe", recipe.id),
                 }
-                recipes::RecipeTarget::Scene => panic!("{} is a scene recipe", recipe.id),
-            },
+            }
         }
     }
     let files = recipe_files();
@@ -727,19 +885,22 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
     for recipe in ordered {
         let context = format!("{context}: {}", recipe.id);
         match &recipe.made {
-            Made::Resource { class } => {
-                ok(
-                    &headless.call_tool(
-                        ids.next(),
-                        "resource.create",
-                        json!({
-                            "path": recipe.path,
-                            "class": class,
-                            "operations": recipe.operations,
-                            "idempotencyId": format!("create-{}", recipe.id),
-                        }),
-                    ),
+            Made::Resource { call, .. } => {
+                let mut call = call.clone();
+                call["idempotencyId"] = json!(format!("create-{}", recipe.id));
+                let created = ok(
+                    &headless.call_tool(ids.next(), "resource.create", call),
                     &context,
+                );
+                assert_eq!(
+                    created["conclusion"], "proven_post_state",
+                    "{context}: {created}"
+                );
+                assert_eq!(created["recipe"]["id"], json!(recipe.id), "{context}");
+                assert_eq!(
+                    normalized(&created["operations"]),
+                    normalized(&recipe.operations),
+                    "{context}: the answer carries the operations the call became: {created}"
                 );
             }
             Made::Scene { root, call } => {
@@ -811,16 +972,39 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
             );
         }
     }
-    // The empty scene the editor applies a recipe to.
-    ok(
-        &headless.call_tool(
-            ids.next(),
-            "scene.create",
-            json!({ "path": "scenes/smoke.tscn", "rootType": "Node2D",
-                    "idempotencyId": "empty-editor-smoke" }),
-        ),
-        &context,
-    );
+    for (id, path, parameters) in extras() {
+        let registered = recipes::recipe(id).expect("registered");
+        let label = path.replace(['/', '.'], "-");
+        let context = format!("{context}: {id} in {path}");
+        let expected = expansion(id, &parameters);
+        apply_to_new_scene(
+            &mut headless,
+            &mut ids,
+            &tree,
+            &label,
+            path,
+            registered.parent_class,
+            json!({ "recipe": { id: parameters } }),
+            &expected,
+            true,
+            &context,
+        );
+    }
+    // The empty scenes the editor applies a recipe to.
+    for (path, root, label) in [
+        ("scenes/smoke.tscn", "Node2D", "smoke"),
+        ("scenes/animation.tscn", "Node", "animation"),
+    ] {
+        ok(
+            &headless.call_tool(
+                ids.next(),
+                "scene.create",
+                json!({ "path": path, "rootType": root,
+                        "idempotencyId": format!("empty-editor-{label}") }),
+            ),
+            &context,
+        );
+    }
     // The engine reads back what two recipes made: the grid's painted cells
     // and the polygons the navigation bake left in the region.
     let cell =
@@ -868,6 +1052,7 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
         floor["calls"][0]["value"]["value"].as_i64() > Some(0),
         "{context}: the baked region holds polygons: {floor}"
     );
+    readbacks(&mut headless, &mut ids, &tree, &context);
     let _ = headless.finish();
 
     // In the editor: apply one recipe to an open scene as one undoable action,
@@ -883,7 +1068,7 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
         .iter()
         .filter(|recipe| applies(recipe))
         .map(|recipe| recipe.path.as_str())
-        .chain(["scenes/smoke.tscn"]);
+        .chain(["scenes/smoke.tscn", "scenes/animation.tscn"]);
     for path in copied {
         let bytes = std::fs::read(tree.root.join(path)).expect("made file");
         let target = editing.root.join(path);
@@ -911,7 +1096,35 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
         &editor.context(),
     );
     let mark = editor.mark();
-    apply_in_editor(&mut session, &mut ids, &editing, &editor.context());
+    let machine = recipes
+        .iter()
+        .find_map(|recipe| match &recipe.made {
+            Made::Scene { call, .. } if recipe.id == "animation-state-machine" => {
+                Some(call["recipe"][&recipe.id].clone())
+            }
+            _ => None,
+        })
+        .expect("the page's state machine call");
+    let in_editor = [
+        InEditor {
+            path: "scenes/smoke.tscn",
+            id: "particles-2d",
+            parameters: json!({ "preset": "smoke" }),
+            node: "[node name=\"Smoke\" type=\"GPUParticles2D\" parent=\".\"",
+            label: "smoke",
+        },
+        // A scene without the AnimationPlayer the tree names.
+        InEditor {
+            path: "scenes/animation.tscn",
+            id: "animation-state-machine",
+            parameters: machine,
+            node: "[node name=\"AnimationTree\" type=\"AnimationTree\" parent=\".\"",
+            label: "animation",
+        },
+    ];
+    for recipe in &in_editor {
+        apply_in_editor(&mut session, &mut ids, &editing, recipe, &editor.context());
+    }
     for recipe in recipes.iter().filter(|recipe| applies(recipe)) {
         tune_in_editor(&mut session, &mut ids, &editing, recipe, &editor.context());
     }
@@ -924,25 +1137,147 @@ fn recipes_in(binary: &Path, recipes: &[Recipe]) {
     drop(editor);
 }
 
+/// What the engine reads back from the 3D floor, the state machines and the
+/// blend spaces the headless part made.
+fn readbacks(session: &mut StdioSession, ids: &mut Ids, tree: &ProjectTree, context: &str) {
+    let integer = |value: i64| json!({ "type": "integer", "value": value });
+    let name = |value: &str| json!({ "type": "string_name", "value": value });
+    let mesh = json!({ "property": "navigation_mesh" });
+    let floor_alone = variants()
+        .iter()
+        .position(|(id, _)| *id == "navigation-3d")
+        .map(|index| format!("variants/navigation-3d-{index}.tscn"))
+        .expect("the 3D floor alone is a variant");
+    for path in ["scenes/yard.tscn", floor_alone.as_str()] {
+        let count = read_values(
+            session,
+            ids,
+            path,
+            json!([{ "node": "Floor", "resource": mesh, "method": "get_polygon_count" }]),
+            context,
+        );
+        assert!(
+            count[0]["value"].as_i64() > Some(0),
+            "{context}: the baked 3D region in {path} holds polygons: {count:?}"
+        );
+    }
+    let root = json!({ "property": "tree_root" });
+    let on_root = |method: &str, arguments: Vec<Value>| {
+        json!({ "node": "AnimationTree", "resource": root, "method": method,
+                "arguments": arguments })
+    };
+    let machine = read_values(
+        session,
+        ids,
+        "scenes/character.tscn",
+        json!([
+            on_root("has_node", vec![name("idle")]),
+            on_root("has_node", vec![name("walk")]),
+            on_root("has_node", vec![name("run")]),
+            on_root("has_node", vec![name("Start")]),
+            on_root("get_transition_count", vec![]),
+        ]),
+        context,
+    );
+    let yes = json!({ "type": "bool", "value": true });
+    assert_eq!(
+        machine,
+        [yes.clone(), yes.clone(), yes.clone(), yes, integer(5)],
+        "{context}: three states and Start, four transitions and the one from Start"
+    );
+    let limits = read_values(
+        session,
+        ids,
+        "limits/state-machine.tscn",
+        json!([on_root("get_transition_count", vec![])]),
+        context,
+    );
+    let transitions = i64::try_from(recipes::MAX_RECIPE_TRANSITIONS).expect("a count") + 1;
+    assert_eq!(
+        limits,
+        [integer(transitions)],
+        "{context}: every transition and Start's"
+    );
+    for (path, points) in [
+        ("scenes/locomotion.tscn", 3),
+        (
+            "limits/blend-space.tscn",
+            i64::try_from(recipes::RECIPE_BLEND_POINTS.1).expect("a count"),
+        ),
+    ] {
+        let count = read_values(
+            session,
+            ids,
+            path,
+            json!([on_root("get_blend_point_count", vec![])]),
+            context,
+        );
+        assert_eq!(count, [integer(points)], "{context}: the points of {path}");
+    }
+    let path = "variants/blend-range.tscn";
+    let positions = read_values(
+        session,
+        ids,
+        path,
+        json!(
+            [0, 1, 2]
+                .iter()
+                .map(|index| on_root("get_blend_point_position", vec![integer(*index)]))
+                .collect::<Vec<_>>()
+        ),
+        context,
+    );
+    let float = |value: f64| json!({ "type": "float", "value": value });
+    assert_eq!(
+        positions,
+        [float(-10.0), float(-7.5), float(-5.0)],
+        "{context}: the points of an axis below zero"
+    );
+    let saved = std::fs::read_to_string(tree.root.join(path)).expect("the blend space");
+    let min = saved.find("min_space = -10.0");
+    let max = saved.find("max_space = -5.0");
+    assert!(
+        min.is_some() && max.is_some() && min < max,
+        "{context}: the file holds min_space before max_space, as Godot loads them:\n{saved}"
+    );
+}
+
+/// One recipe that `scene.recipe.apply` adds to an empty scene open in the
+/// editor.
+struct InEditor<'a> {
+    path: &'a str,
+    id: &'a str,
+    parameters: Value,
+    /// The line the saved scene writes for the node the recipe adds.
+    node: &'a str,
+    /// What the idempotency ids of its requests are named after.
+    label: &'a str,
+}
+
 /// `scene.recipe.apply` on a scene open in the editor: the editor applies the
 /// operations as one action named after the tool and saves the scene; one
 /// undo reverts all of it and one redo restores it.
-fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectTree, editor: &str) {
-    let path = "scenes/smoke.tscn";
+fn apply_in_editor(
+    session: &mut StdioSession,
+    ids: &mut Ids,
+    editing: &ProjectTree,
+    recipe: &InEditor<'_>,
+    editor: &str,
+) {
+    let (path, label) = (recipe.path, recipe.label);
     let context = format!("{editor}: {path}");
     ok(
         &session.call_tool(
             ids.next(),
             "editor.scene.open",
-            json!({ "path": path, "idempotencyId": "open-smoke" }),
+            json!({ "path": path, "idempotencyId": format!("open-{label}") }),
         ),
         &context,
     );
     let empty = digest_of(session, ids, &context);
     let file = editing.root.join(path);
     let before = std::fs::read(&file).expect("the empty scene");
-    let parameters = json!({ "preset": "smoke" });
-    let expected = expansion("particles-2d", &parameters);
+    let expected = expansion(recipe.id, &recipe.parameters);
     let applied = ok(
         &session.call_tool(
             ids.next(),
@@ -950,8 +1285,8 @@ fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectT
             json!({
                 "path": path,
                 "expectedSha256": sha256_hex(&before),
-                "recipe": { "particles-2d": parameters },
-                "idempotencyId": "editor-smoke",
+                "recipe": { recipe.id: recipe.parameters },
+                "idempotencyId": format!("editor-{label}"),
             }),
         ),
         &context,
@@ -966,7 +1301,6 @@ fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectT
         normalized(&expected),
         "{context}: {applied}"
     );
-    let node = "[node name=\"Smoke\" type=\"GPUParticles2D\" parent=\".\"";
     let saved = std::fs::read(&file).expect("the saved scene");
     assert_eq!(
         applied["after_sha256"],
@@ -974,7 +1308,7 @@ fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectT
         "{context}"
     );
     assert!(
-        String::from_utf8_lossy(&saved).contains(node),
+        String::from_utf8_lossy(&saved).contains(recipe.node),
         "{context}: the editor saved the recipe:\n{}",
         String::from_utf8_lossy(&saved)
     );
@@ -997,7 +1331,7 @@ fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectT
             &session.call_tool(
                 ids.next(),
                 tool,
-                json!({ "idempotencyId": format!("{tool}-smoke-{step}") }),
+                json!({ "idempotencyId": format!("{tool}-{label}-{step}") }),
             ),
             &context,
         );
@@ -1007,17 +1341,17 @@ fn apply_in_editor(session: &mut StdioSession, ids: &mut Ids, editing: &ProjectT
         &session.call_tool(
             ids.next(),
             "editor.scene.save",
-            json!({ "idempotencyId": "save-smoke" }),
+            json!({ "idempotencyId": format!("save-{label}") }),
         ),
         &context,
     );
     let saved = std::fs::read_to_string(&file).expect("the saved scene");
-    assert!(saved.contains(node), "{context}:\n{saved}");
+    assert!(saved.contains(recipe.node), "{context}:\n{saved}");
     ok(
         &session.call_tool(
             ids.next(),
             "editor.scene.open",
-            json!({ "path": path, "reload": true, "idempotencyId": "reload-smoke" }),
+            json!({ "path": path, "reload": true, "idempotencyId": format!("reload-{label}") }),
         ),
         &context,
     );

@@ -29,9 +29,10 @@ impl EngineCall for EngineOperation {
     fn input_schema(self) -> Map<String, Value> {
         match self {
             Self::ImportProject => ImportArguments::input_schema(),
-            Self::SceneCreate | Self::SceneBatch | Self::ResourceCreate | Self::ResourceBatch => {
+            Self::SceneCreate | Self::SceneBatch | Self::ResourceBatch => {
                 authored::input_schema(self.author_kind().expect("an authored operation"))
             }
+            Self::ResourceCreate => recipe::resource_create_schema(),
             Self::UpdateUid | Self::UpdateResource | Self::SaveScene => {
                 CanonicalArguments::input_schema()
             }
@@ -387,12 +388,14 @@ impl EngineRequest {
             }
             EngineOperation::SceneCreate
             | EngineOperation::SceneBatch
-            | EngineOperation::ResourceCreate
             | EngineOperation::ResourceBatch => authored::parse(
                 operation.author_kind().expect("an authored operation"),
                 arguments,
             )
             .map(Self::Author),
+            EngineOperation::ResourceCreate => {
+                recipe::parse_resource_create(arguments).map(Self::Author)
+            }
             EngineOperation::UpdateUid => parse_canonical(arguments).map(Self::UpdateUid),
             EngineOperation::UpdateResource => parse_canonical(arguments).map(Self::UpdateResource),
             EngineOperation::SaveScene => parse_canonical(arguments).map(Self::SaveScene),

@@ -425,16 +425,15 @@ fn shipped_binary_rejects_invalid_main_scene_before_engine_discovery() {
 
 /// The size of each profile's `tools/list`, as the compact JSON of its
 /// `tools` in bytes, measured with the shipped binary when the budget was
-/// last set: contract 0.7.0 with `runtime.frames.step`, the physics-frame
-/// `cadence`, `schedule` and `frame` fields and the corrections that state
-/// more of the checks' rules in the schemas, its schemas carrying only the
-/// definitions they refer to, and every tool that carries definitions
-/// defining once each field schema it repeats.
+/// last set: contract 0.8.0, whose `scene.recipe.apply` takes fifteen scene
+/// recipes and whose `resource.create` takes a resource recipe in `recipe`,
+/// its schemas carrying only the definitions they refer to, and every tool
+/// that carries definitions defining once each field schema it repeats.
 const MEASURED_TOOLS_BYTES: [(&str, usize); 4] = [
     ("core", 28_074),
-    ("editor", 316_228),
+    ("editor", 332_607),
     ("runtime", 193_118),
-    ("full", 477_070),
+    ("full", 493_449),
 ];
 
 /// Every profile's `tools/list` stays within 2% of its measured size. A client

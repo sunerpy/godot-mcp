@@ -4,7 +4,7 @@ description: "Read and change a Godot 4 project through a connected godot-mcp MC
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the editor or full profile. The editor tools also need the godot_mcp add-on running in an open Godot editor."
 metadata:
-  contract: "0.7.0"
+  contract: "0.8.0"
   profiles: "editor,full"
 ---
 
@@ -16,7 +16,7 @@ only the engine can do, and act in the open Godot editor through its add-on. Thi
 to combine them. The tool schemas in `tools/list` are the reference for every argument; where
 this skill and a schema disagree, the schema is right.
 
-This skill describes contract 0.7.0, the `contract` of its metadata. `health.get` reports the
+This skill describes contract 0.8.0, the `contract` of its metadata. `health.get` reports the
 contract the server speaks as `schema_version`. When the two differ, follow the schemas and the
 tool descriptions.
 
@@ -136,9 +136,10 @@ This edit renames the node `Player` and moves it, in the scene the editor has op
 godot-mcp knows common setups by name. Before building one of these by hand, use its recipe:
 
 - `prompts/list` holds one prompt per recipe, `godot-mcp.recipe.<name>`: `body-2d`, `body-3d`,
-  `light-3d`, `particles-2d`, `navigation-2d`, `audio-2d`, `shader-2d`, `hud`, `gridmap-3d`,
-  `joystick` and `theme`. A prompt's text holds the recipe's parameters, a call template and the
-  operations the recipe becomes.
+  `light-3d`, `particles-2d`, `particles-3d`, `navigation-2d`, `navigation-3d`, `audio-2d`,
+  `audio-3d`, `shader-2d`, `hud`, `gridmap-3d`, `joystick`, `animation-state-machine`,
+  `blend-space-1d`, `theme` and `material-3d`. A prompt's text holds the recipe's parameters, a
+  call template and the operations the recipe becomes.
 - `scene.recipe.apply` adds a scene recipe below `parent` in an existing scene, against its
   SHA-256. `recipe` is an object with one key, the recipe's name, holding its parameters, and
   `{}` takes every default. The tool's schema lists every parameter with its range; the answer
@@ -154,8 +155,18 @@ godot-mcp knows common setups by name. Before building one of these by hand, use
   `value_not_kept` or `unknown_property`, with nothing written. For a 2D level, make the HUD its
   own scene with `scene.create` and `rootType` `Control`, then `instance_scene` it below a
   `CanvasLayer` of the level.
-- `theme` is a resource, not nodes: `resource.create` with `class` `Theme` makes it, and
-  `resource.batch.apply` changes it.
+- `theme` and `material-3d` make a resource, not nodes: `resource.create` takes them in its
+  `recipe` field, with a new `.tres` `path` and neither `class` nor `operations`, and
+  `resource.batch.apply` changes the resource later. A `MeshInstance3D` takes the material in
+  `material_override` as a `resource` value naming its path.
+- `animation-state-machine` and `blend-space-1d` add an `AnimationTree` and do not read the
+  scene: `anim_player` must reach an `AnimationPlayer` that has the animations the states or
+  points name. Check them first with `editor.scene.read` calling `get_animation_list` on the
+  player, with the scene open in the editor. The tool refuses a call that breaks a rule across
+  values the schema cannot state: duplicate state names, a transition that leaves or enters an
+  undeclared state or enters the state it leaves, two transitions between the same states the
+  same way round, a `start` that is not a state, `min_space` not below `max_space`, a point off
+  the axis.
 - `joystick` builds a `VirtualJoystick`, which Godot 4.4.1, 4.5.1 and 4.6.1 lack; it applies on
   Godot 4.7.1 and 4.7.2.
 

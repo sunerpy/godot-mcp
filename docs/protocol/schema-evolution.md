@@ -344,6 +344,52 @@ it is used. Measured the same way, `tools/list` shrinks from 316,607 to 316,228 
 `editor`, from 198,347 to 193,118 in `runtime` and from 482,678 to 477,070 in `full`; `core`
 stays at 28,074.
 
+### Contract 0.8.0
+
+Contract 0.8.0 adds six recipes and the field that makes a resource from a recipe; it adds no
+tool. The 0.7.0 manifests stay frozen in `schemas/domain/profiles/v0.7/`.
+
+* `scene.recipe.apply` takes five more recipes in its `recipe`: `particles-3d`,
+  `navigation-3d`, `audio-3d`, `animation-state-machine` and `blend-space-1d`. See
+  [Recipes](../operator/recipes.md).
+* `resource.create` takes the optional `recipe`, a resource recipe named the way
+  `scene.recipe.apply` names one: `theme`, or the new `material-3d`. The recipe names the
+  resource's class and makes its operations, so a request with `recipe` takes neither `class`
+  nor `operations`. No tool schema combines shapes at its top level, so the descriptions of the
+  three fields state the rule, and the check refuses `class` or `operations` beside a `recipe`.
+  The answer adds `recipe`, the name and every parameter value used, and `operations`, as the
+  answer of `scene.recipe.apply` does. The journal, the idempotency record and the transaction
+  still name the tool `resource.create`.
+* `scene.recipe.apply` refuses a resource recipe and says to send it to `resource.create` in
+  `recipe`; `resource.create` refuses a scene recipe in `recipe` and names
+  `scene.recipe.apply`.
+* Five rules across the values of the two AnimationTree recipes cannot be stated in a schema,
+  and the check alone refuses a request that breaks one: the states of
+  `animation-state-machine` have different names; each transition leaves one of them and
+  enters another or `End`, and no two join the same two states the same way round; `start` is
+  one of them; the `min_space` of `blend-space-1d` is below its `max_space`, an omitted end
+  being Godot's -1 or 1; and each blend point lies from `min_space` to `max_space`, ends
+  included. The description of each parameter involved states its rule. A client that checks
+  its arguments against `tools/list` can send such a request, and the answer is
+  `invalid_input`.
+* `min_space` is the first field of a tool schema with `exclusiveMaximum`: it must be below 1,
+  because Godot loads it before `max_space` and turns 1 or more into 0.
+* `prompts/list` adds a prompt for each new recipe in the `editor` and `full` profiles, 17
+  recipe prompts beside `godot-mcp.profile-guide`. The prompts of `animation-state-machine`,
+  `blend-space-1d` and `material-3d`, whose defaults alone make no request, fill their call
+  with example values and say so.
+
+All of them are additions: a 0.7.0 client loses nothing, and a request it could send means what
+it meant. A 0.7.0 server refuses the five recipes and a `resource.create` `recipe`, as it
+refuses every unknown recipe and field.
+
+Measured as
+[How much each profile lists](../operator/profiles-and-outcomes.md#how-much-each-profile-lists)
+describes, `tools/list` grows from 316,228 to 332,607 bytes in the `editor` profile and
+from 477,070 to 493,449 in `full`, all of it in two tools: `scene.recipe.apply` grows from
+27,348 to 40,250 bytes and `resource.create` from 19,481 to 22,958. `core` and `runtime`,
+which list neither tool, stay at 28,074 and 193,118.
+
 ## Bridge protocol
 
 The major component of the sender's protocol version decides compatibility, and an

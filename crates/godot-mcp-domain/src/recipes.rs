@@ -5,8 +5,9 @@
 //! `.` is that parent. The operations are exactly those `scene.batch.apply`
 //! accepts, so `scene.recipe.apply` applies them through the same journaled
 //! batch, and the same array works with `editor.scene.edit`, `scene.create` and
-//! `project.batch.apply`. The `theme` recipe makes a resource instead, for
-//! `resource.create`.
+//! `project.batch.apply`. The `theme` and `material-3d` recipes make a resource
+//! instead: `resource.create` takes them in its `recipe` field, and their
+//! operations work with `resource.batch.apply`.
 //!
 //! Parameters are plain JSON values. A *variant* parameter (a choice or a
 //! boolean) has a default; a *property* parameter has none, and when it is
@@ -14,12 +15,24 @@
 //! parameter that does not apply to the chosen variant is refused, never
 //! ignored.
 //!
-//! This module is the one source of the recipes: the tool's input schema, its
-//! parser, the MCP prompts and the recipes page are all derived from
-//! [`RECIPES`]. Every limit below is stated the same way in the schema and in
-//! the parser, so the two give the same verdict on every request.
+//! This module is the one source of the recipes: the tools' input schemas,
+//! their parsers, the MCP prompts and the recipes page are all derived from
+//! [`RECIPES`]. Every limit on one value is stated the same way in the schema
+//! and in the parser, so the two give the same verdict on it. A few rules
+//! across values cannot be stated in a schema; the parser alone refuses a
+//! request that breaks one, and the description of the parameters involved
+//! states it:
+//!
+//! 1. no two `states` of `animation-state-machine` share a name;
+//! 2. each of its `transitions` leaves a state of `states` and enters another
+//!    one or End, and no two join the same two states the same way round;
+//! 3. its `start` is a state of `states`;
+//! 4. the `min_space` of `blend-space-1d` is below its `max_space`, an omitted
+//!    one being Godot's -1 or 1;
+//! 5. each of its `points` lies from `min_space` to `max_space`, ends
+//!    included.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde_json::{Map, Value, json};
@@ -50,6 +63,31 @@ pub const MAX_RECIPE_CELLS: usize = crate::editing_methods::MAX_REPEATED_CALLS;
 pub const MAX_RECIPE_UNIFORMS: usize = 64;
 /// Largest collision or navigation layer bit field.
 const MAX_LAYERS: i64 = 4_294_967_295;
+/// Longest node path a recipe parameter takes, in characters.
+const MAX_NODE_PATH_CHARS: usize = 256;
+/// Longest animation name, `library/name` included, in characters.
+const MAX_ANIMATION_CHARS: usize = 256;
+/// Longest transition condition name, in characters.
+const MAX_CONDITION_CHARS: usize = 64;
+/// Most states one state machine recipe adds.
+pub const MAX_RECIPE_STATES: usize = 32;
+/// Most transitions one state machine recipe adds, beside the start one.
+pub const MAX_RECIPE_TRANSITIONS: usize = 128;
+/// Fewest and most points one blend space recipe adds.
+pub const RECIPE_BLEND_POINTS: (usize, usize) = (2, 16);
+/// The farthest a blend space's axis reaches either way.
+const MAX_BLEND_SPACE: f64 = 100_000.0;
+/// The longest a transition's cross-fade lasts, in seconds.
+const MAX_XFADE_TIME: f64 = 3_600.0;
+/// The states every state machine already holds, which no recipe state may
+/// be named.
+const MACHINE_STATES: [&str; 2] = ["Start", "End"];
+/// A transition's switch modes, in `AnimationNodeStateMachineTransition`'s
+/// order.
+const SWITCH_MODES: &[&str] = &["immediate", "sync", "at_end"];
+/// A transition's advance modes, in `AnimationNodeStateMachineTransition`'s
+/// order.
+const ADVANCE_MODES: &[&str] = &["disabled", "enabled", "auto"];
 /// The largest whole number a JSON number holds exactly.
 const MAX_EXACT_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -78,11 +116,13 @@ pub enum RecipeTarget {
 pub enum ParameterKind {
     /// A whole number in `minimum..=maximum`.
     Integer { minimum: i64, maximum: i64 },
-    /// A number in the range; `exclusive_minimum` excludes `minimum` itself.
+    /// A number in the range; `exclusive_minimum` excludes `minimum` itself
+    /// and `exclusive_maximum` excludes `maximum`.
     Number {
         minimum: f64,
         maximum: f64,
         exclusive_minimum: bool,
+        exclusive_maximum: bool,
     },
     /// `true` or `false`.
     Boolean,
@@ -90,6 +130,19 @@ pub enum ParameterKind {
     Text { min_chars: usize, max_chars: usize },
     /// A node name: 1 to 40 characters, none of `. : @ / " %` or a control.
     NodeName,
+    /// A state of a state machine: a node name other than `Start` and `End`,
+    /// which every state machine holds already.
+    StateName,
+    /// A node path from the recipe's main node, such as `../AnimationPlayer`:
+    /// 1 to 256 characters of `/`-separated segments, each `..` or a segment
+    /// a `parent` path takes.
+    NodePath,
+    /// 1 to 32 `{ "name", "animation" }` states of a state machine.
+    States,
+    /// 1 to 128 transitions between the states of a state machine.
+    Transitions,
+    /// 2 to 16 `{ "animation", "position" }` points of a blend space.
+    BlendPoints,
     /// A `res://` path to a project resource, loaded as `resource_type`, whose
     /// last segment ends in `extension` when one is given.
     ResourcePath {
@@ -134,6 +187,8 @@ pub enum Default {
     Text(&'static str),
     /// A two-component vector.
     Vector2(f64, f64),
+    /// A three-component vector.
+    Vector3(f64, f64, f64),
     /// A value derived from other parameters, which the recipe fills in and
     /// the answer reports; the text says how, for the schema and the page.
     Derived(&'static str),
@@ -146,6 +201,7 @@ impl Default {
             Self::Choice(text) | Self::Text(text) => Some(Value::String(text.to_owned())),
             Self::Boolean(flag) => Some(Value::Bool(flag)),
             Self::Vector2(x, y) => Some(json!({ "x": x, "y": y })),
+            Self::Vector3(x, y, z) => Some(json!({ "x": x, "y": y, "z": z })),
             Self::Derived(_) => None,
         }
     }
@@ -158,6 +214,7 @@ impl Default {
             Self::Text(text) => format!("\"{text}\""),
             Self::Boolean(flag) => flag.to_string(),
             Self::Vector2(x, y) => format!("{{x: {x}, y: {y}}}"),
+            Self::Vector3(x, y, z) => format!("{{x: {x}, y: {y}, z: {z}}}"),
             Self::Derived(how) => how.to_owned(),
         }
     }
@@ -221,19 +278,36 @@ impl Parameter {
                 minimum,
                 maximum,
                 exclusive_minimum,
-            } => {
-                if exclusive_minimum {
-                    format!("number above {minimum}, at most {maximum}")
-                } else {
-                    format!("number, {minimum} to {maximum}")
-                }
-            }
+                exclusive_maximum,
+            } => match (exclusive_minimum, exclusive_maximum) {
+                (false, false) => format!("number, {minimum} to {maximum}"),
+                (true, false) => format!("number above {minimum}, at most {maximum}"),
+                (false, true) => format!("number from {minimum}, below {maximum}"),
+                (true, true) => format!("number above {minimum}, below {maximum}"),
+            },
             ParameterKind::Boolean => "boolean".to_owned(),
             ParameterKind::Text {
                 min_chars,
                 max_chars,
             } => format!("string, {min_chars} to {max_chars} characters"),
             ParameterKind::NodeName => format!("node name, 1 to {MAX_NAME_CHARS} characters"),
+            ParameterKind::StateName => {
+                format!("state name, 1 to {MAX_NAME_CHARS} characters, not Start or End")
+            }
+            ParameterKind::NodePath => {
+                format!("node path, 1 to {MAX_NODE_PATH_CHARS} characters")
+            }
+            ParameterKind::States => {
+                format!("1 to {MAX_RECIPE_STATES} {{name, animation}} states")
+            }
+            ParameterKind::Transitions => format!(
+                "1 to {MAX_RECIPE_TRANSITIONS} {{from, to, switch_mode, advance_mode, \
+                 advance_condition, xfade_time}} transitions"
+            ),
+            ParameterKind::BlendPoints => format!(
+                "{} to {} {{animation, position}} points",
+                RECIPE_BLEND_POINTS.0, RECIPE_BLEND_POINTS.1
+            ),
             ParameterKind::ResourcePath {
                 resource_type,
                 extension,
@@ -388,6 +462,10 @@ pub struct Recipe {
     /// Checks across parameters the table cannot state.
     check: fn(&Values) -> Result<(), String>,
     expand: fn(&Values, &Placement) -> Vec<Value>,
+    /// The parameters a request needs beyond the defaults, for the prompt's
+    /// call template: the states of a state machine, the points of a blend
+    /// space, a property of a material. Empty for the other recipes.
+    example: fn() -> Map<String, Value>,
 }
 
 impl fmt::Debug for Recipe {
@@ -451,6 +529,14 @@ impl fmt::Display for RecipeError {
 impl std::error::Error for RecipeError {}
 
 impl Recipe {
+    /// The parameters a request needs beyond the defaults, as the prompt's
+    /// call template and the recipes page show them; empty when the defaults
+    /// alone make a request.
+    #[must_use]
+    pub fn example(&self) -> Map<String, Value> {
+        (self.example)()
+    }
+
     /// Whether the recipe has a primary node, named by its `name` parameter.
     #[must_use]
     pub fn takes_name(&self) -> bool {
@@ -629,6 +715,9 @@ impl Recipe {
         if !required.is_empty() {
             schema["required"] = json!(required);
         }
+        if self.id == "material-3d" {
+            schema["minProperties"] = json!(1);
+        }
         let mut conditions = applicability_schema(self);
         if self.id == "light-3d" {
             conditions.push(json!({
@@ -709,6 +798,33 @@ pub fn recipe_schema() -> Value {
     })
 }
 
+/// The `recipe` property of `resource.create`: one resource recipe, keyed by
+/// its name, with its parameters. It names the resource's class and makes its
+/// operations, so a request that takes it takes neither `class` nor
+/// `operations`.
+#[must_use]
+pub fn resource_recipe_schema() -> Value {
+    let mut properties = Map::new();
+    for recipe in resource_recipes() {
+        properties.insert(recipe.id.to_owned(), recipe.parameters_schema());
+    }
+    let names: Vec<&str> = resource_recipes().map(|recipe| recipe.id).collect();
+    json!({
+        "type": "object",
+        "description": format!(
+            "One resource recipe, keyed by its name, with its parameters: {}. For example \
+             {{\"material-3d\": {{\"roughness\": 0.7}}}}. The recipe names the resource's class \
+             and makes its operations, so a request with `recipe` takes neither `class` nor \
+             `operations`.",
+            names.join(", ")
+        ),
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": false,
+        "properties": properties,
+    })
+}
+
 /// The `parent` property of `scene.recipe.apply`.
 #[must_use]
 pub fn parent_schema() -> Value {
@@ -727,6 +843,73 @@ pub fn parent_schema() -> Value {
 
 fn node_name_pattern() -> String {
     format!("^[^.:@/\"%{CONTROL}]+$")
+}
+
+/// `schema` with `description`.
+fn described(mut schema: Value, description: &str) -> Value {
+    schema["description"] = Value::String(description.to_owned());
+    schema
+}
+
+fn number_schema(
+    minimum: f64,
+    maximum: f64,
+    exclusive_minimum: bool,
+    exclusive_maximum: bool,
+) -> Value {
+    let mut schema = json!({ "type": "number" });
+    if exclusive_minimum {
+        schema["exclusiveMinimum"] = json!(minimum);
+    } else {
+        schema["minimum"] = json!(minimum);
+    }
+    if exclusive_maximum {
+        schema["exclusiveMaximum"] = json!(maximum);
+    } else {
+        schema["maximum"] = json!(maximum);
+    }
+    schema
+}
+
+/// A node name, but none of `taken`, the states a machine holds already.
+fn state_name_schema(taken: &[&str]) -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_NAME_CHARS,
+        "pattern": node_name_pattern(),
+        "not": { "enum": taken },
+    })
+}
+
+/// One segment of a node path a parameter takes: `..`, or a segment a
+/// `parent` path takes.
+fn node_path_segment() -> String {
+    format!(
+        "(?:\\.\\.|[^/:.{CONTROL}][^/:{CONTROL}]*|\\.[^/:.{CONTROL}][^/:{CONTROL}]*|\\.\\.[^/:{CONTROL}]+)"
+    )
+}
+
+fn node_path_schema() -> Value {
+    let segment = node_path_segment();
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_NODE_PATH_CHARS,
+        "pattern": format!("^{segment}(?:/{segment})*$"),
+    })
+}
+
+/// An animation name, `name` or `library/name`: neither part empty, and none
+/// of `/ : , [` or a control in either, as Godot refuses in both.
+fn animation_schema() -> Value {
+    let part = format!("[^/:,\\[{CONTROL}]+");
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_ANIMATION_CHARS,
+        "pattern": format!("^(?:{part}/)?{part}$"),
+    })
 }
 
 /// A normalized `res://` path, and with an extension, one whose last segment
@@ -828,15 +1011,8 @@ fn parameter_schema(parameter: &Parameter) -> Value {
             minimum,
             maximum,
             exclusive_minimum,
-        } => {
-            let mut schema = json!({ "type": "number", "maximum": maximum });
-            if exclusive_minimum {
-                schema["exclusiveMinimum"] = json!(minimum);
-            } else {
-                schema["minimum"] = json!(minimum);
-            }
-            schema
-        }
+            exclusive_maximum,
+        } => number_schema(minimum, maximum, exclusive_minimum, exclusive_maximum),
         ParameterKind::Boolean => json!({ "type": "boolean" }),
         ParameterKind::Text {
             min_chars,
@@ -847,6 +1023,99 @@ fn parameter_schema(parameter: &Parameter) -> Value {
             "minLength": 1,
             "maxLength": MAX_NAME_CHARS,
             "pattern": node_name_pattern(),
+        }),
+        ParameterKind::StateName => state_name_schema(&MACHINE_STATES),
+        ParameterKind::NodePath => node_path_schema(),
+        ParameterKind::States => json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_RECIPE_STATES,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "name": described(
+                        state_name_schema(&MACHINE_STATES),
+                        "The state's name in the machine.",
+                    ),
+                    "animation": described(
+                        animation_schema(),
+                        "The animation the state plays: `name`, or `library/name` for one \
+                         of a named library.",
+                    ),
+                },
+                "required": ["name", "animation"],
+            },
+        }),
+        ParameterKind::Transitions => json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_RECIPE_TRANSITIONS,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "from": described(
+                        state_name_schema(&MACHINE_STATES),
+                        "The state the transition leaves.",
+                    ),
+                    "to": described(
+                        state_name_schema(&MACHINE_STATES[..1]),
+                        "The state the transition enters, or End.",
+                    ),
+                    "switch_mode": {
+                        "type": "string",
+                        "enum": SWITCH_MODES,
+                        "description": "When the switch happens: at once, in sync with the \
+                                        playing animation, or at its end. Omitted: Godot's \
+                                        default.",
+                    },
+                    "advance_mode": {
+                        "type": "string",
+                        "enum": ADVANCE_MODES,
+                        "description": "Whether the transition is taken: never, when \
+                                        travelled, or by itself. Omitted: Godot's default.",
+                    },
+                    "advance_condition": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_CONDITION_CHARS,
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "description": "The condition parameter that takes the transition by \
+                                        itself. Omitted: Godot's default.",
+                    },
+                    "xfade_time": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": MAX_XFADE_TIME,
+                        "description": "The cross-fade, in seconds. Omitted: Godot's default.",
+                    },
+                },
+                "required": ["from", "to"],
+            },
+        }),
+        ParameterKind::BlendPoints => json!({
+            "type": "array",
+            "minItems": RECIPE_BLEND_POINTS.0,
+            "maxItems": RECIPE_BLEND_POINTS.1,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "animation": described(
+                        animation_schema(),
+                        "The animation at the point: `name`, or `library/name` for one of a \
+                         named library.",
+                    ),
+                    "position": {
+                        "type": "number",
+                        "minimum": -MAX_BLEND_SPACE,
+                        "maximum": MAX_BLEND_SPACE,
+                        "description": "The point's position on the axis.",
+                    },
+                },
+                "required": ["animation", "position"],
+            },
         }),
         ParameterKind::ResourcePath { extension, .. } => json!({
             "type": "string",
@@ -937,6 +1206,7 @@ fn normalize(parameter: &Parameter, value: &Value) -> Result<Value, String> {
             minimum,
             maximum,
             exclusive_minimum,
+            exclusive_maximum,
         } => {
             let number = finite(value).ok_or("must be a number")?;
             let low = if exclusive_minimum {
@@ -944,14 +1214,24 @@ fn normalize(parameter: &Parameter, value: &Value) -> Result<Value, String> {
             } else {
                 number < minimum
             };
-            if low || number > maximum {
-                let bound = if exclusive_minimum {
+            let high = if exclusive_maximum {
+                number >= maximum
+            } else {
+                number > maximum
+            };
+            if low || high {
+                let lower = if exclusive_minimum {
                     "above"
                 } else {
                     "at least"
                 };
+                let upper = if exclusive_maximum {
+                    "below"
+                } else {
+                    "at most"
+                };
                 return Err(format!(
-                    "must be {bound} {minimum} and at most {maximum}, not {number}"
+                    "must be {lower} {minimum} and {upper} {maximum}, not {number}"
                 ));
             }
             Ok(json!(number))
@@ -978,6 +1258,15 @@ fn normalize(parameter: &Parameter, value: &Value) -> Result<Value, String> {
             validate_name(name)?;
             Ok(Value::String(name.to_owned()))
         }
+        ParameterKind::StateName => state_name(value, &MACHINE_STATES).map(Value::String),
+        ParameterKind::NodePath => {
+            let path = value.as_str().ok_or("must be a node path")?;
+            validate_node_path(path)?;
+            Ok(Value::String(path.to_owned()))
+        }
+        ParameterKind::States => states(value),
+        ParameterKind::Transitions => transitions(value),
+        ParameterKind::BlendPoints => blend_points(value),
         ParameterKind::ResourcePath { extension, .. } => {
             let path = value.as_str().ok_or("must be a res:// path")?;
             validate_resource_path(path)?;
@@ -1196,6 +1485,205 @@ fn uniform_value(tagged: &Value) -> Result<Value, String> {
     Ok(json!({ "type": kind, "value": normalized }))
 }
 
+/// A state name: a node name, none of `taken`.
+fn state_name(value: &Value, taken: &[&str]) -> Result<String, String> {
+    let name = value.as_str().ok_or("must be a string")?;
+    validate_name(name)?;
+    if taken.contains(&name) {
+        return Err(format!(
+            "must not be {name}: every state machine holds {} already",
+            taken.join(" and ")
+        ));
+    }
+    Ok(name.to_owned())
+}
+
+fn validate_node_path(path: &str) -> Result<(), String> {
+    let characters = path.chars().count();
+    if characters == 0 || characters > MAX_NODE_PATH_CHARS {
+        return Err(format!(
+            "must be a node path of 1 to {MAX_NODE_PATH_CHARS} characters"
+        ));
+    }
+    let well_formed = path.split('/').all(|segment| {
+        segment == ".."
+            || (!segment.is_empty() && segment != "." && segment.chars().all(segment_character))
+    });
+    if well_formed {
+        Ok(())
+    } else {
+        Err(format!(
+            "{path:?} is not a node path from the recipe's node: segments are separated by `/`, \
+             each is `..` or a node name, and it does not start at the root"
+        ))
+    }
+}
+
+/// An animation name, `name` or `library/name`.
+fn animation(value: &Value) -> Result<String, String> {
+    let name = value.as_str().ok_or("must be an animation name")?;
+    let characters = name.chars().count();
+    if characters == 0 || characters > MAX_ANIMATION_CHARS {
+        return Err(format!(
+            "must be an animation name of 1 to {MAX_ANIMATION_CHARS} characters"
+        ));
+    }
+    let parts: Vec<&str> = name.split('/').collect();
+    let well_formed = parts.len() <= 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.chars().all(|character| {
+                    !matches!(character, ':' | ',' | '[') && !character.is_control()
+                })
+        });
+    if well_formed {
+        Ok(name.to_owned())
+    } else {
+        Err(format!(
+            "{name:?} is not an animation name: `name` or `library/name`, neither part empty \
+             and neither holding `/ : , [` or a control character"
+        ))
+    }
+}
+
+/// The items of an array parameter, between `fewest` and `most` of them.
+fn listed<'a>(
+    value: &'a Value,
+    fewest: usize,
+    most: usize,
+    what: &str,
+) -> Result<&'a [Value], String> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| format!("must be an array of {what}"))?;
+    if items.len() < fewest || items.len() > most {
+        return Err(format!("must hold {fewest} to {most} {what}"));
+    }
+    Ok(items)
+}
+
+/// The required string `key` of an item, as `check` reads it.
+fn item_field<T>(
+    object: &Map<String, Value>,
+    key: &str,
+    what: &str,
+    check: impl FnOnce(&Value) -> Result<T, String>,
+) -> Result<T, String> {
+    let value = object
+        .get(key)
+        .ok_or_else(|| format!("{what} needs `{key}`"))?;
+    check(value).map_err(|reason| format!("{what} `{key}` {reason}"))
+}
+
+fn states(value: &Value) -> Result<Value, String> {
+    let items = listed(value, 1, MAX_RECIPE_STATES, "states")?;
+    let mut normalized = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let what = format!("state {index}");
+        let object = object_with(item, &["name", "animation"])
+            .map_err(|reason| format!("{what} {reason}"))?;
+        let name = item_field(object, "name", &what, |name| {
+            state_name(name, &MACHINE_STATES)
+        })?;
+        let animation = item_field(object, "animation", &what, animation)?;
+        normalized.push(json!({ "name": name, "animation": animation }));
+    }
+    Ok(Value::Array(normalized))
+}
+
+fn transitions(value: &Value) -> Result<Value, String> {
+    let items = listed(value, 1, MAX_RECIPE_TRANSITIONS, "transitions")?;
+    let mut normalized = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let what = format!("transition {index}");
+        let object = object_with(
+            item,
+            &[
+                "from",
+                "to",
+                "switch_mode",
+                "advance_mode",
+                "advance_condition",
+                "xfade_time",
+            ],
+        )
+        .map_err(|reason| format!("{what} {reason}"))?;
+        let mut transition = Map::new();
+        let from = item_field(object, "from", &what, |name| {
+            state_name(name, &MACHINE_STATES)
+        })?;
+        let to = item_field(object, "to", &what, |name| {
+            state_name(name, &MACHINE_STATES[..1])
+        })?;
+        transition.insert("from".to_owned(), Value::String(from));
+        transition.insert("to".to_owned(), Value::String(to));
+        for (key, modes) in [
+            ("switch_mode", SWITCH_MODES),
+            ("advance_mode", ADVANCE_MODES),
+        ] {
+            if let Some(mode) = object.get(key) {
+                let mode = mode
+                    .as_str()
+                    .filter(|mode| modes.contains(mode))
+                    .ok_or_else(|| format!("{what} `{key}` must be one of {}", modes.join(", ")))?;
+                transition.insert(key.to_owned(), Value::String(mode.to_owned()));
+            }
+        }
+        if let Some(condition) = object.get("advance_condition") {
+            let condition = condition
+                .as_str()
+                .filter(|condition| {
+                    condition.chars().count() <= MAX_CONDITION_CHARS && is_identifier(condition)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "{what} `advance_condition` must be an identifier of 1 to \
+                         {MAX_CONDITION_CHARS} characters"
+                    )
+                })?;
+            transition.insert(
+                "advance_condition".to_owned(),
+                Value::String(condition.to_owned()),
+            );
+        }
+        if let Some(fade) = object.get("xfade_time") {
+            let fade = finite(fade)
+                .filter(|fade| (0.0..=MAX_XFADE_TIME).contains(fade))
+                .ok_or_else(|| {
+                    format!("{what} `xfade_time` must be a number from 0 to {MAX_XFADE_TIME}")
+                })?;
+            transition.insert("xfade_time".to_owned(), json!(fade));
+        }
+        normalized.push(Value::Object(transition));
+    }
+    Ok(Value::Array(normalized))
+}
+
+fn blend_points(value: &Value) -> Result<Value, String> {
+    let items = listed(
+        value,
+        RECIPE_BLEND_POINTS.0,
+        RECIPE_BLEND_POINTS.1,
+        "points",
+    )?;
+    let mut normalized = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let what = format!("point {index}");
+        let object = object_with(item, &["animation", "position"])
+            .map_err(|reason| format!("{what} {reason}"))?;
+        let animation = item_field(object, "animation", &what, animation)?;
+        let position = item_field(object, "position", &what, |position| {
+            finite(position)
+                .filter(|position| (-MAX_BLEND_SPACE..=MAX_BLEND_SPACE).contains(position))
+                .ok_or_else(|| {
+                    format!("must be a number from -{MAX_BLEND_SPACE} to {MAX_BLEND_SPACE}")
+                })
+        })?;
+        normalized.push(json!({ "animation": animation, "position": position }));
+    }
+    Ok(Value::Array(normalized))
+}
+
 fn validate_resource_path(path: &str) -> Result<(), String> {
     if path.chars().count() > MAX_RESOURCE_PATH_CHARS {
         return Err(format!(
@@ -1316,6 +1804,54 @@ fn call(node: &str, method: &str, arguments: Vec<Value>) -> Value {
     json!({ "op": "call_method", "node": node, "method": method, "arguments": arguments })
 }
 
+fn node_path(path: &str) -> Value {
+    json!({ "type": "node_path", "value": path })
+}
+
+/// A new embedded resource of `class` as a call argument, with `properties`
+/// when there are any.
+fn new_resource(class: &str, properties: Map<String, Value>) -> Value {
+    let mut value = json!({ "class": class });
+    if !properties.is_empty() {
+        value["properties"] = Value::Object(properties);
+    }
+    json!({ "type": "new_resource", "value": value })
+}
+
+/// `method` called once per argument list on the resource `property` holds.
+fn on_resource(node: &str, property: &str, method: &str, repeat: Vec<Value>) -> Value {
+    json!({
+        "op": "call_method", "node": node, "resource": { "property": property },
+        "method": method, "repeat": repeat
+    })
+}
+
+/// A property of the resource a resource recipe makes.
+fn own(property: &str, value: Value) -> Value {
+    json!({ "op": "set_property", "property": property, "value": value })
+}
+
+/// The items of an array parameter, empty when it was left out.
+fn items<'a>(values: &'a Values, name: &str) -> &'a [Value] {
+    values
+        .get(name)
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+/// The string `key` of a normalized item.
+fn text_of<'a>(item: &'a Value, key: &str) -> &'a str {
+    item[key].as_str().unwrap_or_default()
+}
+
+/// The JSON object `value` holds, for an example.
+fn object_of(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
 fn call_resource(node: &str, property: &str, method: &str, arguments: Vec<Value>) -> Value {
     json!({
         "op": "call_method", "node": node, "resource": { "property": property },
@@ -1348,6 +1884,7 @@ const fn number(minimum: f64, maximum: f64) -> ParameterKind {
         minimum,
         maximum,
         exclusive_minimum: false,
+        exclusive_maximum: false,
     }
 }
 
@@ -1356,6 +1893,7 @@ const fn positive(maximum: f64) -> ParameterKind {
         minimum: 0.0,
         maximum,
         exclusive_minimum: true,
+        exclusive_maximum: false,
     }
 }
 
@@ -1807,6 +2345,7 @@ const LIGHT_3D_PARAMETERS: &[Parameter] = &[
             minimum: 1.0,
             maximum: 179.0,
             exclusive_minimum: false,
+            exclusive_maximum: false,
         },
         "The camera's vertical field of view, in degrees.",
     )
@@ -1952,8 +2491,11 @@ struct Preset {
     /// The material's properties, without the colour ramp.
     material: fn(&Values) -> Map<String, Value>,
     /// A colour ramp as offsets and colours, or `None` for a flat colour.
-    ramp: Option<(&'static [f64], &'static [[f64; 4]])>,
+    ramp: Option<Ramp>,
 }
+
+/// A colour ramp's offsets and colours.
+type Ramp = (&'static [f64], &'static [[f64; 4]]);
 
 fn preset_name(values: &Values) -> &'static str {
     match values.choice("preset") {
@@ -2143,37 +2685,320 @@ fn particles_2d(values: &Values, at: &Placement) -> Vec<Value> {
         "ParticleProcessMaterial",
         (chosen.material)(values),
     ));
-    if let Some((offsets, colors)) = chosen.ramp {
-        operations.push(subresource(
+    if let Some(ramp) = chosen.ramp {
+        color_ramp(&emitter, ramp, &mut operations);
+    }
+    operations
+}
+
+/// A colour ramp on the emitter's process material: a GradientTexture1D
+/// holding a Gradient of these offsets and colours.
+fn color_ramp(emitter: &str, (offsets, colors): Ramp, operations: &mut Vec<Value>) {
+    operations.push(subresource(
+        emitter,
+        "process_material:color_ramp",
+        "GradientTexture1D",
+        Map::new(),
+    ));
+    operations.push(subresource(
+        emitter,
+        "process_material:color_ramp:gradient",
+        "Gradient",
+        properties([
+            (
+                "offsets",
+                json!({ "type": "packed_float32_array", "value": offsets }),
+            ),
+            (
+                "colors",
+                json!({
+                    "type": "packed_color_array",
+                    "value": colors
+                        .iter()
+                        .map(|[red, green, blue, alpha]| json!({
+                            "red": red, "green": green, "blue": blue, "alpha": alpha
+                        }))
+                        .collect::<Vec<_>>()
+                }),
+            ),
+        ]),
+    ));
+}
+
+// --- particles-3d ------------------------------------------------------------
+
+const PARTICLES_3D_PARAMETERS: &[Parameter] = &[
+    Parameter::knob("name", ParameterKind::NodeName, "The emitter's name.").defaulting(
+        Default::Derived("Fire, Smoke, Sparks, Rain, Snow or Explosion, by `preset`"),
+    ),
+    Parameter::knob(
+        "preset",
+        ParameterKind::Choice(PARTICLE_PRESETS),
+        "The look: fire, smoke, sparks, rain, snow or a one-shot explosion.",
+    )
+    .defaulting(Default::Choice("fire")),
+    Parameter::knob(
+        "amount",
+        ParameterKind::Integer {
+            minimum: 1,
+            maximum: 100_000,
+        },
+        "How many particles are alive at once.",
+    )
+    .defaulting(Default::Derived(
+        "the preset's: fire 64, smoke 32, sparks 48, rain 200, snow 120, explosion 96",
+    )),
+    Parameter::knob(
+        "lifetime",
+        positive(600.0),
+        "How long each particle lives, in seconds.",
+    )
+    .defaulting(Default::Derived(
+        "the preset's: fire 0.8, smoke 2.5, sparks 0.6, rain 1.2, snow 6, explosion 0.9",
+    )),
+    Parameter::knob(
+        "quad_size",
+        positive(100.0),
+        "The side of the square each particle draws facing the camera, in metres.",
+    )
+    .defaulting(Default::Derived(
+        "the preset's: fire 0.25, smoke 0.5, sparks 0.05, rain 0.05, snow 0.08, explosion 0.25",
+    )),
+    Parameter::knob(
+        "area",
+        ParameterKind::Vector3 { positive: true },
+        "The size of the box the drops start in, in metres, centred on the node.",
+    )
+    .defaulting(Default::Derived("{x: 20, y: 1, z: 20}"))
+    .only(Applies::When("preset", &["rain", "snow"])),
+    Parameter::knob(
+        "texture",
+        ParameterKind::ResourcePath {
+            resource_type: "Texture2D",
+            extension: None,
+        },
+        "A Texture2D each particle draws, tinted by its colour; without one a particle is a \
+         square of its colour.",
+    ),
+];
+
+/// How a falling 3D preset moves, for the box that keeps its drops visible.
+struct Fall {
+    /// The slowest and the fastest a drop starts, in metres per second.
+    velocity: (f64, f64),
+    /// How far from straight down a drop may start, in degrees.
+    spread: f64,
+    /// The pull downwards, in metres per second squared.
+    gravity: f64,
+}
+
+const RAIN_FALL: Fall = Fall {
+    velocity: (8.0, 10.0),
+    spread: 2.0,
+    gravity: 2.0,
+};
+
+const SNOW_FALL: Fall = Fall {
+    velocity: (0.5, 1.0),
+    spread: 20.0,
+    gravity: 0.2,
+};
+
+/// A preset in 3D: the square each particle draws and its process material.
+/// The amount, the lifetime and the colours are those of the 2D preset.
+struct Look {
+    quad_size: f64,
+    material: fn(&Values) -> Map<String, Value>,
+    /// How the drops of rain and snow fall, `None` for the others.
+    fall: Option<&'static Fall>,
+}
+
+fn look(name: &str) -> Look {
+    match name {
+        "smoke" => Look {
+            quad_size: 0.5,
+            material: smoke_material_3d,
+            fall: None,
+        },
+        "sparks" => Look {
+            quad_size: 0.05,
+            material: sparks_material_3d,
+            fall: None,
+        },
+        "rain" => Look {
+            quad_size: 0.05,
+            material: rain_material_3d,
+            fall: Some(&RAIN_FALL),
+        },
+        "snow" => Look {
+            quad_size: 0.08,
+            material: snow_material_3d,
+            fall: Some(&SNOW_FALL),
+        },
+        "explosion" => Look {
+            quad_size: 0.25,
+            material: explosion_material_3d,
+            fall: None,
+        },
+        _ => Look {
+            quad_size: 0.25,
+            material: fire_material_3d,
+            fall: None,
+        },
+    }
+}
+
+fn fire_material_3d(_: &Values) -> Map<String, Value> {
+    properties([
+        ("direction", vector3(0.0, 1.0, 0.0)),
+        ("spread", float(20.0)),
+        ("initial_velocity_min", float(1.5)),
+        ("initial_velocity_max", float(2.5)),
+        ("gravity", vector3(0.0, 1.0, 0.0)),
+    ])
+}
+
+fn smoke_material_3d(_: &Values) -> Map<String, Value> {
+    properties([
+        ("direction", vector3(0.0, 1.0, 0.0)),
+        ("spread", float(15.0)),
+        ("initial_velocity_min", float(0.4)),
+        ("initial_velocity_max", float(0.8)),
+        ("gravity", vector3(0.0, 0.3, 0.0)),
+        ("scale_min", float(1.0)),
+        ("scale_max", float(2.0)),
+    ])
+}
+
+fn sparks_material_3d(_: &Values) -> Map<String, Value> {
+    properties([
+        ("direction", vector3(0.0, 1.0, 0.0)),
+        ("spread", float(60.0)),
+        ("initial_velocity_min", float(3.0)),
+        ("initial_velocity_max", float(6.0)),
+        ("gravity", vector3(0.0, -9.8, 0.0)),
+    ])
+}
+
+/// Drops that start anywhere in the `area` box and fall as `fall` says.
+fn falling_material_3d(values: &Values, fall: &Fall, color: Value) -> Map<String, Value> {
+    let (x, y, z) = area(values);
+    properties([
+        // `emission_shape` 3 is `ParticleProcessMaterial.EMISSION_SHAPE_BOX`.
+        ("emission_shape", integer(3)),
+        ("emission_box_extents", vector3(x / 2.0, y / 2.0, z / 2.0)),
+        ("direction", vector3(0.0, -1.0, 0.0)),
+        ("spread", float(fall.spread)),
+        ("initial_velocity_min", float(fall.velocity.0)),
+        ("initial_velocity_max", float(fall.velocity.1)),
+        ("gravity", vector3(0.0, -fall.gravity, 0.0)),
+        ("scale_min", float(1.0)),
+        ("scale_max", float(2.0)),
+        ("color", color),
+    ])
+}
+
+fn rain_material_3d(values: &Values) -> Map<String, Value> {
+    falling_material_3d(values, &RAIN_FALL, color_value(0.6, 0.7, 1.0, 0.7))
+}
+
+fn snow_material_3d(values: &Values) -> Map<String, Value> {
+    falling_material_3d(values, &SNOW_FALL, color_value(1.0, 1.0, 1.0, 0.9))
+}
+
+fn explosion_material_3d(_: &Values) -> Map<String, Value> {
+    properties([
+        ("direction", vector3(0.0, 1.0, 0.0)),
+        ("spread", float(180.0)),
+        ("initial_velocity_min", float(3.0)),
+        ("initial_velocity_max", float(5.0)),
+        ("gravity", vector3(0.0, -2.0, 0.0)),
+        ("damping_min", float(4.0)),
+        ("damping_max", float(6.0)),
+        ("scale_min", float(1.0)),
+        ("scale_max", float(2.0)),
+    ])
+}
+
+/// The size of the box rain or snow starts in, in metres.
+fn area(values: &Values) -> (f64, f64, f64) {
+    let area = values.get("area");
+    let axis =
+        |name: &str, default: f64| area.and_then(|area| area[name].as_f64()).unwrap_or(default);
+    (axis("x", 20.0), axis("y", 1.0), axis("z", 20.0))
+}
+
+/// A box that holds every drop for its whole life, so the emitter is not
+/// culled while its drops are on screen: drops start in the `area` box, the
+/// lowest falls the fastest start speed times `lifetime` plus what gravity
+/// adds, and each drifts sideways as far as the spread lets it.
+fn visibility_box(values: &Values, lifetime: f64, fall: &Fall) -> Value {
+    let (x, y, z) = area(values);
+    let travel = fall.velocity.1 * lifetime;
+    let drop = travel + 0.5 * fall.gravity * lifetime * lifetime;
+    let drift = travel * fall.spread.to_radians().sin();
+    json!({ "type": "aabb", "value": {
+        "position": { "x": -x / 2.0 - drift, "y": -y / 2.0 - drop, "z": -z / 2.0 - drift },
+        "size": { "x": x + 2.0 * drift, "y": y + drop, "z": z + 2.0 * drift }
+    } })
+}
+
+fn particles_3d(values: &Values, at: &Placement) -> Vec<Value> {
+    let chosen = preset(values.choice("preset"));
+    let look = look(values.choice("preset"));
+    let emitter = at.primary();
+    let lifetime = values.number("lifetime").unwrap_or(chosen.lifetime);
+    let mut operations = vec![add_node(at.parent(), at.primary_name(), "GPUParticles3D")];
+    operations.push(set(
+        &emitter,
+        "amount",
+        integer(values.integer("amount").unwrap_or(chosen.amount)),
+    ));
+    operations.push(set(&emitter, "lifetime", float(lifetime)));
+    if chosen.one_shot {
+        operations.push(set(&emitter, "one_shot", boolean(true)));
+        operations.push(set(&emitter, "explosiveness", float(1.0)));
+    }
+    if let Some(fall) = look.fall {
+        operations.push(set(
             &emitter,
-            "process_material:color_ramp",
-            "GradientTexture1D",
-            Map::new(),
-        ));
-        operations.push(subresource(
-            &emitter,
-            "process_material:color_ramp:gradient",
-            "Gradient",
-            properties([
-                (
-                    "offsets",
-                    json!({ "type": "packed_float32_array", "value": offsets }),
-                ),
-                (
-                    "colors",
-                    json!({
-                        "type": "packed_color_array",
-                        "value": colors
-                            .iter()
-                            .map(|[red, green, blue, alpha]| json!({
-                                "red": red, "green": green, "blue": blue, "alpha": alpha
-                            }))
-                            .collect::<Vec<_>>()
-                    }),
-                ),
-            ]),
+            "visibility_aabb",
+            visibility_box(values, lifetime, fall),
         ));
     }
+    operations.push(subresource(
+        &emitter,
+        "process_material",
+        "ParticleProcessMaterial",
+        (look.material)(values),
+    ));
+    if let Some(ramp) = chosen.ramp {
+        color_ramp(&emitter, ramp, &mut operations);
+    }
+    let side = values.number("quad_size").unwrap_or(look.quad_size);
+    operations.push(subresource(
+        &emitter,
+        "draw_pass_1",
+        "QuadMesh",
+        properties([("size", vector2(side, side))]),
+    ));
+    let mut drawn = properties([
+        // `transparency` 1 is alpha blending, `shading_mode` 0 unshaded and
+        // `billboard_mode` 3 the particle billboard, which faces the camera.
+        ("transparency", integer(1)),
+        ("shading_mode", integer(0)),
+        ("vertex_color_use_as_albedo", boolean(true)),
+        ("billboard_mode", integer(3)),
+    ]);
+    if let Some(texture) = values.text("texture") {
+        drawn.insert("albedo_texture".to_owned(), resource(texture, "Texture2D"));
+    }
+    operations.push(subresource(
+        &emitter,
+        "draw_pass_1:material",
+        "StandardMaterial3D",
+        drawn,
+    ));
     operations
 }
 
@@ -2275,23 +3100,28 @@ fn navigation_2d(values: &Values, at: &Placement) -> Vec<Value> {
         let agent = join(&walker, "Agent");
         operations.push(add_node(at.parent(), "Walker", "CharacterBody2D"));
         operations.push(add_node(&walker, "Agent", "NavigationAgent2D"));
-        if let Some(distance) = values.number("path_desired_distance") {
-            operations.push(set(&agent, "path_desired_distance", float(distance)));
-        }
-        if let Some(distance) = values.number("target_desired_distance") {
-            operations.push(set(&agent, "target_desired_distance", float(distance)));
-        }
-        if let Some(radius) = values.number("walker_radius") {
-            operations.push(set(&agent, "radius", float(radius)));
-        }
-        if let Some(avoidance) = values.get("avoidance").and_then(Value::as_bool) {
-            operations.push(set(&agent, "avoidance_enabled", boolean(avoidance)));
-        }
-        if let Some(layers) = layers {
-            operations.push(set(&agent, "navigation_layers", integer(layers)));
-        }
+        agent_settings(values, &agent, layers, &mut operations);
     }
     operations
+}
+
+/// The settings a navigation recipe was given for its agent, 2D or 3D.
+fn agent_settings(values: &Values, agent: &str, layers: Option<i64>, operations: &mut Vec<Value>) {
+    if let Some(distance) = values.number("path_desired_distance") {
+        operations.push(set(agent, "path_desired_distance", float(distance)));
+    }
+    if let Some(distance) = values.number("target_desired_distance") {
+        operations.push(set(agent, "target_desired_distance", float(distance)));
+    }
+    if let Some(radius) = values.number("walker_radius") {
+        operations.push(set(agent, "radius", float(radius)));
+    }
+    if let Some(avoidance) = values.get("avoidance").and_then(Value::as_bool) {
+        operations.push(set(agent, "avoidance_enabled", boolean(avoidance)));
+    }
+    if let Some(layers) = layers {
+        operations.push(set(agent, "navigation_layers", integer(layers)));
+    }
 }
 
 // --- audio-2d ----------------------------------------------------------------
@@ -2352,6 +3182,222 @@ fn audio_2d(values: &Values, at: &Placement) -> Vec<Value> {
         operations.push(set(&player, "autoplay", boolean(autoplay)));
     }
     operations
+}
+
+// --- navigation-3d -----------------------------------------------------------
+
+const NAVIGATION_3D_PARAMETERS: &[Parameter] = &[
+    Parameter::knob(
+        "size",
+        ParameterKind::Vector3 { positive: true },
+        "The ground box's size, in metres: centred below the region's origin, with its top \
+         face level with it.",
+    )
+    .defaulting(Default::Vector3(20.0, 1.0, 20.0)),
+    Parameter::knob(
+        "navigation_layers",
+        NAVIGATION_LAYERS,
+        "The navigation layers of the floor and the agent, as a bit field.",
+    ),
+    Parameter::knob(
+        "agent_radius",
+        number(0.0, 10_000.0),
+        "The clearance the bake keeps from the ground's edges, in metres. One that is not a \
+         multiple of the 0.25 m cell size is rounded up, with a warning.",
+    ),
+    Parameter::knob(
+        "agent_height",
+        positive(10_000.0),
+        "The headroom an agent needs, in metres. One that is not a multiple of the 0.25 m cell \
+         height is rounded up, with a warning.",
+    ),
+    Parameter::knob(
+        "mesh",
+        ParameterKind::Boolean,
+        "Add a MeshInstance3D named Mesh below Ground that draws the ground box.",
+    )
+    .defaulting(Default::Boolean(true)),
+    Parameter::knob(
+        "walker",
+        ParameterKind::Boolean,
+        "Add a CharacterBody3D named Walker with a NavigationAgent3D named Agent.",
+    )
+    .defaulting(Default::Boolean(true)),
+    Parameter::knob(
+        "walker_radius",
+        positive(10_000.0),
+        "The agent's radius, in metres.",
+    )
+    .only(Applies::WhenTrue("walker")),
+    Parameter::knob(
+        "path_desired_distance",
+        positive(10_000.0),
+        "How close the agent gets to each path point before moving on, in metres.",
+    )
+    .only(Applies::WhenTrue("walker")),
+    Parameter::knob(
+        "target_desired_distance",
+        positive(10_000.0),
+        "How close to the target the agent counts as arrived, in metres.",
+    )
+    .only(Applies::WhenTrue("walker")),
+    Parameter::knob(
+        "avoidance",
+        ParameterKind::Boolean,
+        "Whether the agent avoids other agents.",
+    )
+    .only(Applies::WhenTrue("walker")),
+];
+
+fn navigation_3d(values: &Values, at: &Placement) -> Vec<Value> {
+    let floor = at.below("Floor");
+    let ground = join(&floor, "Ground");
+    let size = values
+        .get("size")
+        .cloned()
+        .unwrap_or_else(|| json!({ "x": 20.0, "y": 1.0, "z": 20.0 }));
+    let height = size["y"].as_f64().unwrap_or(1.0);
+    let mut operations = vec![add_node(at.parent(), "Floor", "NavigationRegion3D")];
+    let layers = values.integer("navigation_layers");
+    if let Some(layers) = layers {
+        operations.push(set(&floor, "navigation_layers", integer(layers)));
+    }
+    // `geometry_parsed_geometry_type` 1 bakes from static colliders, so the
+    // bake needs no rendering server.
+    let mut bake = properties([("geometry_parsed_geometry_type", integer(1))]);
+    if let Some(radius) = values.number("agent_radius") {
+        bake.insert("agent_radius".to_owned(), float(radius));
+    }
+    if let Some(headroom) = values.number("agent_height") {
+        bake.insert("agent_height".to_owned(), float(headroom));
+    }
+    operations.push(subresource(
+        &floor,
+        "navigation_mesh",
+        "NavigationMesh",
+        bake,
+    ));
+    operations.push(add_node(&floor, "Ground", "StaticBody3D"));
+    operations.push(set(&ground, "position", vector3(0.0, -height / 2.0, 0.0)));
+    operations.push(add_node(&ground, "Shape", "CollisionShape3D"));
+    operations.push(subresource(
+        &join(&ground, "Shape"),
+        "shape",
+        "BoxShape3D",
+        properties([("size", tagged_vector3(&size))]),
+    ));
+    if values.flag("mesh") {
+        operations.push(add_node(&ground, "Mesh", "MeshInstance3D"));
+        operations.push(subresource(
+            &join(&ground, "Mesh"),
+            "mesh",
+            "BoxMesh",
+            properties([("size", tagged_vector3(&size))]),
+        ));
+    }
+    operations.push(call(&floor, "bake_navigation_mesh", vec![boolean(false)]));
+    if values.flag("walker") {
+        let walker = at.below("Walker");
+        let agent = join(&walker, "Agent");
+        operations.push(add_node(at.parent(), "Walker", "CharacterBody3D"));
+        operations.push(add_node(&walker, "Agent", "NavigationAgent3D"));
+        agent_settings(values, &agent, layers, &mut operations);
+    }
+    operations
+}
+
+// --- audio-3d ----------------------------------------------------------------
+
+/// How a 3D sound fades with distance, in `AudioStreamPlayer3D`'s order.
+const ATTENUATION_MODELS: &[&str] = &["inverse", "inverse_square", "logarithmic", "disabled"];
+
+const AUDIO_3D_PARAMETERS: &[Parameter] = &[
+    Parameter::knob("name", ParameterKind::NodeName, "The player's name.")
+        .defaulting(Default::Text("Sound")),
+    Parameter::knob(
+        "stream",
+        ParameterKind::ResourcePath {
+            resource_type: "AudioStream",
+            extension: None,
+        },
+        "The imported sound file the player plays, such as res://audio/hum.ogg.",
+    )
+    .required(),
+    Parameter::knob("volume_db", number(-80.0, 24.0), "The volume, in decibels."),
+    Parameter::knob(
+        "max_distance",
+        positive(1_000_000.0),
+        "How far away the sound can be heard, in metres.",
+    ),
+    Parameter::knob(
+        "unit_size",
+        positive(100.0),
+        "How far the sound carries before it fades: a larger factor keeps it loud farther away.",
+    ),
+    Parameter::knob(
+        "attenuation_model",
+        ParameterKind::Choice(ATTENUATION_MODELS),
+        "How the volume falls with distance: as its inverse, its inverse square or its \
+         logarithm, or not at all.",
+    ),
+    Parameter::knob(
+        "bus",
+        ParameterKind::Text {
+            min_chars: 1,
+            max_chars: MAX_LABEL_CHARS,
+        },
+        "The audio bus; it must exist in the project's bus layout.",
+    ),
+    Parameter::knob(
+        "autoplay",
+        ParameterKind::Boolean,
+        "Whether the sound starts when the scene does.",
+    ),
+];
+
+fn audio_3d(values: &Values, at: &Placement) -> Vec<Value> {
+    let player = at.primary();
+    let mut operations = vec![add_node(
+        at.parent(),
+        at.primary_name(),
+        "AudioStreamPlayer3D",
+    )];
+    if let Some(stream) = values.text("stream") {
+        operations.push(set(&player, "stream", resource(stream, "AudioStream")));
+    }
+    if let Some(volume) = values.number("volume_db") {
+        operations.push(set(&player, "volume_db", float(volume)));
+    }
+    if let Some(distance) = values.number("max_distance") {
+        operations.push(set(&player, "max_distance", float(distance)));
+    }
+    if let Some(size) = values.number("unit_size") {
+        operations.push(set(&player, "unit_size", float(size)));
+    }
+    if let Some(model) = values.text("attenuation_model") {
+        operations.push(set(
+            &player,
+            "attenuation_model",
+            integer(enum_value(ATTENUATION_MODELS, model)),
+        ));
+    }
+    if let Some(bus) = values.text("bus") {
+        operations.push(set(&player, "bus", string_name(bus)));
+    }
+    if let Some(autoplay) = values.get("autoplay").and_then(Value::as_bool) {
+        operations.push(set(&player, "autoplay", boolean(autoplay)));
+    }
+    operations
+}
+
+/// The Godot enum value of `choice`: its place in `choices`, which list the
+/// enum's names in order.
+fn enum_value(choices: &[&str], choice: &str) -> i64 {
+    choices
+        .iter()
+        .position(|candidate| *candidate == choice)
+        .and_then(|index| i64::try_from(index).ok())
+        .unwrap_or_default()
 }
 
 // --- shader-2d ---------------------------------------------------------------
@@ -2644,6 +3690,416 @@ fn joystick(values: &Values, at: &Placement) -> Vec<Value> {
     operations
 }
 
+// --- animation-state-machine -------------------------------------------------
+
+const ANIMATION_STATE_MACHINE_PARAMETERS: &[Parameter] = &[
+    Parameter::knob("name", ParameterKind::NodeName, "The AnimationTree's name.")
+        .defaulting(Default::Text("AnimationTree")),
+    Parameter::knob(
+        "anim_player",
+        ParameterKind::NodePath,
+        "The AnimationPlayer whose animations the states play, as a path from the \
+         AnimationTree, such as ../AnimationPlayer.",
+    )
+    .required(),
+    Parameter::knob(
+        "states",
+        ParameterKind::States,
+        "The states, each playing one animation of the AnimationPlayer. No two share a name.",
+    )
+    .required(),
+    Parameter::knob(
+        "transitions",
+        ParameterKind::Transitions,
+        "The transitions. Each leaves a state of `states` and enters another one or End, and \
+         no two join the same two states the same way round.",
+    ),
+    Parameter::knob(
+        "start",
+        ParameterKind::StateName,
+        "The state the machine starts in, one of `states`: a transition from Start enters it \
+         by itself.",
+    )
+    .defaulting(Default::Derived("the first state")),
+];
+
+/// The AnimationTree an animation recipe adds: its AnimationPlayer and a new
+/// root of class `root`.
+fn animation_tree(values: &Values, at: &Placement, root: &str) -> Vec<Value> {
+    let tree = at.primary();
+    let mut operations = vec![add_node(at.parent(), at.primary_name(), "AnimationTree")];
+    if let Some(player) = values.text("anim_player") {
+        operations.push(set(&tree, "anim_player", node_path(player)));
+    }
+    operations.push(subresource(&tree, "tree_root", root, Map::new()));
+    operations
+}
+
+/// A new AnimationNodeAnimation that plays `animation`.
+fn animation_node(animation: &str) -> Value {
+    new_resource(
+        "AnimationNodeAnimation",
+        properties([("animation", string_name(animation))]),
+    )
+}
+
+/// The settings a transition was given, as `AnimationNodeStateMachineTransition`
+/// properties.
+fn transition_settings(transition: &Value) -> Map<String, Value> {
+    let mut settings = Map::new();
+    if let Some(mode) = transition["switch_mode"].as_str() {
+        settings.insert(
+            "switch_mode".to_owned(),
+            integer(enum_value(SWITCH_MODES, mode)),
+        );
+    }
+    if let Some(mode) = transition["advance_mode"].as_str() {
+        settings.insert(
+            "advance_mode".to_owned(),
+            integer(enum_value(ADVANCE_MODES, mode)),
+        );
+    }
+    if let Some(condition) = transition["advance_condition"].as_str() {
+        settings.insert("advance_condition".to_owned(), string_name(condition));
+    }
+    if let Some(fade) = transition["xfade_time"].as_f64() {
+        settings.insert("xfade_time".to_owned(), float(fade));
+    }
+    settings
+}
+
+fn animation_state_machine(values: &Values, at: &Placement) -> Vec<Value> {
+    let tree = at.primary();
+    let mut operations = animation_tree(values, at, "AnimationNodeStateMachine");
+    // Four states to a row, clear of Start at (200, 100) and End at (900, 100).
+    let added = (0_u32..)
+        .zip(items(values, "states"))
+        .map(|(index, state)| {
+            json!([
+                string_name(text_of(state, "name")),
+                animation_node(text_of(state, "animation")),
+                vector2(
+                    200.0 + 200.0 * f64::from(index % 4),
+                    250.0 + 150.0 * f64::from(index / 4)
+                ),
+            ])
+        })
+        .collect();
+    operations.push(on_resource(&tree, "tree_root", "add_node", added));
+    // `advance_mode` 2 is auto: the machine takes the transition by itself.
+    let mut joined = vec![json!([
+        string_name("Start"),
+        string_name(values.text("start").unwrap_or_default()),
+        new_resource(
+            "AnimationNodeStateMachineTransition",
+            properties([("advance_mode", integer(2))]),
+        ),
+    ])];
+    for transition in items(values, "transitions") {
+        joined.push(json!([
+            string_name(text_of(transition, "from")),
+            string_name(text_of(transition, "to")),
+            new_resource(
+                "AnimationNodeStateMachineTransition",
+                transition_settings(transition),
+            ),
+        ]));
+    }
+    operations.push(on_resource(&tree, "tree_root", "add_transition", joined));
+    operations
+}
+
+fn state_machine_check(values: &Values) -> Result<(), String> {
+    let mut names = BTreeSet::new();
+    for state in items(values, "states") {
+        let name = text_of(state, "name");
+        if !names.insert(name) {
+            return Err(format!(
+                "`states` names {name} twice; each state needs a name of its own"
+            ));
+        }
+    }
+    let mut joined = BTreeSet::new();
+    for (index, transition) in items(values, "transitions").iter().enumerate() {
+        let from = text_of(transition, "from");
+        let to = text_of(transition, "to");
+        if !names.contains(from) {
+            return Err(format!(
+                "transition {index} leaves {from}, which `states` does not name"
+            ));
+        }
+        if to != MACHINE_STATES[1] && !names.contains(to) {
+            return Err(format!(
+                "transition {index} enters {to}, which is neither a state of `states` nor End"
+            ));
+        }
+        if from == to {
+            return Err(format!(
+                "transition {index} leaves and enters {from}; a transition joins two states"
+            ));
+        }
+        if !joined.insert((from, to)) {
+            return Err(format!(
+                "`transitions` joins {from} to {to} twice; give each way between two states once"
+            ));
+        }
+    }
+    if let Some(start) = values.text("start")
+        && !names.contains(start)
+    {
+        return Err(format!("`start` is {start}, which `states` does not name"));
+    }
+    Ok(())
+}
+
+fn derive_start(values: &Values) -> Vec<(&'static str, Value)> {
+    items(values, "states")
+        .first()
+        .map(|state| ("start", Value::String(text_of(state, "name").to_owned())))
+        .into_iter()
+        .collect()
+}
+
+fn state_machine_example() -> Map<String, Value> {
+    object_of(json!({
+        "anim_player": "../AnimationPlayer",
+        "states": [
+            { "name": "idle", "animation": "idle" },
+            { "name": "walk", "animation": "walk" },
+            { "name": "run", "animation": "run" }
+        ],
+        "transitions": [
+            { "from": "idle", "to": "walk", "xfade_time": 0.2 },
+            { "from": "walk", "to": "idle", "xfade_time": 0.2 },
+            { "from": "walk", "to": "run", "xfade_time": 0.2 },
+            { "from": "run", "to": "walk", "xfade_time": 0.2 }
+        ]
+    }))
+}
+
+// --- blend-space-1d ----------------------------------------------------------
+
+const BLEND_SPACE_1D_PARAMETERS: &[Parameter] = &[
+    Parameter::knob("name", ParameterKind::NodeName, "The AnimationTree's name.")
+        .defaulting(Default::Text("AnimationTree")),
+    Parameter::knob(
+        "anim_player",
+        ParameterKind::NodePath,
+        "The AnimationPlayer whose animations the points play, as a path from the \
+         AnimationTree, such as ../AnimationPlayer.",
+    )
+    .required(),
+    Parameter::knob(
+        "points",
+        ParameterKind::BlendPoints,
+        "The blend points, each an animation of the AnimationPlayer at a position on the axis, \
+         from `min_space` to `max_space`, ends included.",
+    )
+    .required(),
+    Parameter::knob(
+        "min_space",
+        ParameterKind::Number {
+            minimum: -MAX_BLEND_SPACE,
+            maximum: 1.0,
+            exclusive_minimum: false,
+            exclusive_maximum: true,
+        },
+        "The lower end of the axis (Godot's default -1), below `max_space`. It must be below 1: \
+         Godot loads it before `max_space` and would turn 1 or more into 0.",
+    ),
+    Parameter::knob(
+        "max_space",
+        number(-MAX_BLEND_SPACE, MAX_BLEND_SPACE),
+        "The upper end of the axis (Godot's default 1), above `min_space`.",
+    ),
+];
+
+fn blend_space_1d(values: &Values, at: &Placement) -> Vec<Value> {
+    let tree = at.primary();
+    let mut operations = animation_tree(values, at, "AnimationNodeBlendSpace1D");
+    // Godot clamps each end against the other as it is set, and loads a saved
+    // `min_space` first, so the recipe writes it first too: a lower end below
+    // 1 is never clamped, and an upper end above it never is either.
+    if let Some(low) = values.number("min_space") {
+        operations.push(set(&tree, "tree_root:min_space", float(low)));
+    }
+    if let Some(high) = values.number("max_space") {
+        operations.push(set(&tree, "tree_root:max_space", float(high)));
+    }
+    let added = items(values, "points")
+        .iter()
+        .map(|point| {
+            json!([
+                animation_node(text_of(point, "animation")),
+                float(point["position"].as_f64().unwrap_or_default()),
+            ])
+        })
+        .collect();
+    operations.push(on_resource(&tree, "tree_root", "add_blend_point", added));
+    operations
+}
+
+fn blend_space_check(values: &Values) -> Result<(), String> {
+    let low = values.number("min_space").unwrap_or(-1.0);
+    let high = values.number("max_space").unwrap_or(1.0);
+    if low >= high {
+        return Err(format!(
+            "the axis runs from {low} to {high}, but `min_space` must be below `max_space`; \
+             an omitted one is Godot's -1 or 1"
+        ));
+    }
+    for (index, point) in items(values, "points").iter().enumerate() {
+        let position = point["position"].as_f64().unwrap_or_default();
+        if position < low || position > high {
+            return Err(format!(
+                "point {index} at {position} lies outside the axis, {low} to {high}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn blend_space_example() -> Map<String, Value> {
+    object_of(json!({
+        "anim_player": "../AnimationPlayer",
+        "points": [
+            { "animation": "idle", "position": 0.0 },
+            { "animation": "walk", "position": 0.5 },
+            { "animation": "run", "position": 1.0 }
+        ]
+    }))
+}
+
+// --- material-3d -------------------------------------------------------------
+
+/// How a material draws its alpha, in `BaseMaterial3D`'s order.
+const TRANSPARENCY_MODES: &[&str] = &[
+    "disabled",
+    "alpha",
+    "alpha_scissor",
+    "alpha_hash",
+    "depth_pre_pass",
+];
+
+/// Which faces a material does not draw, in `BaseMaterial3D`'s order.
+const CULL_MODES: &[&str] = &["back", "front", "disabled"];
+
+const MATERIAL_3D_PARAMETERS: &[Parameter] = &[
+    Parameter::knob("albedo_color", ParameterKind::Color, "The base colour."),
+    Parameter::knob(
+        "albedo_texture",
+        ParameterKind::ResourcePath {
+            resource_type: "Texture2D",
+            extension: None,
+        },
+        "A Texture2D the base colour multiplies.",
+    ),
+    Parameter::knob("metallic", number(0.0, 1.0), "How metallic the surface is."),
+    Parameter::knob(
+        "roughness",
+        number(0.0, 1.0),
+        "How rough the surface is: 0 is a mirror.",
+    ),
+    Parameter::knob(
+        "normal_texture",
+        ParameterKind::ResourcePath {
+            resource_type: "Texture2D",
+            extension: None,
+        },
+        "A normal map; giving one turns normal mapping on.",
+    ),
+    Parameter::knob(
+        "emission",
+        ParameterKind::Color,
+        "The colour the surface gives off; giving one turns emission on.",
+    ),
+    Parameter::knob(
+        "emission_energy",
+        number(0.0, 1_000.0),
+        "How bright the emission is, as a multiplier; giving one turns emission on.",
+    ),
+    Parameter::knob(
+        "transparency",
+        ParameterKind::Choice(TRANSPARENCY_MODES),
+        "How the alpha is drawn: not at all, blended, cut at a threshold, hashed, or blended \
+         after a depth pre-pass.",
+    ),
+    Parameter::knob(
+        "cull_mode",
+        ParameterKind::Choice(CULL_MODES),
+        "Which faces are not drawn: the back ones, the front ones, or none.",
+    ),
+    Parameter::knob(
+        "unshaded",
+        ParameterKind::Boolean,
+        "true draws the colours without lighting; false writes nothing.",
+    ),
+];
+
+fn material_3d(values: &Values, _: &Placement) -> Vec<Value> {
+    let mut operations = Vec::new();
+    if let Some(color) = values.get("albedo_color") {
+        operations.push(own("albedo_color", tagged_color(color)));
+    }
+    if let Some(texture) = values.text("albedo_texture") {
+        operations.push(own("albedo_texture", resource(texture, "Texture2D")));
+    }
+    if let Some(metallic) = values.number("metallic") {
+        operations.push(own("metallic", float(metallic)));
+    }
+    if let Some(roughness) = values.number("roughness") {
+        operations.push(own("roughness", float(roughness)));
+    }
+    if let Some(texture) = values.text("normal_texture") {
+        operations.push(own("normal_enabled", boolean(true)));
+        operations.push(own("normal_texture", resource(texture, "Texture2D")));
+    }
+    let emission = values.get("emission");
+    let energy = values.number("emission_energy");
+    if emission.is_some() || energy.is_some() {
+        operations.push(own("emission_enabled", boolean(true)));
+    }
+    if let Some(color) = emission {
+        operations.push(own("emission", tagged_color(color)));
+    }
+    if let Some(energy) = energy {
+        operations.push(own("emission_energy_multiplier", float(energy)));
+    }
+    if let Some(mode) = values.text("transparency") {
+        operations.push(own(
+            "transparency",
+            integer(enum_value(TRANSPARENCY_MODES, mode)),
+        ));
+    }
+    if let Some(mode) = values.text("cull_mode") {
+        operations.push(own("cull_mode", integer(enum_value(CULL_MODES, mode))));
+    }
+    if values.flag("unshaded") {
+        // `shading_mode` 0 is unshaded.
+        operations.push(own("shading_mode", integer(0)));
+    }
+    operations
+}
+
+fn material_3d_check(values: &Values) -> Result<(), String> {
+    if values.0.is_empty() {
+        Err(
+            "give at least one parameter; an empty StandardMaterial3D is resource.create with \
+             `class` StandardMaterial3D and no recipe"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
+fn material_example() -> Map<String, Value> {
+    object_of(json!({
+        "albedo_color": { "red": 0.8, "green": 0.5, "blue": 0.2, "alpha": 1.0 },
+        "roughness": 0.7
+    }))
+}
+
 // --- theme -------------------------------------------------------------------
 
 fn theme(_: &Values, _: &Placement) -> Vec<Value> {
@@ -2671,6 +4127,10 @@ fn no_derived(_: &Values) -> Vec<(&'static str, Value)> {
     Vec::new()
 }
 
+fn no_example() -> Map<String, Value> {
+    Map::new()
+}
+
 fn derive_body(values: &Values) -> Vec<(&'static str, Value)> {
     vec![("name", Value::String(body_name(values).to_owned()))]
 }
@@ -2684,6 +4144,21 @@ fn derive_particles(values: &Values) -> Vec<(&'static str, Value)> {
     ];
     if matches!(values.choice("preset"), "rain" | "snow") {
         derived.push(("width", json!(640.0)));
+    }
+    derived
+}
+
+fn derive_particles_3d(values: &Values) -> Vec<(&'static str, Value)> {
+    let chosen = preset(values.choice("preset"));
+    let look = look(values.choice("preset"));
+    let mut derived = vec![
+        ("name", Value::String(preset_name(values).to_owned())),
+        ("amount", json!(chosen.amount)),
+        ("lifetime", json!(chosen.lifetime)),
+        ("quad_size", json!(look.quad_size)),
+    ];
+    if look.fall.is_some() {
+        derived.push(("area", json!({ "x": 20.0, "y": 1.0, "z": 20.0 })));
     }
     derived
 }
@@ -2702,6 +4177,7 @@ pub const RECIPES: &[Recipe] = &[
         derive: derive_body,
         check: no_check,
         expand: body_2d,
+        example: no_example,
     },
     Recipe {
         id: "body-3d",
@@ -2715,6 +4191,7 @@ pub const RECIPES: &[Recipe] = &[
         derive: derive_body,
         check: no_check,
         expand: body_3d,
+        example: no_example,
     },
     Recipe {
         id: "light-3d",
@@ -2729,6 +4206,7 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: light_3d_check,
         expand: light_3d,
+        example: no_example,
     },
     Recipe {
         id: "particles-2d",
@@ -2743,6 +4221,23 @@ pub const RECIPES: &[Recipe] = &[
         derive: derive_particles,
         check: no_check,
         expand: particles_2d,
+        example: no_example,
+    },
+    Recipe {
+        id: "particles-3d",
+        title: "3D particles from a preset",
+        summary: "A GPUParticles3D with a ParticleProcessMaterial set up as fire, smoke, sparks, \
+                  rain, snow or a one-shot explosion, drawing squares that face the camera. Rain \
+                  and snow fall from a box and get a visibility box that holds their whole fall. \
+                  The values are a starting point to tune, not a generated effect.",
+        target: RecipeTarget::Scene,
+        parent_class: "Node3D",
+        since: None,
+        parameters: PARTICLES_3D_PARAMETERS,
+        derive: derive_particles_3d,
+        check: no_check,
+        expand: particles_3d,
+        example: no_example,
     },
     Recipe {
         id: "navigation-2d",
@@ -2757,6 +4252,22 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: navigation_2d,
+        example: no_example,
+    },
+    Recipe {
+        id: "navigation-3d",
+        title: "A baked 3D navigation floor and an agent",
+        summary: "A NavigationRegion3D named Floor over a StaticBody3D box named Ground, its \
+                  navigation mesh baked from the box's collision shape before the batch goes on, \
+                  and a CharacterBody3D named Walker with a NavigationAgent3D named Agent.",
+        target: RecipeTarget::Scene,
+        parent_class: "Node3D",
+        since: None,
+        parameters: NAVIGATION_3D_PARAMETERS,
+        derive: no_derived,
+        check: no_check,
+        expand: navigation_3d,
+        example: no_example,
     },
     Recipe {
         id: "audio-2d",
@@ -2770,6 +4281,21 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: audio_2d,
+        example: no_example,
+    },
+    Recipe {
+        id: "audio-3d",
+        title: "A 3D positional sound",
+        summary: "An AudioStreamPlayer3D playing a sound file of the project. The file must be \
+                  imported first, and a named bus must exist in the project's bus layout.",
+        target: RecipeTarget::Scene,
+        parent_class: "Node3D",
+        since: None,
+        parameters: AUDIO_3D_PARAMETERS,
+        derive: no_derived,
+        check: no_check,
+        expand: audio_3d,
+        example: no_example,
     },
     Recipe {
         id: "shader-2d",
@@ -2783,6 +4309,7 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: shader_2d,
+        example: no_example,
     },
     Recipe {
         id: "hud",
@@ -2796,6 +4323,7 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: hud,
+        example: no_example,
     },
     Recipe {
         id: "gridmap-3d",
@@ -2809,6 +4337,7 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: gridmap_3d,
+        example: no_example,
     },
     Recipe {
         id: "joystick",
@@ -2822,12 +4351,45 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: joystick,
+        example: no_example,
+    },
+    Recipe {
+        id: "animation-state-machine",
+        title: "An AnimationTree state machine",
+        summary: "An AnimationTree whose root is an AnimationNodeStateMachine with one \
+                  AnimationNodeAnimation state per entry, the transitions between them, and a \
+                  transition from Start that enters the start state by itself. The recipe does \
+                  not read the scene: the AnimationPlayer and its animations must exist for the \
+                  states to play.",
+        target: RecipeTarget::Scene,
+        parent_class: "Node",
+        since: None,
+        parameters: ANIMATION_STATE_MACHINE_PARAMETERS,
+        derive: derive_start,
+        check: state_machine_check,
+        expand: animation_state_machine,
+        example: state_machine_example,
+    },
+    Recipe {
+        id: "blend-space-1d",
+        title: "An AnimationTree 1D blend space",
+        summary: "An AnimationTree whose root is an AnimationNodeBlendSpace1D with one \
+                  AnimationNodeAnimation per blend point. On Godot 4.7 the log shows one warning \
+                  per point that it has no name.",
+        target: RecipeTarget::Scene,
+        parent_class: "Node",
+        since: None,
+        parameters: BLEND_SPACE_1D_PARAMETERS,
+        derive: no_derived,
+        check: blend_space_check,
+        expand: blend_space_1d,
+        example: blend_space_example,
     },
     Recipe {
         id: "theme",
         title: "A theme",
         summary: "A Theme resource with a label colour and size, an outline constant and a flat \
-                  panel style, for resource.create with class Theme.",
+                  panel style, for resource.create's `recipe`.",
         target: RecipeTarget::Resource { class: "Theme" },
         parent_class: "",
         since: None,
@@ -2835,6 +4397,23 @@ pub const RECIPES: &[Recipe] = &[
         derive: no_derived,
         check: no_check,
         expand: theme,
+        example: no_example,
+    },
+    Recipe {
+        id: "material-3d",
+        title: "A 3D material",
+        summary: "A StandardMaterial3D with the colours, textures and surface settings given, \
+                  for resource.create's `recipe`. It needs at least one parameter.",
+        target: RecipeTarget::Resource {
+            class: "StandardMaterial3D",
+        },
+        parent_class: "",
+        since: None,
+        parameters: MATERIAL_3D_PARAMETERS,
+        derive: no_derived,
+        check: material_3d_check,
+        expand: material_3d,
+        example: material_example,
     },
 ];
 
@@ -2849,6 +4428,14 @@ pub fn scene_recipes() -> impl Iterator<Item = &'static Recipe> {
     RECIPES
         .iter()
         .filter(|recipe| recipe.target == RecipeTarget::Scene)
+}
+
+/// The recipes `resource.create` takes in its `recipe` field, in
+/// documentation order.
+pub fn resource_recipes() -> impl Iterator<Item = &'static Recipe> {
+    RECIPES
+        .iter()
+        .filter(|recipe| recipe.target != RecipeTarget::Scene)
 }
 
 #[cfg(test)]
@@ -2876,21 +4463,26 @@ mod tests {
             .to_owned()
     }
 
+    /// The recipe's example, with a placeholder path for every required path
+    /// it leaves out.
     fn required_parameters(recipe: &Recipe) -> Map<String, Value> {
-        recipe
-            .parameters
-            .iter()
-            .filter(|parameter| parameter.required)
-            .map(|parameter| {
-                let value = match parameter.kind {
-                    ParameterKind::ResourcePath { extension, .. } => {
-                        json!(format!("res://example{}", extension.unwrap_or(".res")))
-                    }
-                    _ => unreachable!("only paths are required"),
-                };
-                (parameter.name.to_owned(), value)
-            })
-            .collect()
+        let mut parameters = recipe.example();
+        for parameter in recipe.parameters {
+            if !parameter.required || parameters.contains_key(parameter.name) {
+                continue;
+            }
+            let value = match parameter.kind {
+                ParameterKind::ResourcePath { extension, .. } => {
+                    json!(format!("res://example{}", extension.unwrap_or(".res")))
+                }
+                _ => unreachable!(
+                    "{}: a required `{}` comes from the example",
+                    recipe.id, parameter.name
+                ),
+            };
+            parameters.insert(parameter.name.to_owned(), value);
+        }
+        parameters
     }
 
     #[test]
@@ -3173,5 +4765,923 @@ mod tests {
             }
         );
         assert!(keyed["properties"].get("theme").is_none());
+    }
+
+    fn animation_node(animation: &str) -> Value {
+        json!({ "type": "new_resource", "value": {
+            "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": animation } }
+        } })
+    }
+
+    fn machine_transition(properties: Value) -> Value {
+        let mut value = json!({ "class": "AnimationNodeStateMachineTransition" });
+        if properties.as_object().is_some_and(|map| !map.is_empty()) {
+            value["properties"] = properties;
+        }
+        json!({ "type": "new_resource", "value": value })
+    }
+
+    fn on_tree_root(method: &str, repeat: Value) -> Value {
+        json!({
+            "op": "call_method", "node": "AnimationTree",
+            "resource": { "property": "tree_root" }, "method": method, "repeat": repeat
+        })
+    }
+
+    fn states(count: usize) -> Value {
+        Value::Array(
+            (0..count)
+                .map(|index| json!({ "name": format!("s{index}"), "animation": "idle" }))
+                .collect(),
+        )
+    }
+
+    fn points(count: usize) -> Value {
+        let last = count - 1;
+        Value::Array(
+            (0..count)
+                .map(|index| {
+                    let position = if index == last {
+                        1.0
+                    } else {
+                        -1.0 + 2.0 * f64::from(u32::try_from(index).unwrap())
+                            / f64::from(u32::try_from(last).unwrap())
+                    };
+                    json!({ "animation": "walk", "position": position })
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_state_machine_plays_its_states_from_start() {
+        let expansion = recipe("animation-state-machine")
+            .expect("a recipe")
+            .expand(&recipe("animation-state-machine").unwrap().example(), None)
+            .unwrap();
+        let fade =
+            || machine_transition(json!({ "xfade_time": { "type": "float", "value": 0.2 } }));
+        assert_eq!(
+            expansion.operations,
+            vec![
+                add_node(".", "AnimationTree", "AnimationTree"),
+                set(
+                    "AnimationTree",
+                    "anim_player",
+                    json!({ "type": "node_path", "value": "../AnimationPlayer" })
+                ),
+                subresource(
+                    "AnimationTree",
+                    "tree_root",
+                    "AnimationNodeStateMachine",
+                    Map::new()
+                ),
+                on_tree_root(
+                    "add_node",
+                    json!([
+                        [
+                            string_name("idle"),
+                            animation_node("idle"),
+                            vector2(200.0, 250.0)
+                        ],
+                        [
+                            string_name("walk"),
+                            animation_node("walk"),
+                            vector2(400.0, 250.0)
+                        ],
+                        [
+                            string_name("run"),
+                            animation_node("run"),
+                            vector2(600.0, 250.0)
+                        ],
+                    ])
+                ),
+                on_tree_root(
+                    "add_transition",
+                    json!([
+                        [
+                            string_name("Start"),
+                            string_name("idle"),
+                            machine_transition(
+                                json!({ "advance_mode": { "type": "integer", "value": 2 } })
+                            )
+                        ],
+                        [string_name("idle"), string_name("walk"), fade()],
+                        [string_name("walk"), string_name("idle"), fade()],
+                        [string_name("walk"), string_name("run"), fade()],
+                        [string_name("run"), string_name("walk"), fade()],
+                    ])
+                ),
+            ]
+        );
+        assert_eq!(expansion.describe()["parameters"]["start"], json!("idle"));
+        assert_eq!(
+            expansion.describe()["parameters"]["name"],
+            json!("AnimationTree")
+        );
+    }
+
+    #[test]
+    fn a_state_machine_lays_its_states_out_in_rows_of_four_and_writes_only_given_settings() {
+        let operations = expand(
+            "animation-state-machine",
+            json!({
+                "name": "Brain",
+                "anim_player": "..",
+                "states": states(5),
+                "transitions": [
+                    {
+                        "from": "s1", "to": "End", "switch_mode": "at_end",
+                        "advance_mode": "enabled", "advance_condition": "done", "xfade_time": 0
+                    },
+                    { "from": "s4", "to": "s0" }
+                ],
+                "start": "s2"
+            }),
+        );
+        assert_eq!(operations[3]["repeat"][3][2], vector2(800.0, 250.0));
+        assert_eq!(operations[3]["repeat"][4][2], vector2(200.0, 400.0));
+        assert_eq!(operations[4]["node"], json!("Brain"));
+        assert_eq!(
+            operations[4]["repeat"],
+            json!([
+                [
+                    string_name("Start"),
+                    string_name("s2"),
+                    machine_transition(
+                        json!({ "advance_mode": { "type": "integer", "value": 2 } })
+                    )
+                ],
+                [
+                    string_name("s1"),
+                    string_name("End"),
+                    machine_transition(json!({
+                        "switch_mode": { "type": "integer", "value": 2 },
+                        "advance_mode": { "type": "integer", "value": 1 },
+                        "advance_condition": { "type": "string_name", "value": "done" },
+                        "xfade_time": { "type": "float", "value": 0.0 }
+                    }))
+                ],
+                [
+                    string_name("s4"),
+                    string_name("s0"),
+                    machine_transition(json!({}))
+                ],
+            ])
+        );
+    }
+
+    #[test]
+    fn state_machine_rules_across_values_are_refused() {
+        let two = json!([
+            { "name": "idle", "animation": "idle" },
+            { "name": "walk", "animation": "walk" }
+        ]);
+        let machine = |extra: Value| {
+            let mut parameters = json!({ "anim_player": "../AnimationPlayer", "states": two });
+            for (key, value) in extra.as_object().unwrap() {
+                parameters[key] = value.clone();
+            }
+            refusal("animation-state-machine", parameters)
+        };
+        assert!(
+            refusal(
+                "animation-state-machine",
+                json!({
+                    "anim_player": "..",
+                    "states": [
+                        { "name": "idle", "animation": "idle" },
+                        { "name": "idle", "animation": "walk" }
+                    ]
+                })
+            )
+            .contains("names idle twice")
+        );
+        assert!(
+            machine(json!({ "transitions": [{ "from": "run", "to": "idle" }] }))
+                .contains("leaves run, which `states` does not name")
+        );
+        assert!(
+            machine(json!({ "transitions": [{ "from": "idle", "to": "run" }] }))
+                .contains("enters run, which is neither a state of `states` nor End")
+        );
+        assert!(
+            machine(json!({ "transitions": [{ "from": "idle", "to": "idle" }] }))
+                .contains("leaves and enters idle")
+        );
+        assert!(
+            machine(json!({ "transitions": [
+                { "from": "idle", "to": "walk" },
+                { "from": "idle", "to": "walk", "xfade_time": 1 }
+            ] }))
+            .contains("joins idle to walk twice")
+        );
+        assert!(machine(json!({ "start": "run" })).contains("`start` is run"));
+        for reserved in ["Start", "End"] {
+            assert!(
+                refusal(
+                    "animation-state-machine",
+                    json!({
+                        "anim_player": "..",
+                        "states": [{ "name": reserved, "animation": "idle" }]
+                    })
+                )
+                .contains("every state machine holds"),
+                "{reserved}"
+            );
+            assert!(
+                machine(json!({ "transitions": [{ "from": reserved, "to": "idle" }] }))
+                    .contains("every state machine holds"),
+                "{reserved}"
+            );
+            assert!(machine(json!({ "start": reserved })).contains("every state machine holds"));
+        }
+        assert!(
+            machine(json!({ "transitions": [{ "from": "idle", "to": "Start" }] }))
+                .contains("every state machine holds Start")
+        );
+        assert!(
+            recipe("animation-state-machine")
+                .unwrap()
+                .expand(
+                    &object(json!({
+                        "anim_player": "..", "states": two,
+                        "transitions": [{ "from": "idle", "to": "End" }]
+                    })),
+                    None
+                )
+                .is_ok()
+        );
+        assert!(
+            refusal("animation-state-machine", json!({ "states": two }))
+                .contains("`anim_player` is required")
+        );
+        assert!(
+            refusal("animation-state-machine", json!({ "anim_player": ".." }))
+                .contains("`states` is required")
+        );
+    }
+
+    #[test]
+    fn node_paths_and_animation_names_follow_godot() {
+        let machine = |player: &str, animation: &str| {
+            recipe("animation-state-machine").unwrap().expand(
+                &object(json!({
+                    "anim_player": player,
+                    "states": [{ "name": "idle", "animation": animation }]
+                })),
+                None,
+            )
+        };
+        for player in [
+            "../AnimationPlayer",
+            "..",
+            "Player",
+            "../../Rig/Player",
+            "..x/.y",
+        ] {
+            assert!(machine(player, "idle").is_ok(), "{player}");
+        }
+        for player in [
+            "",
+            "/root/Player",
+            "a//b",
+            ".",
+            "./Player",
+            "a:b",
+            "a/",
+            "a/\u{7}",
+        ] {
+            assert!(
+                machine(player, "idle")
+                    .unwrap_err()
+                    .message()
+                    .contains("`anim_player`"),
+                "{player:?}"
+            );
+        }
+        for animation in ["idle", "lib/idle", "run fast"] {
+            assert!(machine("..", animation).is_ok(), "{animation}");
+        }
+        for animation in [
+            "", "a/b/c", "/idle", "idle/", "a:b", "a,b", "a[b", "a\u{1F}",
+        ] {
+            assert!(
+                machine("..", animation)
+                    .unwrap_err()
+                    .message()
+                    .contains("`animation`"),
+                "{animation:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_machines_and_blend_spaces_take_up_to_their_limits() {
+        let machine = |count: usize, transitions: usize| {
+            let mut pairs = Vec::new();
+            'outer: for from in 0..12 {
+                for to in 0..12 {
+                    if pairs.len() == transitions {
+                        break 'outer;
+                    }
+                    if from != to {
+                        pairs.push(json!({ "from": format!("s{from}"), "to": format!("s{to}") }));
+                    }
+                }
+            }
+            let mut parameters = json!({ "anim_player": "..", "states": states(count) });
+            if transitions > 0 {
+                parameters["transitions"] = Value::Array(pairs);
+            }
+            recipe("animation-state-machine")
+                .unwrap()
+                .expand(&object(parameters), None)
+        };
+        assert_eq!(
+            machine(MAX_RECIPE_STATES, 0).unwrap().operations[3]["repeat"]
+                .as_array()
+                .unwrap()
+                .len(),
+            32
+        );
+        assert!(
+            machine(MAX_RECIPE_STATES + 1, 0)
+                .unwrap_err()
+                .message()
+                .contains("1 to 32 states")
+        );
+        assert_eq!(
+            machine(12, MAX_RECIPE_TRANSITIONS).unwrap().operations[4]["repeat"]
+                .as_array()
+                .unwrap()
+                .len(),
+            129
+        );
+        assert!(
+            machine(12, MAX_RECIPE_TRANSITIONS + 1)
+                .unwrap_err()
+                .message()
+                .contains("1 to 128 transitions")
+        );
+        let blend = |count: usize| {
+            recipe("blend-space-1d").unwrap().expand(
+                &object(json!({ "anim_player": "..", "points": points(count) })),
+                None,
+            )
+        };
+        assert_eq!(
+            blend(16).unwrap().operations[3]["repeat"]
+                .as_array()
+                .unwrap()
+                .len(),
+            16
+        );
+        assert!(blend(17).unwrap_err().message().contains("2 to 16 points"));
+        assert!(blend(1).unwrap_err().message().contains("2 to 16 points"));
+    }
+
+    #[test]
+    fn a_blend_space_places_its_points_and_writes_the_lower_end_first() {
+        let blend = recipe("blend-space-1d").unwrap();
+        assert_eq!(
+            blend.expand(&blend.example(), None).unwrap().operations,
+            vec![
+                add_node(".", "AnimationTree", "AnimationTree"),
+                set(
+                    "AnimationTree",
+                    "anim_player",
+                    json!({ "type": "node_path", "value": "../AnimationPlayer" })
+                ),
+                subresource(
+                    "AnimationTree",
+                    "tree_root",
+                    "AnimationNodeBlendSpace1D",
+                    Map::new()
+                ),
+                on_tree_root(
+                    "add_blend_point",
+                    json!([
+                        [animation_node("idle"), float(0.0)],
+                        [animation_node("walk"), float(0.5)],
+                        [animation_node("run"), float(1.0)],
+                    ])
+                ),
+            ]
+        );
+        let range = |parameters: Value| expand("blend-space-1d", parameters);
+        let both = range(json!({
+            "anim_player": "..", "min_space": -10, "max_space": -5,
+            "points": [
+                { "animation": "idle", "position": -10 },
+                { "animation": "walk", "position": -7.5 },
+                { "animation": "run", "position": -5 }
+            ]
+        }));
+        assert_eq!(
+            both[3],
+            set("AnimationTree", "tree_root:min_space", float(-10.0))
+        );
+        assert_eq!(
+            both[4],
+            set("AnimationTree", "tree_root:max_space", float(-5.0))
+        );
+        assert_eq!(both[5]["method"], json!("add_blend_point"));
+        let lower = range(json!({
+            "anim_player": "..", "min_space": 0.5,
+            "points": [{ "animation": "a", "position": 0.5 }, { "animation": "b", "position": 1 }]
+        }));
+        assert_eq!(
+            lower[3],
+            set("AnimationTree", "tree_root:min_space", float(0.5))
+        );
+        assert_eq!(lower[4]["method"], json!("add_blend_point"));
+        let upper = range(json!({
+            "anim_player": "..", "max_space": 4,
+            "points": [{ "animation": "a", "position": -1 }, { "animation": "b", "position": 4 }]
+        }));
+        assert_eq!(
+            upper[3],
+            set("AnimationTree", "tree_root:max_space", float(4.0))
+        );
+        assert_eq!(upper.len(), 5);
+    }
+
+    #[test]
+    fn blend_space_ranges_hold_their_points() {
+        let two = |low: f64, high: f64| {
+            json!([
+                { "animation": "a", "position": low }, { "animation": "b", "position": high }
+            ])
+        };
+        let blend = |extra: Value| {
+            let mut parameters = json!({ "anim_player": "..", "points": two(-1.0, 1.0) });
+            for (key, value) in extra.as_object().unwrap() {
+                parameters[key] = value.clone();
+            }
+            recipe("blend-space-1d")
+                .unwrap()
+                .expand(&object(parameters), None)
+        };
+        assert!(blend(json!({})).is_ok());
+        assert!(
+            blend(json!({ "min_space": 1, "max_space": 5, "points": two(1.0, 5.0) }))
+                .unwrap_err()
+                .message()
+                .contains("below 1")
+        );
+        assert!(
+            blend(json!({ "min_space": 0.5, "max_space": 0.5, "points": two(0.5, 0.5) }))
+                .unwrap_err()
+                .message()
+                .contains("`min_space` must be below `max_space`")
+        );
+        assert!(
+            blend(json!({ "max_space": -2, "points": two(-2.0, -2.0) }))
+                .unwrap_err()
+                .message()
+                .contains("`min_space` must be below `max_space`")
+        );
+        assert!(
+            blend(json!({ "points": two(-1.0, 1.5) }))
+                .unwrap_err()
+                .message()
+                .contains("point 1 at 1.5 lies outside the axis, -1 to 1")
+        );
+        assert!(
+            blend(json!({ "min_space": -3, "points": two(-3.5, 0.0) }))
+                .unwrap_err()
+                .message()
+                .contains("point 0 at -3.5 lies outside the axis, -3 to 1")
+        );
+        let schema = recipe("blend-space-1d").unwrap().parameters_schema();
+        assert_eq!(
+            schema["properties"]["min_space"]["exclusiveMaximum"],
+            json!(1.0)
+        );
+        assert!(schema["properties"]["min_space"].get("maximum").is_none());
+    }
+
+    fn close(value: &Value, expected: [f64; 3]) {
+        for (axis, expected) in ["x", "y", "z"].into_iter().zip(expected) {
+            let actual = value[axis].as_f64().unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{axis}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_3d_fire_draws_camera_facing_quads_with_the_2d_colours() {
+        let operations = expand("particles-3d", json!({}));
+        let fire_2d = expand("particles-2d", json!({}));
+        assert_eq!(
+            operations,
+            vec![
+                add_node(".", "Fire", "GPUParticles3D"),
+                set("Fire", "amount", integer(64)),
+                set("Fire", "lifetime", float(0.8)),
+                subresource(
+                    "Fire",
+                    "process_material",
+                    "ParticleProcessMaterial",
+                    properties([
+                        ("direction", vector3(0.0, 1.0, 0.0)),
+                        ("spread", float(20.0)),
+                        ("initial_velocity_min", float(1.5)),
+                        ("initial_velocity_max", float(2.5)),
+                        ("gravity", vector3(0.0, 1.0, 0.0)),
+                    ])
+                ),
+                fire_2d[4].clone(),
+                fire_2d[5].clone(),
+                subresource(
+                    "Fire",
+                    "draw_pass_1",
+                    "QuadMesh",
+                    properties([("size", vector2(0.25, 0.25))])
+                ),
+                subresource(
+                    "Fire",
+                    "draw_pass_1:material",
+                    "StandardMaterial3D",
+                    properties([
+                        ("transparency", integer(1)),
+                        ("shading_mode", integer(0)),
+                        ("vertex_color_use_as_albedo", boolean(true)),
+                        ("billboard_mode", integer(3)),
+                    ])
+                ),
+            ]
+        );
+        assert_eq!(fire_2d[4]["property"], json!("process_material:color_ramp"));
+    }
+
+    #[test]
+    fn every_3d_particle_preset_names_its_emitter_and_sizes_its_quads() {
+        for (preset, side) in PARTICLE_PRESETS
+            .iter()
+            .zip([0.25, 0.5, 0.05, 0.05, 0.08, 0.25])
+        {
+            let operations = expand("particles-3d", json!({ "preset": preset }));
+            let name = operations[0]["name"].as_str().unwrap().to_owned();
+            assert_eq!(name.to_ascii_lowercase(), *preset);
+            let quad = operations
+                .iter()
+                .find(|operation| operation["class"] == "QuadMesh")
+                .unwrap_or_else(|| panic!("{preset}"));
+            assert_eq!(quad["properties"]["size"], vector2(side, side), "{preset}");
+            assert!(
+                operations
+                    .iter()
+                    .any(|operation| operation["class"] == "ParticleProcessMaterial"),
+                "{preset}"
+            );
+        }
+        let explosion = expand(
+            "particles-3d",
+            json!({ "preset": "explosion", "quad_size": 1 }),
+        );
+        assert_eq!(explosion[3], set("Explosion", "one_shot", boolean(true)));
+        assert_eq!(explosion[4], set("Explosion", "explosiveness", float(1.0)));
+        assert!(
+            explosion
+                .iter()
+                .any(|operation| operation["properties"]["size"] == vector2(1.0, 1.0))
+        );
+        let textured = expand("particles-3d", json!({ "texture": "res://fx/spark.png" }));
+        assert_eq!(
+            textured.last().unwrap()["properties"]["albedo_texture"],
+            resource("res://fx/spark.png", "Texture2D")
+        );
+        assert!(
+            refusal(
+                "particles-3d",
+                json!({ "area": { "x": 1, "y": 1, "z": 1 } })
+            )
+            .contains("`area` applies only when `preset` is rain or snow")
+        );
+    }
+
+    #[test]
+    fn rain_and_snow_fall_from_a_box_that_stays_visible() {
+        let rain = recipe("particles-3d")
+            .unwrap()
+            .expand(&object(json!({ "preset": "rain" })), None)
+            .unwrap();
+        assert_eq!(
+            rain.describe()["parameters"],
+            json!({
+                "preset": "rain", "name": "Rain", "amount": 200, "lifetime": 1.2,
+                "quad_size": 0.05, "area": { "x": 20.0, "y": 1.0, "z": 20.0 }
+            })
+        );
+        let aabb = &rain.operations[3];
+        assert_eq!(aabb["property"], json!("visibility_aabb"));
+        assert_eq!(aabb["value"]["type"], json!("aabb"));
+        close(
+            &aabb["value"]["value"]["position"],
+            [-10.418793960430012, -13.94, -10.418793960430012],
+        );
+        close(
+            &aabb["value"]["value"]["size"],
+            [20.837587920860024, 14.44, 20.837587920860024],
+        );
+        let material = &rain.operations[4]["properties"];
+        assert_eq!(material["emission_shape"], integer(3));
+        assert_eq!(material["emission_box_extents"], vector3(10.0, 0.5, 10.0));
+        assert_eq!(material["direction"], vector3(0.0, -1.0, 0.0));
+        let snow = expand("particles-3d", json!({ "preset": "snow" }));
+        close(
+            &snow[3]["value"]["value"]["position"],
+            [-12.052120859954012, -10.1, -12.052120859954012],
+        );
+        close(
+            &snow[3]["value"]["value"]["size"],
+            [24.104241719908025, 10.6, 24.104241719908025],
+        );
+        let wide = expand(
+            "particles-3d",
+            json!({ "preset": "rain", "area": { "x": 10, "y": 2, "z": 4 }, "lifetime": 2 }),
+        );
+        close(
+            &wide[3]["value"]["value"]["position"],
+            [-5.697989934050019, -25.0, -2.6979899340500193],
+        );
+        close(
+            &wide[3]["value"]["value"]["size"],
+            [11.395979868100039, 26.0, 5.395979868100039],
+        );
+        assert_eq!(
+            wide[4]["properties"]["emission_box_extents"],
+            vector3(5.0, 1.0, 2.0)
+        );
+        let fire = expand("particles-3d", json!({ "preset": "fire" }));
+        assert!(
+            fire.iter()
+                .all(|operation| operation["property"] != "visibility_aabb")
+        );
+    }
+
+    #[test]
+    fn a_3d_navigation_floor_is_a_box_baked_from_its_collision_shape() {
+        let size = || vector3(20.0, 1.0, 20.0);
+        assert_eq!(
+            expand("navigation-3d", json!({})),
+            vec![
+                add_node(".", "Floor", "NavigationRegion3D"),
+                subresource(
+                    "Floor",
+                    "navigation_mesh",
+                    "NavigationMesh",
+                    properties([("geometry_parsed_geometry_type", integer(1))])
+                ),
+                add_node("Floor", "Ground", "StaticBody3D"),
+                set("Floor/Ground", "position", vector3(0.0, -0.5, 0.0)),
+                add_node("Floor/Ground", "Shape", "CollisionShape3D"),
+                subresource(
+                    "Floor/Ground/Shape",
+                    "shape",
+                    "BoxShape3D",
+                    properties([("size", size())])
+                ),
+                add_node("Floor/Ground", "Mesh", "MeshInstance3D"),
+                subresource(
+                    "Floor/Ground/Mesh",
+                    "mesh",
+                    "BoxMesh",
+                    properties([("size", size())])
+                ),
+                call("Floor", "bake_navigation_mesh", vec![boolean(false)]),
+                add_node(".", "Walker", "CharacterBody3D"),
+                add_node("Walker", "Agent", "NavigationAgent3D"),
+            ]
+        );
+        let bare = expand("navigation-3d", json!({ "mesh": false, "walker": false }));
+        assert_eq!(bare.len(), 7);
+        assert_eq!(
+            bare[6],
+            call("Floor", "bake_navigation_mesh", vec![boolean(false)])
+        );
+        let tuned = recipe("navigation-3d")
+            .unwrap()
+            .expand(
+                &object(json!({
+                    "size": { "x": 8, "y": 2, "z": 6 }, "navigation_layers": 3,
+                    "agent_radius": 0.5, "agent_height": 2, "walker_radius": 0.4,
+                    "path_desired_distance": 0.6, "target_desired_distance": 0.7,
+                    "avoidance": true
+                })),
+                Some("Level"),
+            )
+            .unwrap()
+            .operations;
+        assert_eq!(
+            tuned[1],
+            set("Level/Floor", "navigation_layers", integer(3))
+        );
+        assert_eq!(
+            tuned[2],
+            subresource(
+                "Level/Floor",
+                "navigation_mesh",
+                "NavigationMesh",
+                properties([
+                    ("geometry_parsed_geometry_type", integer(1)),
+                    ("agent_radius", float(0.5)),
+                    ("agent_height", float(2.0)),
+                ])
+            )
+        );
+        assert_eq!(
+            tuned[4],
+            set("Level/Floor/Ground", "position", vector3(0.0, -1.0, 0.0))
+        );
+        assert_eq!(tuned[6]["properties"]["size"], vector3(8.0, 2.0, 6.0));
+        assert_eq!(
+            tuned[10..],
+            [
+                add_node("Level", "Walker", "CharacterBody3D"),
+                add_node("Level/Walker", "Agent", "NavigationAgent3D"),
+                set("Level/Walker/Agent", "path_desired_distance", float(0.6)),
+                set("Level/Walker/Agent", "target_desired_distance", float(0.7)),
+                set("Level/Walker/Agent", "radius", float(0.4)),
+                set("Level/Walker/Agent", "avoidance_enabled", boolean(true)),
+                set("Level/Walker/Agent", "navigation_layers", integer(3)),
+            ]
+        );
+        assert!(
+            refusal(
+                "navigation-3d",
+                json!({ "walker": false, "walker_radius": 1 })
+            )
+            .contains("`walker_radius` applies only when `walker` is true")
+        );
+    }
+
+    #[test]
+    fn a_3d_sound_writes_what_it_is_given() {
+        assert_eq!(
+            expand(
+                "audio-3d",
+                json!({
+                    "stream": "res://audio/hum.ogg", "volume_db": -6, "max_distance": 30,
+                    "unit_size": 2, "attenuation_model": "logarithmic", "bus": "SFX",
+                    "autoplay": true
+                })
+            ),
+            vec![
+                add_node(".", "Sound", "AudioStreamPlayer3D"),
+                set(
+                    "Sound",
+                    "stream",
+                    resource("res://audio/hum.ogg", "AudioStream")
+                ),
+                set("Sound", "volume_db", float(-6.0)),
+                set("Sound", "max_distance", float(30.0)),
+                set("Sound", "unit_size", float(2.0)),
+                set("Sound", "attenuation_model", integer(2)),
+                set("Sound", "bus", string_name("SFX")),
+                set("Sound", "autoplay", boolean(true)),
+            ]
+        );
+        assert_eq!(
+            expand(
+                "audio-3d",
+                json!({ "stream": "res://a.wav", "attenuation_model": "disabled" })
+            )[2],
+            set("Sound", "attenuation_model", integer(3))
+        );
+        assert!(refusal("audio-3d", json!({})).contains("`stream` is required"));
+    }
+
+    fn on_material(property: &str, value: Value) -> Value {
+        json!({ "op": "set_property", "property": property, "value": value })
+    }
+
+    #[test]
+    fn a_material_sets_its_own_properties() {
+        let material = recipe("material-3d").unwrap();
+        assert_eq!(
+            material.target,
+            RecipeTarget::Resource {
+                class: "StandardMaterial3D"
+            }
+        );
+        assert_eq!(
+            material
+                .expand(&material.example(), None)
+                .unwrap()
+                .operations,
+            vec![
+                on_material("albedo_color", color_value(0.8, 0.5, 0.2, 1.0)),
+                on_material("roughness", float(0.7)),
+            ]
+        );
+        assert_eq!(
+            expand(
+                "material-3d",
+                json!({
+                    "albedo_color": { "red": 1, "green": 1, "blue": 1, "alpha": 1 },
+                    "albedo_texture": "res://t/a.png", "metallic": 1, "roughness": 0.25,
+                    "normal_texture": "res://t/n.png",
+                    "emission": { "red": 1, "green": 0, "blue": 0, "alpha": 1 },
+                    "emission_energy": 3, "transparency": "alpha_hash",
+                    "cull_mode": "disabled", "unshaded": true
+                })
+            ),
+            vec![
+                on_material("albedo_color", color_value(1.0, 1.0, 1.0, 1.0)),
+                on_material("albedo_texture", resource("res://t/a.png", "Texture2D")),
+                on_material("metallic", float(1.0)),
+                on_material("roughness", float(0.25)),
+                on_material("normal_enabled", boolean(true)),
+                on_material("normal_texture", resource("res://t/n.png", "Texture2D")),
+                on_material("emission_enabled", boolean(true)),
+                on_material("emission", color_value(1.0, 0.0, 0.0, 1.0)),
+                on_material("emission_energy_multiplier", float(3.0)),
+                on_material("transparency", integer(3)),
+                on_material("cull_mode", integer(2)),
+                on_material("shading_mode", integer(0)),
+            ]
+        );
+        assert_eq!(
+            expand("material-3d", json!({ "emission_energy": 2 })),
+            vec![
+                on_material("emission_enabled", boolean(true)),
+                on_material("emission_energy_multiplier", float(2.0)),
+            ]
+        );
+        assert!(expand("material-3d", json!({ "unshaded": false })).is_empty());
+        assert!(refusal("material-3d", json!({})).contains("at least one parameter"));
+        assert!(
+            material
+                .expand(&material.example(), Some("Level"))
+                .unwrap_err()
+                .message()
+                .contains("makes a resource")
+        );
+        assert_eq!(material.parameters_schema()["minProperties"], json!(1));
+    }
+
+    #[test]
+    fn resource_recipes_are_keyed_apart_from_scene_recipes() {
+        let resources: Vec<&str> = resource_recipes().map(|recipe| recipe.id).collect();
+        assert_eq!(resources, ["theme", "material-3d"]);
+        let keyed = resource_recipe_schema();
+        assert_eq!(keyed["maxProperties"], json!(1));
+        assert_eq!(keyed["minProperties"], json!(1));
+        assert!(keyed["properties"].get("material-3d").is_some());
+        assert!(keyed["properties"].get("body-2d").is_none());
+        assert!(recipe_schema()["properties"].get("material-3d").is_none());
+        assert_eq!(RECIPES.len(), 17);
+        assert_eq!(
+            RECIPES.iter().map(|recipe| recipe.id).collect::<Vec<_>>(),
+            [
+                "body-2d",
+                "body-3d",
+                "light-3d",
+                "particles-2d",
+                "particles-3d",
+                "navigation-2d",
+                "navigation-3d",
+                "audio-2d",
+                "audio-3d",
+                "shader-2d",
+                "hud",
+                "gridmap-3d",
+                "joystick",
+                "animation-state-machine",
+                "blend-space-1d",
+                "theme",
+                "material-3d",
+            ]
+        );
+    }
+
+    #[test]
+    fn only_three_recipes_need_an_example() {
+        let with_examples: Vec<&str> = RECIPES
+            .iter()
+            .filter(|recipe| !recipe.example().is_empty())
+            .map(|recipe| recipe.id)
+            .collect();
+        assert_eq!(
+            with_examples,
+            ["animation-state-machine", "blend-space-1d", "material-3d"]
+        );
+        assert_eq!(
+            Value::Object(recipe("blend-space-1d").unwrap().example()),
+            json!({
+                "anim_player": "../AnimationPlayer",
+                "points": [
+                    { "animation": "idle", "position": 0.0 },
+                    { "animation": "walk", "position": 0.5 },
+                    { "animation": "run", "position": 1.0 }
+                ]
+            })
+        );
     }
 }

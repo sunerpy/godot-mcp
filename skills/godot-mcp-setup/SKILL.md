@@ -4,7 +4,7 @@ description: "Install, connect, configure and diagnose godot-mcp, the MCP server
 license: MIT
 compatibility: "Uses the godot-mcp command line, which installs and registers without a Godot build. The MCP tools it names need a connected server with the editor or full profile; the tools that run Godot need a Godot 4.4.0 or later editor build."
 metadata:
-  contract: "0.7.0"
+  contract: "0.8.0"
   profiles: "editor,full"
 ---
 
@@ -15,7 +15,7 @@ This skill gets it installed, registered with the client and connected to Godot 
 editor, and reads `health.get` when something is missing. Until the client has started the
 server, no godot-mcp tool exists, so the first steps run on the command line.
 
-This skill describes contract 0.7.0, the `contract` of its metadata. `godot-mcp version` prints
+This skill describes contract 0.8.0, the `contract` of its metadata. `godot-mcp version` prints
 the server and contract versions, and `health.get` reports the contract as `schema_version`;
 when they differ, follow the tool schemas.
 
