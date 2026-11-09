@@ -103,26 +103,29 @@ pub(super) struct AuthorRequest {
     /// Every node handle the operations use, resolved before any engine runs.
     pub(super) handles: BTreeSet<String>,
     pub(super) dry_run: bool,
-    /// The recipe a `scene.recipe.apply` request expanded into this batch.
+    /// The recipe a `scene.recipe.apply` request expanded into this batch, or
+    /// a `resource.create` request into this new resource.
     pub(super) recipe: Option<RecipeApplied>,
 }
 
-/// What a `scene.recipe.apply` request adds to its batch's answer.
+/// What a recipe adds to the answer of the request it expanded into.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RecipeApplied {
-    /// The answer's `recipe`: the recipe, its parent and its resolved
-    /// parameters.
+    /// The answer's `recipe`: the recipe, its parent for a scene recipe, and
+    /// its resolved parameters.
     pub(super) described: Value,
-    /// The answer's `operations`: the batch the recipe expanded into.
+    /// The answer's `operations`: the operations the recipe expanded into.
     pub(super) operations: Value,
 }
 
 impl AuthorRequest {
     /// The public tool this request came through: the authoring tool of its
-    /// kind, or `scene.recipe.apply` for a recipe. The journal, the idempotency
-    /// record, the transaction id and the editor's undo label all name it.
+    /// kind, or `scene.recipe.apply` for a scene batch a recipe made. A
+    /// resource recipe comes through `resource.create` itself. The journal,
+    /// the idempotency record, the transaction id and the editor's undo label
+    /// all name it.
     pub(super) fn tool(&self) -> &'static str {
-        if self.recipe.is_some() {
+        if self.recipe.is_some() && self.kind == AuthorKind::SceneBatch {
             godot_mcp_domain::recipes::RECIPE_TOOL
         } else {
             self.kind.tool_name()

@@ -207,6 +207,18 @@ impl ProductionProcessBoundary {
     }
 }
 
+/// Whether the engine tool `tool` takes `arguments`, as its handler parses
+/// them once the kernel has taken the idempotency identifier off.
+#[cfg(test)]
+pub(crate) fn takes(tool: &str, arguments: serde_json::Map<String, serde_json::Value>) -> bool {
+    let operation = request::EngineOperation::ALL
+        .iter()
+        .copied()
+        .find(|operation| operation.tool_name() == tool)
+        .unwrap_or_else(|| panic!("{tool} is not an engine tool"));
+    request::EngineRequest::parse(operation, arguments).is_ok()
+}
+
 pub(crate) fn reconcile_project_launches(
     store: Arc<TransactionStore>,
     state_dir: &Path,

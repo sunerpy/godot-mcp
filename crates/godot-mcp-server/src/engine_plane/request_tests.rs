@@ -148,7 +148,14 @@ fn operation_contracts() -> [(
         ),
         (
             EngineOperation::ResourceCreate,
-            &["path", "class", "operations", "expectedRevision", "dryRun"],
+            &[
+                "path",
+                "class",
+                "operations",
+                "recipe",
+                "expectedRevision",
+                "dryRun",
+            ],
             &["path", "idempotencyId"],
         ),
         (
@@ -1096,9 +1103,11 @@ fn recipe_request(extra: Value) -> Value {
     request
 }
 
-/// The `scene.recipe.apply` schema and the parser give the same verdict on
-/// every case, and it is the intended one: one scene recipe keyed by its name,
-/// parameters of the right shape, range and variant, and a node path parent.
+/// The `scene.recipe.apply` schema and the parser give the intended verdict
+/// on every case: one scene recipe keyed by its name, parameters of the right
+/// shape, range and variant, and a node path parent. They give the same
+/// verdict on every case but the rules across values the registry lists,
+/// which the schema accepts and the parser refuses.
 #[test]
 fn the_scene_recipe_schema_and_the_parser_agree() {
     let long_name = "名".repeat(godot_mcp_domain::recipes::MAX_NAME_CHARS);
@@ -1110,7 +1119,7 @@ fn the_scene_recipe_schema_and_the_parser_agree() {
     let too_many_cells: Vec<Value> = (0..4097)
         .map(|index| json!({ "x": index % 100, "y": 0, "z": index / 100 }))
         .collect();
-    let cases = [
+    let agreed = [
         // The recipe object.
         (json!({ "recipe": { "body-2d": {} } }), true),
         (json!({ "recipe": {} }), false),
@@ -1511,12 +1520,22 @@ fn the_scene_recipe_schema_and_the_parser_agree() {
             false,
         ),
     ];
+    let mut cases: Vec<(Value, bool, bool)> = agreed
+        .into_iter()
+        .map(|(case, verdict)| (case, verdict, verdict))
+        .collect();
+    cases.extend(
+        new_recipe_cases()
+            .into_iter()
+            .map(|(case, verdict)| (case, verdict, verdict)),
+    );
+    cases.extend(rules_across_values());
     let mut schema = advertised_schema(EngineOperation::SceneRecipe);
     // The kernel takes the idempotency identifier off before the handler
     // parses; the schema is checked on what the handler sees.
     schema["required"] = json!(["path", "expectedSha256", "recipe"]);
     let schema = Value::Object(schema);
-    for (extra, expected) in &cases {
+    for (extra, schema_verdict, parser_verdict) in &cases {
         let case =
             if extra.get("recipe").is_some() || extra.as_object().is_some_and(|o| o.is_empty()) {
                 recipe_request(extra.clone())
@@ -1526,7 +1545,7 @@ fn the_scene_recipe_schema_and_the_parser_agree() {
         let shown = case.to_string().chars().take(160).collect::<String>();
         assert_eq!(
             crate::schema::conformance::conforms(&schema, &case),
-            *expected,
+            *schema_verdict,
             "the schema's verdict on {shown}"
         );
         assert_eq!(
@@ -1535,9 +1554,643 @@ fn the_scene_recipe_schema_and_the_parser_agree() {
                 case.as_object().expect("arguments").clone()
             )
             .is_ok(),
-            *expected,
+            *parser_verdict,
             "the parser's verdict on {shown}"
         );
+    }
+}
+
+/// `count` states named s0, s1, ….
+fn named_states(count: usize) -> Value {
+    Value::Array(
+        (0..count)
+            .map(|index| json!({ "name": format!("s{index}"), "animation": "idle" }))
+            .collect(),
+    )
+}
+
+/// The first `count` transitions between twelve states, each pair once.
+fn distinct_transitions(count: usize) -> Value {
+    let mut transitions = Vec::new();
+    for from in 0..12 {
+        for to in 0..12 {
+            if from != to && transitions.len() < count {
+                transitions.push(json!({ "from": format!("s{from}"), "to": format!("s{to}") }));
+            }
+        }
+    }
+    Value::Array(transitions)
+}
+
+/// The cases of the recipes added in contract 0.8.0, each with the verdict
+/// the schema and the parser both give.
+#[allow(clippy::too_many_lines)]
+fn new_recipe_cases() -> Vec<(Value, bool)> {
+    let machine = |extra: Value| {
+        let mut parameters = json!({
+            "anim_player": "../AnimationPlayer",
+            "states": [
+                { "name": "idle", "animation": "idle" },
+                { "name": "walk", "animation": "walk" }
+            ]
+        });
+        for (key, value) in extra.as_object().expect("extra parameters") {
+            parameters[key] = value.clone();
+        }
+        json!({ "recipe": { "animation-state-machine": parameters } })
+    };
+    let blend = |extra: Value| {
+        let mut parameters = json!({
+            "anim_player": "../AnimationPlayer",
+            "points": [{ "animation": "a", "position": -1 }, { "animation": "b", "position": 1 }]
+        });
+        for (key, value) in extra.as_object().expect("extra parameters") {
+            parameters[key] = value.clone();
+        }
+        json!({ "recipe": { "blend-space-1d": parameters } })
+    };
+    let points = |count: usize| {
+        Value::Array(
+            (0..count)
+                .map(|index| {
+                    json!({ "animation": "a", "position": if index == 0 { -1.0 } else { 1.0 } })
+                })
+                .collect(),
+        )
+    };
+    let example = |id: &str| {
+        json!({ "recipe": {
+            id: godot_mcp_domain::recipes::recipe(id).expect("a recipe").example()
+        } })
+    };
+    vec![
+        // animation-state-machine
+        (example("animation-state-machine"), true),
+        (machine(json!({})), true),
+        (
+            json!({ "recipe": { "animation-state-machine": { "states": [{ "name": "a", "animation": "a" }] } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "animation-state-machine": { "anim_player": ".." } } }),
+            false,
+        ),
+        (machine(json!({ "states": [] })), false),
+        (machine(json!({ "states": named_states(32) })), true),
+        (machine(json!({ "states": named_states(33) })), false),
+        (
+            machine(
+                json!({ "states": named_states(12), "transitions": distinct_transitions(128) }),
+            ),
+            true,
+        ),
+        (
+            machine(
+                json!({ "states": named_states(12), "transitions": distinct_transitions(129) }),
+            ),
+            false,
+        ),
+        (machine(json!({ "transitions": [] })), false),
+        (
+            machine(json!({ "states": [{ "name": "Start", "animation": "a" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "End", "animation": "a" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a.b", "animation": "a" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "a", "speed": 1 }] })),
+            false,
+        ),
+        (machine(json!({ "states": [{ "name": "a" }] })), false),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "lib/run" }] })),
+            true,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "x".repeat(256) }] })),
+            true,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "x".repeat(257) }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "a/b/c" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "a:b" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "a,b" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "a[b" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "/a" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "states": [{ "name": "a", "animation": "a\u{1}" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "idle", "to": "End" }] })),
+            true,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "Start", "to": "idle" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "End", "to": "idle" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "idle", "to": "Start" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "idle" }] })),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{
+                "from": "idle", "to": "walk", "switch_mode": "sync", "advance_mode": "auto",
+                "advance_condition": "x".repeat(64), "xfade_time": 3600
+            }] })),
+            true,
+        ),
+        (
+            machine(
+                json!({ "transitions": [{ "from": "idle", "to": "walk", "switch_mode": "later" }] }),
+            ),
+            false,
+        ),
+        (
+            machine(
+                json!({ "transitions": [{ "from": "idle", "to": "walk", "advance_mode": "manual" }] }),
+            ),
+            false,
+        ),
+        (
+            machine(
+                json!({ "transitions": [{ "from": "idle", "to": "walk", "advance_condition": "1x" }] }),
+            ),
+            false,
+        ),
+        (
+            machine(
+                json!({ "transitions": [{ "from": "idle", "to": "walk", "advance_condition": "x".repeat(65) }] }),
+            ),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "idle", "to": "walk", "xfade_time": -1 }] })),
+            false,
+        ),
+        (
+            machine(
+                json!({ "transitions": [{ "from": "idle", "to": "walk", "xfade_time": 3600.5 }] }),
+            ),
+            false,
+        ),
+        (
+            machine(json!({ "transitions": [{ "from": "idle", "to": "walk", "delay": 1 }] })),
+            false,
+        ),
+        (machine(json!({ "start": "walk" })), true),
+        (machine(json!({ "start": "Start" })), false),
+        (machine(json!({ "anim_player": ".." })), true),
+        (machine(json!({ "anim_player": "../../Rig/..x/.y" })), true),
+        (machine(json!({ "anim_player": "a".repeat(256) })), true),
+        (machine(json!({ "anim_player": "a".repeat(257) })), false),
+        (machine(json!({ "anim_player": "" })), false),
+        (machine(json!({ "anim_player": "/root/Player" })), false),
+        (machine(json!({ "anim_player": "a//b" })), false),
+        (machine(json!({ "anim_player": "." })), false),
+        (machine(json!({ "anim_player": "./Player" })), false),
+        (machine(json!({ "anim_player": "a/" })), false),
+        (machine(json!({ "anim_player": "a:b" })), false),
+        (machine(json!({ "anim_player": "a/\u{1}" })), false),
+        // blend-space-1d
+        (example("blend-space-1d"), true),
+        (
+            json!({ "recipe": { "blend-space-1d": { "points": points(2) } } }),
+            false,
+        ),
+        (blend(json!({ "points": points(1) })), false),
+        (blend(json!({ "points": points(16) })), true),
+        (blend(json!({ "points": points(17) })), false),
+        (
+            blend(
+                json!({ "points": [{ "animation": "a", "position": 0, "weight": 1 }, { "animation": "b", "position": 1 }] }),
+            ),
+            false,
+        ),
+        (
+            blend(json!({ "points": [{ "animation": "a" }, { "animation": "b", "position": 1 }] })),
+            false,
+        ),
+        (
+            blend(json!({ "max_space": 100_001, "points": points(2) })),
+            false,
+        ),
+        (blend(json!({ "min_space": 1, "max_space": 5 })), false),
+        (blend(json!({ "min_space": -100_001 })), false),
+        (
+            blend(json!({ "min_space": -100_000, "max_space": 100_000 })),
+            true,
+        ),
+        (
+            blend(json!({ "min_space": 0.999, "max_space": 5, "points": [
+                { "animation": "a", "position": 0.999 }, { "animation": "b", "position": 5 }
+            ] })),
+            true,
+        ),
+        // particles-3d
+        (json!({ "recipe": { "particles-3d": {} } }), true),
+        (
+            json!({ "recipe": { "particles-3d": { "preset": "rain", "area": { "x": 4, "y": 1, "z": 4 } } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "particles-3d": { "area": { "x": 4, "y": 1, "z": 4 } } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-3d": { "preset": "snow", "area": { "x": 0, "y": 1, "z": 4 } } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-3d": { "quad_size": 100 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "particles-3d": { "quad_size": 0 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-3d": { "quad_size": 100.5 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "particles-3d": { "preset": "hail" } } }),
+            false,
+        ),
+        // navigation-3d
+        (json!({ "recipe": { "navigation-3d": {} } }), true),
+        (
+            json!({ "recipe": { "navigation-3d": { "mesh": false, "walker": false } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "navigation-3d": { "walker": false, "avoidance": true } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "navigation-3d": { "agent_height": 0 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "navigation-3d": { "agent_radius": 0 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "navigation-3d": { "size": { "x": 1, "y": 0, "z": 1 } } } }),
+            false,
+        ),
+        // audio-3d
+        (json!({ "recipe": { "audio-3d": {} } }), false),
+        (
+            json!({ "recipe": { "audio-3d": { "stream": "res://audio/hum.ogg", "unit_size": 100 } } }),
+            true,
+        ),
+        (
+            json!({ "recipe": { "audio-3d": { "stream": "res://audio/hum.ogg", "unit_size": 0 } } }),
+            false,
+        ),
+        (
+            json!({ "recipe": { "audio-3d": { "stream": "res://audio/hum.ogg", "attenuation_model": "linear" } } }),
+            false,
+        ),
+        // A resource recipe is resource.create's.
+        (
+            json!({ "recipe": { "material-3d": { "roughness": 0.5 } } }),
+            false,
+        ),
+    ]
+}
+
+/// The rules across values the registry lists: the schema cannot state them,
+/// so it accepts these requests and the parser refuses them.
+fn rules_across_values() -> Vec<(Value, bool, bool)> {
+    let machine = |states: Value, extra: Value| {
+        let mut parameters = json!({ "anim_player": "..", "states": states });
+        for (key, value) in extra.as_object().expect("extra parameters") {
+            parameters[key] = value.clone();
+        }
+        json!({ "recipe": { "animation-state-machine": parameters } })
+    };
+    let two = || json!([{ "name": "a", "animation": "a" }, { "name": "b", "animation": "b" }]);
+    let blend = |extra: Value| {
+        let mut parameters = json!({ "anim_player": ".." });
+        for (key, value) in extra.as_object().expect("extra parameters") {
+            parameters[key] = value.clone();
+        }
+        json!({ "recipe": { "blend-space-1d": parameters } })
+    };
+    vec![
+        // 1. state names are distinct
+        (
+            machine(
+                json!([{ "name": "a", "animation": "a" }, { "name": "a", "animation": "b" }]),
+                json!({}),
+            ),
+            true,
+            false,
+        ),
+        // 2. transitions join declared states, never one to itself, each way once
+        (
+            machine(
+                two(),
+                json!({ "transitions": [{ "from": "c", "to": "a" }] }),
+            ),
+            true,
+            false,
+        ),
+        (
+            machine(
+                two(),
+                json!({ "transitions": [{ "from": "a", "to": "c" }] }),
+            ),
+            true,
+            false,
+        ),
+        (
+            machine(
+                two(),
+                json!({ "transitions": [{ "from": "a", "to": "a" }] }),
+            ),
+            true,
+            false,
+        ),
+        (
+            machine(
+                two(),
+                json!({ "transitions": [{ "from": "a", "to": "b" }, { "from": "a", "to": "b" }] }),
+            ),
+            true,
+            false,
+        ),
+        // 3. the start state is declared
+        (machine(two(), json!({ "start": "c" })), true, false),
+        // 4. the axis runs upwards
+        (
+            blend(json!({ "min_space": 0.5, "max_space": 0.5, "points": [
+                { "animation": "a", "position": 0.5 }, { "animation": "b", "position": 0.5 }
+            ] })),
+            true,
+            false,
+        ),
+        (
+            blend(json!({ "max_space": -2, "points": [
+                { "animation": "a", "position": -2 }, { "animation": "b", "position": -2 }
+            ] })),
+            true,
+            false,
+        ),
+        // 5. the points lie on the axis
+        (
+            blend(json!({ "points": [
+                { "animation": "a", "position": -1 }, { "animation": "b", "position": 1.5 }
+            ] })),
+            true,
+            false,
+        ),
+    ]
+}
+
+/// A `resource.create` request beside the fields every valid request carries.
+fn resource_request(extra: Value) -> Value {
+    let mut request = json!({ "path": "materials/stone.tres" });
+    for (key, value) in extra.as_object().expect("extra fields") {
+        request[key] = value.clone();
+    }
+    request
+}
+
+/// The `resource.create` schema and the parser give the intended verdict on a
+/// `recipe`: one resource recipe keyed by its name, with parameters of the
+/// right shape. A recipe beside `class` or `operations` is a rule across
+/// top-level fields, which no tool schema states, so the schema accepts it
+/// and the parser refuses it.
+#[test]
+fn the_resource_recipe_schema_and_the_parser_agree() {
+    let cases = [
+        (
+            json!({ "recipe": { "material-3d": { "roughness": 0.5 } } }),
+            true,
+            true,
+        ),
+        (json!({ "recipe": { "theme": {} } }), true, true),
+        (
+            json!({ "recipe": { "material-3d": { "unshaded": false } } }),
+            true,
+            true,
+        ),
+        (
+            json!({ "recipe": { "material-3d": { "metallic": 1 } }, "dryRun": true, "expectedRevision": 3 }),
+            true,
+            true,
+        ),
+        (
+            json!({ "recipe": {
+                "material-3d": godot_mcp_domain::recipes::recipe("material-3d")
+                    .expect("a recipe")
+                    .example()
+            } }),
+            true,
+            true,
+        ),
+        (json!({ "recipe": { "material-3d": {} } }), false, false),
+        (
+            json!({ "recipe": { "material-3d": { "roughness": 2 } } }),
+            false,
+            false,
+        ),
+        (
+            json!({ "recipe": { "material-3d": { "transparency": "glass" } } }),
+            false,
+            false,
+        ),
+        (
+            json!({ "recipe": { "material-3d": { "albedo_texture": "textures/a.png" } } }),
+            false,
+            false,
+        ),
+        (
+            json!({ "recipe": { "theme": { "font_size": 3 } } }),
+            false,
+            false,
+        ),
+        (json!({ "recipe": { "body-2d": {} } }), false, false),
+        (json!({ "recipe": { "fog": {} } }), false, false),
+        (json!({ "recipe": {} }), false, false),
+        (
+            json!({ "recipe": { "theme": {}, "material-3d": { "metallic": 1 } } }),
+            false,
+            false,
+        ),
+        (json!({ "recipe": "theme" }), false, false),
+        (json!({ "recipe": { "theme": [] } }), false, false),
+        (json!({ "recipe": null }), false, false),
+        (
+            json!({ "recipe": { "theme": {} }, "parent": "." }),
+            false,
+            false,
+        ),
+        // Without a recipe, resource.create is unchanged.
+        (json!({}), true, true),
+        (json!({ "class": "Theme", "operations": [] }), true, true),
+        // A rule across top-level fields.
+        (
+            json!({ "recipe": { "theme": {} }, "class": "Theme" }),
+            true,
+            false,
+        ),
+        (
+            json!({ "recipe": { "theme": {} }, "operations": [] }),
+            true,
+            false,
+        ),
+        (
+            json!({ "recipe": { "theme": {} }, "class": "Theme", "operations": [] }),
+            true,
+            false,
+        ),
+    ];
+    let mut schema = advertised_schema(EngineOperation::ResourceCreate);
+    schema["required"] = json!(["path"]);
+    let schema = Value::Object(schema);
+    for (extra, schema_verdict, parser_verdict) in &cases {
+        let case = resource_request(extra.clone());
+        let shown = case.to_string().chars().take(160).collect::<String>();
+        assert_eq!(
+            crate::schema::conformance::conforms(&schema, &case),
+            *schema_verdict,
+            "the schema's verdict on {shown}"
+        );
+        assert_eq!(
+            EngineRequest::parse(
+                EngineOperation::ResourceCreate,
+                case.as_object().expect("arguments").clone()
+            )
+            .is_ok(),
+            *parser_verdict,
+            "the parser's verdict on {shown}"
+        );
+    }
+}
+
+/// A resource recipe becomes the `resource.create` request its recipe expands
+/// to, under `resource.create`'s own name, and carries its recipe into the
+/// answer.
+#[test]
+fn a_resource_recipe_is_the_resource_its_recipe_expands_to() {
+    let parameters = json!({ "roughness": 0.25, "emission_energy": 2 });
+    let arguments = resource_request(json!({
+        "recipe": { "material-3d": parameters },
+        "dryRun": true,
+    }));
+    let EngineRequest::Author(author) = EngineRequest::parse(
+        EngineOperation::ResourceCreate,
+        arguments.as_object().expect("arguments").clone(),
+    )
+    .expect("a resource recipe request parses") else {
+        panic!("resource.create must parse into an authored request");
+    };
+    assert_eq!(author.tool(), "resource.create");
+    assert_eq!(author.kind, super::authored::AuthorKind::ResourceCreate);
+    assert_eq!(author.resource_class.as_deref(), Some("StandardMaterial3D"));
+    assert_eq!(author.target, "materials/stone.tres");
+    assert!(author.dry_run);
+    let expansion = godot_mcp_domain::recipes::recipe("material-3d")
+        .expect("the material recipe")
+        .expand(parameters.as_object().expect("parameters"), None)
+        .expect("the parameters are accepted");
+    assert_eq!(
+        serde_json::from_str::<Value>(&author.batch).expect("the batch is JSON"),
+        Value::Array(expansion.operations.clone())
+    );
+    let mut answer = Map::new();
+    author.annotate(&mut answer);
+    assert_eq!(
+        answer["recipe"],
+        json!({
+            "id": "material-3d",
+            "parameters": { "roughness": 0.25, "emission_energy": 2.0 }
+        })
+    );
+    assert_eq!(answer["operations"], Value::Array(expansion.operations));
+
+    let theme = resource_request(json!({ "recipe": { "theme": {} } }));
+    let EngineRequest::Author(theme) = EngineRequest::parse(
+        EngineOperation::ResourceCreate,
+        theme.as_object().expect("arguments").clone(),
+    )
+    .expect("the theme recipe parses") else {
+        panic!("resource.create must parse into an authored request");
+    };
+    assert_eq!(theme.resource_class.as_deref(), Some("Theme"));
+    assert_eq!(theme.tool(), "resource.create");
+
+    for (extra, needle) in [
+        (
+            json!({ "recipe": { "body-2d": {} } }),
+            "apply it with scene.recipe.apply",
+        ),
+        (
+            json!({ "recipe": { "fog": {} } }),
+            "the resource recipes are theme, material-3d",
+        ),
+        (
+            json!({ "recipe": { "material-3d": {} } }),
+            "at least one parameter",
+        ),
+        (
+            json!({ "recipe": { "theme": {} }, "class": "Theme" }),
+            "takes no `class`",
+        ),
+        (
+            json!({ "recipe": { "theme": {} }, "operations": [] }),
+            "takes no `operations`",
+        ),
+    ] {
+        let error = EngineRequest::parse(
+            EngineOperation::ResourceCreate,
+            resource_request(extra)
+                .as_object()
+                .expect("arguments")
+                .clone(),
+        )
+        .expect_err("the request is refused");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+        assert!(error.to_string().contains(needle), "{error}");
     }
 }
 
@@ -1581,7 +2234,11 @@ fn a_recipe_request_is_the_scene_batch_its_recipe_expands_to() {
     assert_eq!(answer["operations"], Value::Array(expansion.operations));
 
     for (recipe, needle) in [
-        (json!({ "theme": {} }), "resource.create"),
+        (json!({ "theme": {} }), "resource.create and `recipe`"),
+        (
+            json!({ "material-3d": { "metallic": 1 } }),
+            "resource.create and `recipe`",
+        ),
         (json!({ "fog": {} }), "there is no recipe \"fog\""),
         (
             json!({ "body-2d": { "shape": "circle", "height": 3 } }),
