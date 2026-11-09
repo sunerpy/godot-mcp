@@ -159,6 +159,23 @@ fn every_request_the_recipes_page_shows_is_one_its_tools_take() {
         let (kind, attributes) = attributes(annotation);
         let id = attributes["id"].to_owned();
         match kind {
+            "recipe-call" if attributes.contains_key("class") => {
+                let mut call = block.json.clone();
+                call["idempotencyId"] = json!("docs-recipe");
+                taken(
+                    "resource.create",
+                    &call,
+                    |arguments| super::recipe::parse_resource_create(arguments).is_ok(),
+                    &at,
+                );
+                resources.insert(
+                    id,
+                    (
+                        attributes["path"].to_owned(),
+                        attributes["class"].to_owned(),
+                    ),
+                );
+            }
             "recipe-call" => {
                 let mut call = block.json.clone();
                 call["expectedSha256"] = json!(SHA);
@@ -174,17 +191,18 @@ fn every_request_the_recipes_page_shows_is_one_its_tools_take() {
                     (attributes["path"].to_owned(), attributes["root"].to_owned()),
                 );
             }
-            "recipe" if attributes.contains_key("class") => {
-                let (path, class) = (attributes["path"], attributes["class"]);
+            "recipe" if resources.contains_key(&id) => {
+                // A resource recipe's operations also make the resource
+                // without the recipe, as `class` and `operations`.
+                let (path, class) = &resources[&id];
                 let create = json!({ "path": path, "class": class, "operations": block.json,
                                      "idempotencyId": "docs-resource" });
                 taken(
                     "resource.create",
                     &create,
-                    |arguments| authored::parse(AuthorKind::ResourceCreate, arguments).is_ok(),
+                    |arguments| super::recipe::parse_resource_create(arguments).is_ok(),
                     &at,
                 );
-                resources.insert(id, (path.to_owned(), class.to_owned()));
             }
             "recipe" => {
                 let (path, root) = scenes

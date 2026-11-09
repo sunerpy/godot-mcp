@@ -1,10 +1,11 @@
 # Recipes
 
-Common setups by name: ten that `scene.recipe.apply` adds to a scene — a 2D or 3D physics body,
-lights and a sky, particles, navigation, a sound, a shader material, a HUD, a grid map and an
-on-screen joystick — and a theme, a resource that `resource.create` makes. A recipe is a named
-batch of the typed operations every authoring tool takes, with parameters: the call names the
-recipe and its parameters, the server expands them into operations and applies them as one
+Common setups by name: fifteen that `scene.recipe.apply` adds to a scene — a 2D or 3D physics
+body, lights and a sky, 2D and 3D particles, 2D and 3D navigation, a 2D or 3D sound, a shader
+material, a HUD, a grid map, an on-screen joystick, and an AnimationTree state machine or blend
+space — and two resources that `resource.create` makes, a theme and a 3D material. A recipe is a
+named batch of the typed operations every authoring tool takes, with parameters: the call names
+the recipe and its parameters, the server expands them into operations and applies them as one
 `scene.batch.apply` batch, journaled and against the scene's SHA-256, or in the connected editor
 as one undoable action when the scene is open there. The answer names every parameter the
 recipe used, defaults included, and carries the operations it applied.
@@ -23,8 +24,10 @@ An agent finds the recipes without this page: each one is also an MCP prompt,
 `full` profiles. Its text holds the parameter table, a call template and the operations the
 recipe becomes, generated from the same registry as the tool. Prompts take no tool slot.
 
-The theme is a recipe for a resource rather than for nodes, so it goes to `resource.create` or
-`resource.batch.apply`; `scene.recipe.apply` refuses it and names `resource.create`.
+The theme and the material are recipes for a resource rather than for nodes: `resource.create`
+takes them in its `recipe` field, and `scene.recipe.apply` refuses them and names
+`resource.create`. Their operations also go to `resource.batch.apply` to change a resource that
+exists.
 
 Every call on this page is applied, as it is written here, by the test suite on each locked
 Godot build ([Verified on](#verified-on)), and a unit test checks that each call becomes exactly
@@ -48,7 +51,15 @@ A parameter left out keeps the default its table names. `Godot's` means the reci
 nothing for it, so the node keeps Godot's own value. A parameter that does not apply to the
 chosen variant, such as `height` for a circle, is refused rather than ignored, and so is a
 value out of range or a parameter the recipe does not take. A name, where the recipe takes
-one, names its main node; the other nodes have fixed names below it.
+one, names its main node; the other nodes have fixed names below it. A few rules join several
+values, such as a transition that must leave a state the same call declares: the parameter
+schema cannot state them, so the tool checks them and refuses a call that breaks one, naming
+the rule.
+
+`resource.create` takes a resource recipe the same way, in its `recipe` field and in place of
+`class` and `operations`: `path` is the new resource's `.tres` path, which must not exist yet,
+and `recipe`, `dryRun` and `idempotencyId` are as above. Its answer also names every parameter
+the recipe used and carries the operations it applied.
 
 ## A 2D physics body
 
@@ -281,7 +292,7 @@ It becomes these operations; `background_mode` 2 is `Environment.BG_SKY`:
 ]
 ```
 
-## Particles from a preset
+## 2D particles from a preset
 
 A `GPUParticles2D` with a `ParticleProcessMaterial` set up as one of six presets. A preset is a
 starting point to tune, not a generated effect:
@@ -355,7 +366,89 @@ with a `preset`, shows the operations of each.
 ]
 ```
 
-## Navigation: a floor and an agent
+## 3D particles from a preset
+
+A `GPUParticles3D` with a `ParticleProcessMaterial` set up as one of the same six presets, in
+metres and seconds with +Y up. Each particle draws a square `quad_size` metres wide that faces the
+camera: the draw pass is a `QuadMesh` with an unshaded `StandardMaterial3D` that takes the
+particle's colour, and draws `texture` on it when the call gives one.
+
+Rain and snow start in a box `area` metres in size, centred on the node, and fall from it. Godot
+culls a particle system whose visibility box is off screen, and its default box is 8 metres on a
+side, so these two presets also set `visibility_aabb` to a box that holds the whole fall: the
+emission box, reaching down as far as the fastest particle falls in its lifetime under gravity
+and out to each side as far as the spread lets it drift. With the rain's defaults that is
+13.44 m down and 0.42 m to each side. The other four presets keep Godot's box. This call makes
+the rain. The scene's root is a `Node3D`.
+
+<!-- recipe-call id=particles-3d path=scenes/rain.tscn root=Node3D -->
+```json
+{
+  "path": "scenes/rain.tscn",
+  "expectedSha256": "<the scene's current SHA-256>",
+  "recipe": { "particles-3d": { "preset": "rain" } },
+  "idempotencyId": "<a new unique id>"
+}
+```
+
+It becomes these operations:
+
+<!-- recipe id=particles-3d -->
+```json
+[
+  { "op": "add_node", "parent": ".", "name": "Rain", "type": "GPUParticles3D" },
+  { "op": "set_property", "node": "Rain", "property": "amount",
+    "value": { "type": "integer", "value": 200 } },
+  { "op": "set_property", "node": "Rain", "property": "lifetime",
+    "value": { "type": "float", "value": 1.2 } },
+  { "op": "set_property", "node": "Rain", "property": "visibility_aabb",
+    "value": { "type": "aabb",
+      "value": { "position": { "x": -10.418793960430012, "y": -13.94, "z": -10.418793960430012 },
+        "size": { "x": 20.837587920860024, "y": 14.44, "z": 20.837587920860024 } } } },
+  { "op": "set_subresource", "node": "Rain", "property": "process_material",
+    "class": "ParticleProcessMaterial",
+    "properties": { "color": { "type": "color",
+        "value": { "red": 0.6, "green": 0.7, "blue": 1.0, "alpha": 0.7 } },
+      "direction": { "type": "vector3", "value": { "x": 0.0, "y": -1.0, "z": 0.0 } },
+      "emission_box_extents": { "type": "vector3", "value": { "x": 10.0, "y": 0.5, "z": 10.0 } },
+      "emission_shape": { "type": "integer", "value": 3 },
+      "gravity": { "type": "vector3", "value": { "x": 0.0, "y": -2.0, "z": 0.0 } },
+      "initial_velocity_max": { "type": "float", "value": 10.0 },
+      "initial_velocity_min": { "type": "float", "value": 8.0 },
+      "scale_max": { "type": "float", "value": 2.0 },
+      "scale_min": { "type": "float", "value": 1.0 }, "spread": { "type": "float", "value": 2.0 } } },
+  { "op": "set_subresource", "node": "Rain", "property": "draw_pass_1", "class": "QuadMesh",
+    "properties": { "size": { "type": "vector2", "value": { "x": 0.05, "y": 0.05 } } } },
+  { "op": "set_subresource", "node": "Rain", "property": "draw_pass_1:material",
+    "class": "StandardMaterial3D",
+    "properties": { "billboard_mode": { "type": "integer", "value": 3 },
+      "shading_mode": { "type": "integer", "value": 0 },
+      "transparency": { "type": "integer", "value": 1 },
+      "vertex_color_use_as_albedo": { "type": "bool", "value": true } } }
+]
+```
+
+The fire, smoke, sparks and explosion change the material and add the 2D presets' colour ramps;
+`godot-mcp.recipe.particles-3d`, read with a `preset`, shows the operations of each.
+
+<!-- recipe-parameters id=particles-3d -->
+| Parameter | Takes | Default | Applies when | Sets |
+| --- | --- | --- | --- | --- |
+| `name` | node name, 1 to 40 characters | Fire, Smoke, Sparks, Rain, Snow or Explosion, by `preset` | always | The emitter's name. |
+| `preset` | fire, smoke, sparks, rain, snow, explosion | fire | always | The look: fire, smoke, sparks, rain, snow or a one-shot explosion. |
+| `amount` | integer, 1 to 100000 | the preset's: fire 64, smoke 32, sparks 48, rain 200, snow 120, explosion 96 | always | How many particles are alive at once. |
+| `lifetime` | number above 0, at most 600 | the preset's: fire 0.8, smoke 2.5, sparks 0.6, rain 1.2, snow 6, explosion 0.9 | always | How long each particle lives, in seconds. |
+| `quad_size` | number above 0, at most 100 | the preset's: fire 0.25, smoke 0.5, sparks 0.05, rain 0.05, snow 0.08, explosion 0.25 | always | The side of the square each particle draws facing the camera, in metres. |
+| `area` | {x, y, z} above 0 | {x: 20, y: 1, z: 20} | `preset` is rain or snow | The size of the box the drops start in, in metres, centred on the node. |
+| `texture` | res:// path of a Texture2D | Godot's | always | A Texture2D each particle draws, tinted by its colour; without one a particle is a square of its colour. |
+<!-- recipe-tune id=particles-3d -->
+```json
+[
+  { "op": "set_property", "node": "Rain", "property": "amount", "value": { "type": "integer", "value": 400 } }
+]
+```
+
+## 2D navigation: a floor and an agent
 
 A `NavigationRegion2D` named `Floor` whose rectangular outline is baked, and a
 `CharacterBody2D` named `Walker` with a `NavigationAgent2D` named `Agent` on the same
@@ -437,7 +530,97 @@ It becomes these operations:
 ]
 ```
 
-## A positional sound
+## 3D navigation: a floor and an agent
+
+A `NavigationRegion3D` named `Floor` over a box: a `StaticBody3D` named `Ground`, centred below
+the region's origin with its top face level with it, holding a `BoxShape3D` named `Shape` and,
+unless `mesh` is false, a `MeshInstance3D` named `Mesh` that draws the box. The region's
+`NavigationMesh` is baked from the static colliders below the region, in the engine, before the
+batch goes on, so the saved mesh holds the baked polygons. Unless `walker` is false, a
+`CharacterBody3D` named `Walker` with a `NavigationAgent3D` named `Agent` goes on the same
+navigation layers. The scene's root is a `Node3D`.
+
+The bake works in cells of 0.25 m, Godot's default: an `agent_radius` or `agent_height` that is
+not a multiple of 0.25 is rounded up, with a warning, so this call gives multiples.
+
+<!-- recipe-call id=navigation-3d path=scenes/yard.tscn root=Node3D -->
+```json
+{
+  "path": "scenes/yard.tscn",
+  "expectedSha256": "<the scene's current SHA-256>",
+  "recipe": {
+    "navigation-3d": {
+      "size": { "x": 30, "y": 1, "z": 20 }, "navigation_layers": 3, "agent_radius": 0.75,
+      "agent_height": 2, "walker_radius": 0.75, "path_desired_distance": 0.5,
+      "target_desired_distance": 1.5, "avoidance": true
+    }
+  },
+  "idempotencyId": "<a new unique id>"
+}
+```
+
+It becomes these operations:
+
+<!-- recipe id=navigation-3d -->
+```json
+[
+  { "op": "add_node", "parent": ".", "name": "Floor", "type": "NavigationRegion3D" },
+  { "op": "set_property", "node": "Floor", "property": "navigation_layers",
+    "value": { "type": "integer", "value": 3 } },
+  { "op": "set_subresource", "node": "Floor", "property": "navigation_mesh",
+    "class": "NavigationMesh",
+    "properties": { "agent_height": { "type": "float", "value": 2.0 },
+      "agent_radius": { "type": "float", "value": 0.75 },
+      "geometry_parsed_geometry_type": { "type": "integer", "value": 1 } } },
+  { "op": "add_node", "parent": "Floor", "name": "Ground", "type": "StaticBody3D" },
+  { "op": "set_property", "node": "Floor/Ground", "property": "position",
+    "value": { "type": "vector3", "value": { "x": 0.0, "y": -0.5, "z": 0.0 } } },
+  { "op": "add_node", "parent": "Floor/Ground", "name": "Shape", "type": "CollisionShape3D" },
+  { "op": "set_subresource", "node": "Floor/Ground/Shape", "property": "shape",
+    "class": "BoxShape3D",
+    "properties": { "size": { "type": "vector3", "value": { "x": 30.0, "y": 1.0, "z": 20.0 } } } },
+  { "op": "add_node", "parent": "Floor/Ground", "name": "Mesh", "type": "MeshInstance3D" },
+  { "op": "set_subresource", "node": "Floor/Ground/Mesh", "property": "mesh", "class": "BoxMesh",
+    "properties": { "size": { "type": "vector3", "value": { "x": 30.0, "y": 1.0, "z": 20.0 } } } },
+  { "op": "call_method", "node": "Floor", "method": "bake_navigation_mesh",
+    "arguments": [{ "type": "bool", "value": false }] },
+  { "op": "add_node", "parent": ".", "name": "Walker", "type": "CharacterBody3D" },
+  { "op": "add_node", "parent": "Walker", "name": "Agent", "type": "NavigationAgent3D" },
+  { "op": "set_property", "node": "Walker/Agent", "property": "path_desired_distance",
+    "value": { "type": "float", "value": 0.5 } },
+  { "op": "set_property", "node": "Walker/Agent", "property": "target_desired_distance",
+    "value": { "type": "float", "value": 1.5 } },
+  { "op": "set_property", "node": "Walker/Agent", "property": "radius",
+    "value": { "type": "float", "value": 0.75 } },
+  { "op": "set_property", "node": "Walker/Agent", "property": "avoidance_enabled",
+    "value": { "type": "bool", "value": true } },
+  { "op": "set_property", "node": "Walker/Agent", "property": "navigation_layers",
+    "value": { "type": "integer", "value": 3 } }
+]
+```
+
+<!-- recipe-parameters id=navigation-3d -->
+| Parameter | Takes | Default | Applies when | Sets |
+| --- | --- | --- | --- | --- |
+| `size` | {x, y, z} above 0 | {x: 20, y: 1, z: 20} | always | The ground box's size, in metres: centred below the region's origin, with its top face level with it. |
+| `navigation_layers` | integer, 1 to 4294967295 | Godot's | always | The navigation layers of the floor and the agent, as a bit field. |
+| `agent_radius` | number, 0 to 10000 | Godot's | always | The clearance the bake keeps from the ground's edges, in metres. One that is not a multiple of the 0.25 m cell size is rounded up, with a warning. |
+| `agent_height` | number above 0, at most 10000 | Godot's | always | The headroom an agent needs, in metres. One that is not a multiple of the 0.25 m cell height is rounded up, with a warning. |
+| `mesh` | boolean | true | always | Add a MeshInstance3D named Mesh below Ground that draws the ground box. |
+| `walker` | boolean | true | always | Add a CharacterBody3D named Walker with a NavigationAgent3D named Agent. |
+| `walker_radius` | number above 0, at most 10000 | Godot's | `walker` is true | The agent's radius, in metres. |
+| `path_desired_distance` | number above 0, at most 10000 | Godot's | `walker` is true | How close the agent gets to each path point before moving on, in metres. |
+| `target_desired_distance` | number above 0, at most 10000 | Godot's | `walker` is true | How close to the target the agent counts as arrived, in metres. |
+| `avoidance` | boolean | Godot's | `walker` is true | Whether the agent avoids other agents. |
+<!-- recipe-tune id=navigation-3d -->
+```json
+[
+  { "op": "set_property", "node": "Walker/Agent", "property": "target_desired_distance",
+    "value": { "type": "float", "value": 2.0 } }
+]
+```
+
+## A 2D positional sound
 
 An `AudioStreamPlayer2D` playing a sound file of the project on the `SFX` bus. The file must be
 imported (`project.import.run`, or the editor's own import) before a recipe refers to it, and
@@ -496,6 +679,69 @@ It becomes these operations:
 
 The bus itself is a property of the bus layout, `default_bus_layout.tres`, which
 `resource.batch.apply` changes like any resource: `bus/1/name` set to `SFX` adds the bus.
+
+## A 3D positional sound
+
+An `AudioStreamPlayer3D`, with the same two conditions as the 2D player: the sound file must be
+imported, and the bus must exist in the project's bus layout. Its distances are in metres.
+`unit_size` scales the distance over which the sound fades, and `attenuation_model` chooses how
+the volume falls with distance. This call makes footsteps heard up to 40 m away, fading with the
+inverse square of the distance. The scene's root is a `Node3D`.
+
+<!-- recipe-call id=audio-3d path=scenes/footsteps-3d.tscn root=Node3D -->
+```json
+{
+  "path": "scenes/footsteps-3d.tscn",
+  "expectedSha256": "<the scene's current SHA-256>",
+  "recipe": {
+    "audio-3d": {
+      "name": "Steps", "stream": "res://audio/step.wav", "volume_db": -6,
+      "max_distance": 40, "unit_size": 4, "attenuation_model": "inverse_square", "bus": "SFX"
+    }
+  },
+  "idempotencyId": "<a new unique id>"
+}
+```
+
+It becomes these operations:
+
+<!-- recipe id=audio-3d -->
+```json
+[
+  { "op": "add_node", "parent": ".", "name": "Steps", "type": "AudioStreamPlayer3D" },
+  { "op": "set_property", "node": "Steps", "property": "stream",
+    "value": { "type": "resource",
+      "value": { "resource": "res://audio/step.wav", "resource_type": "AudioStream" } } },
+  { "op": "set_property", "node": "Steps", "property": "volume_db",
+    "value": { "type": "float", "value": -6.0 } },
+  { "op": "set_property", "node": "Steps", "property": "max_distance",
+    "value": { "type": "float", "value": 40.0 } },
+  { "op": "set_property", "node": "Steps", "property": "unit_size",
+    "value": { "type": "float", "value": 4.0 } },
+  { "op": "set_property", "node": "Steps", "property": "attenuation_model",
+    "value": { "type": "integer", "value": 1 } },
+  { "op": "set_property", "node": "Steps", "property": "bus",
+    "value": { "type": "string_name", "value": "SFX" } }
+]
+```
+
+<!-- recipe-parameters id=audio-3d -->
+| Parameter | Takes | Default | Applies when | Sets |
+| --- | --- | --- | --- | --- |
+| `name` | node name, 1 to 40 characters | "Sound" | always | The player's name. |
+| `stream` | res:// path of an AudioStream | required | always | The imported sound file the player plays, such as res://audio/hum.ogg. |
+| `volume_db` | number, -80 to 24 | Godot's | always | The volume, in decibels. |
+| `max_distance` | number above 0, at most 1000000 | Godot's | always | How far away the sound can be heard, in metres. |
+| `unit_size` | number above 0, at most 100 | Godot's | always | How far the sound carries before it fades: a larger factor keeps it loud farther away. |
+| `attenuation_model` | inverse, inverse_square, logarithmic, disabled | Godot's | always | How the volume falls with distance: as its inverse, its inverse square or its logarithm, or not at all. |
+| `bus` | string, 1 to 128 characters | Godot's | always | The audio bus; it must exist in the project's bus layout. |
+| `autoplay` | boolean | Godot's | always | Whether the sound starts when the scene does. |
+<!-- recipe-tune id=audio-3d -->
+```json
+[
+  { "op": "set_property", "node": "Steps", "property": "unit_size", "value": { "type": "float", "value": 6.0 } }
+]
+```
 
 ## A shader material
 
@@ -796,14 +1042,279 @@ touch starts:
 ]
 ```
 
+## An AnimationTree state machine
+
+An `AnimationTree` whose root is an `AnimationNodeStateMachine`: one `AnimationNodeAnimation`
+state for each entry of `states`, the transitions between them, and a transition from `Start`
+that enters the `start` state by itself, with `advance_mode` auto. The state machine editor
+shows the states four to a row.
+
+The recipe does not read the scene. `anim_player` is a path from the `AnimationTree` to an
+`AnimationPlayer`, and the player and its animations must exist for the states to play: the
+default `parent` puts the tree beside a player that is a child of the scene's root, and
+`scene.read` lists the animations a player has, calling `get_animation_list` on its node, as
+`editor.scene.read` does for a scene open in the editor. The scene's root here is a `Node`.
+
+Some rules join several values, so the parameter schema cannot state them; the tool refuses a
+call that breaks one and names the rule. No two states share a name. Each transition leaves a
+state of `states` and enters another one or `End`, never the state it leaves, and no two
+transitions join the same two states the same way round. `start` is one of `states`.
+
+<!-- recipe-call id=animation-state-machine path=scenes/character.tscn root=Node -->
+```json
+{
+  "path": "scenes/character.tscn",
+  "expectedSha256": "<the scene's current SHA-256>",
+  "recipe": {
+    "animation-state-machine": {
+      "anim_player": "../AnimationPlayer",
+      "states": [
+        { "name": "idle", "animation": "idle" },
+        { "name": "walk", "animation": "walk" },
+        { "name": "run", "animation": "run" }
+      ],
+      "transitions": [
+        { "from": "idle", "to": "walk", "xfade_time": 0.2 },
+        { "from": "walk", "to": "idle", "xfade_time": 0.2 },
+        { "from": "walk", "to": "run", "xfade_time": 0.2 },
+        { "from": "run", "to": "walk", "xfade_time": 0.2 }
+      ]
+    }
+  },
+  "idempotencyId": "<a new unique id>"
+}
+```
+
+It becomes these operations:
+
+<!-- recipe id=animation-state-machine -->
+```json
+[
+  { "op": "add_node", "parent": ".", "name": "AnimationTree", "type": "AnimationTree" },
+  { "op": "set_property", "node": "AnimationTree", "property": "anim_player",
+    "value": { "type": "node_path", "value": "../AnimationPlayer" } },
+  { "op": "set_subresource", "node": "AnimationTree", "property": "tree_root",
+    "class": "AnimationNodeStateMachine" },
+  { "op": "call_method", "node": "AnimationTree", "resource": { "property": "tree_root" },
+    "method": "add_node",
+    "repeat": [
+      [
+        { "type": "string_name", "value": "idle" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "idle" } } } },
+        { "type": "vector2", "value": { "x": 200.0, "y": 250.0 } }
+      ],
+      [
+        { "type": "string_name", "value": "walk" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "walk" } } } },
+        { "type": "vector2", "value": { "x": 400.0, "y": 250.0 } }
+      ],
+      [
+        { "type": "string_name", "value": "run" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "run" } } } },
+        { "type": "vector2", "value": { "x": 600.0, "y": 250.0 } }
+      ]
+    ] },
+  { "op": "call_method", "node": "AnimationTree", "resource": { "property": "tree_root" },
+    "method": "add_transition",
+    "repeat": [
+      [
+        { "type": "string_name", "value": "Start" },
+        { "type": "string_name", "value": "idle" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeStateMachineTransition",
+            "properties": { "advance_mode": { "type": "integer", "value": 2 } } } }
+      ],
+      [
+        { "type": "string_name", "value": "idle" },
+        { "type": "string_name", "value": "walk" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeStateMachineTransition",
+            "properties": { "xfade_time": { "type": "float", "value": 0.2 } } } }
+      ],
+      [
+        { "type": "string_name", "value": "walk" },
+        { "type": "string_name", "value": "idle" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeStateMachineTransition",
+            "properties": { "xfade_time": { "type": "float", "value": 0.2 } } } }
+      ],
+      [
+        { "type": "string_name", "value": "walk" },
+        { "type": "string_name", "value": "run" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeStateMachineTransition",
+            "properties": { "xfade_time": { "type": "float", "value": 0.2 } } } }
+      ],
+      [
+        { "type": "string_name", "value": "run" },
+        { "type": "string_name", "value": "walk" },
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeStateMachineTransition",
+            "properties": { "xfade_time": { "type": "float", "value": 0.2 } } } }
+      ]
+    ] }
+]
+```
+
+<!-- recipe-parameters id=animation-state-machine -->
+| Parameter | Takes | Default | Applies when | Sets |
+| --- | --- | --- | --- | --- |
+| `name` | node name, 1 to 40 characters | "AnimationTree" | always | The AnimationTree's name. |
+| `anim_player` | node path, 1 to 256 characters | required | always | The AnimationPlayer whose animations the states play, as a path from the AnimationTree, such as ../AnimationPlayer. |
+| `states` | 1 to 32 {name, animation} states | required | always | The states, each playing one animation of the AnimationPlayer. No two share a name. |
+| `transitions` | 1 to 128 {from, to, switch_mode, advance_mode, advance_condition, xfade_time} transitions | Godot's | always | The transitions. Each leaves a state of `states` and enters another one or End, and no two join the same two states the same way round. |
+| `start` | state name, 1 to 40 characters, not Start or End | the first state | always | The state the machine starts in, one of `states`: a transition from Start enters it by itself. |
+Tuning it later adds a `move` state that blends walk into run: a state whose node is a new
+`AnimationNodeBlendSpace1D`, its points added through the property path
+`tree_root:states/move/node`, and a transition into it from idle. The same three operations put
+a blend space into any state machine a scene already has.
+
+<!-- recipe-tune id=animation-state-machine -->
+```json
+[
+  { "op": "call_method", "node": "AnimationTree", "resource": { "property": "tree_root" },
+    "method": "add_node",
+    "arguments": [
+      { "type": "string_name", "value": "move" },
+      { "type": "new_resource", "value": { "class": "AnimationNodeBlendSpace1D" } },
+      { "type": "vector2", "value": { "x": 400.0, "y": 400.0 } }
+    ] },
+  { "op": "call_method", "node": "AnimationTree",
+    "resource": { "property": "tree_root:states/move/node" }, "method": "add_blend_point",
+    "repeat": [
+      [
+        { "type": "new_resource", "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "walk" } } } },
+        { "type": "float", "value": 0.0 }
+      ],
+      [
+        { "type": "new_resource", "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "run" } } } },
+        { "type": "float", "value": 1.0 }
+      ]
+    ] },
+  { "op": "call_method", "node": "AnimationTree", "resource": { "property": "tree_root" },
+    "method": "add_transition",
+    "arguments": [
+      { "type": "string_name", "value": "idle" },
+      { "type": "string_name", "value": "move" },
+      { "type": "new_resource", "value": { "class": "AnimationNodeStateMachineTransition" } }
+    ] }
+]
+```
+
+## An AnimationTree blend space
+
+An `AnimationTree` whose root is an `AnimationNodeBlendSpace1D` with one `AnimationNodeAnimation`
+for each blend point, such as idle, walk and run along a speed axis. The axis runs from -1 to 1
+unless the call sets its ends. Each point's `position` lies on it, from `min_space` to
+`max_space`, ends included, and `min_space` is below `max_space`: the parameter schema cannot
+state these two rules, so the tool refuses a call that breaks one and names the rule. Like the
+state machine, the recipe does not read the scene, and its `anim_player` must reach an
+`AnimationPlayer` with these animations. The scene's root is a `Node`.
+
+`min_space` must also be below 1. When Godot loads a blend space it sets `min_space` before
+`max_space`, and turns a `min_space` that is not below the default `max_space` of 1 into 0, so a
+saved axis from 5 to 10 would load as 0 to 10. The recipe writes `min_space` first for the same
+reason. On Godot 4.7.1 and 4.7.2 adding the points logs one warning per point, `No name provided,
+using safe index as reference`: each point is named after its index, the saved file keeps the
+names, and loading it does not warn again. To blend inside a state machine instead, add the blend
+space as a state: the state machine's tuning batch above does that.
+
+<!-- recipe-call id=blend-space-1d path=scenes/locomotion.tscn root=Node -->
+```json
+{
+  "path": "scenes/locomotion.tscn",
+  "expectedSha256": "<the scene's current SHA-256>",
+  "recipe": {
+    "blend-space-1d": {
+      "anim_player": "../AnimationPlayer",
+      "points": [
+        { "animation": "idle", "position": 0 },
+        { "animation": "walk", "position": 0.5 },
+        { "animation": "run", "position": 1 }
+      ]
+    }
+  },
+  "idempotencyId": "<a new unique id>"
+}
+```
+
+It becomes these operations:
+
+<!-- recipe id=blend-space-1d -->
+```json
+[
+  { "op": "add_node", "parent": ".", "name": "AnimationTree", "type": "AnimationTree" },
+  { "op": "set_property", "node": "AnimationTree", "property": "anim_player",
+    "value": { "type": "node_path", "value": "../AnimationPlayer" } },
+  { "op": "set_subresource", "node": "AnimationTree", "property": "tree_root",
+    "class": "AnimationNodeBlendSpace1D" },
+  { "op": "call_method", "node": "AnimationTree", "resource": { "property": "tree_root" },
+    "method": "add_blend_point",
+    "repeat": [
+      [
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "idle" } } } },
+        { "type": "float", "value": 0.0 }
+      ],
+      [
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "walk" } } } },
+        { "type": "float", "value": 0.5 }
+      ],
+      [
+        { "type": "new_resource",
+          "value": { "class": "AnimationNodeAnimation",
+            "properties": { "animation": { "type": "string_name", "value": "run" } } } },
+        { "type": "float", "value": 1.0 }
+      ]
+    ] }
+]
+```
+
+<!-- recipe-parameters id=blend-space-1d -->
+| Parameter | Takes | Default | Applies when | Sets |
+| --- | --- | --- | --- | --- |
+| `name` | node name, 1 to 40 characters | "AnimationTree" | always | The AnimationTree's name. |
+| `anim_player` | node path, 1 to 256 characters | required | always | The AnimationPlayer whose animations the points play, as a path from the AnimationTree, such as ../AnimationPlayer. |
+| `points` | 2 to 16 {animation, position} points | required | always | The blend points, each an animation of the AnimationPlayer at a position on the axis, from `min_space` to `max_space`, ends included. |
+| `min_space` | number from -100000, below 1 | Godot's | always | The lower end of the axis (Godot's default -1), below `max_space`. It must be below 1: Godot loads it before `max_space` and would turn 1 or more into 0. |
+| `max_space` | number, -100000 to 100000 | Godot's | always | The upper end of the axis (Godot's default 1), above `min_space`. |
+Tuning it later moves the walk point through a property path:
+
+<!-- recipe-tune id=blend-space-1d -->
+```json
+[
+  { "op": "set_property", "node": "AnimationTree", "property": "tree_root:blend_point_1/pos",
+    "value": { "type": "float", "value": 0.4 } }
+]
+```
+
 ## A theme
 
 A `Theme` resource with a label colour and size, an outline constant and a flat panel style,
-which the HUD above uses. These operations go to `resource.create` with `class` `Theme`; the
-same operations go to `resource.batch.apply` to change an existing theme, with the SHA-256 of
-its current bytes as `expectedSha256`.
+which the HUD above uses. The recipe takes no parameters. Its operations also go to
+`resource.create` as `class` `Theme` and `operations`, without a `recipe`, and to
+`resource.batch.apply` to change an existing theme, with the SHA-256 of its current bytes as
+`expectedSha256`.
 
-<!-- recipe id=theme path=ui/theme.tres class=Theme -->
+<!-- recipe-call id=theme path=ui/theme.tres class=Theme -->
+```json
+{ "path": "ui/theme.tres", "recipe": { "theme": {} }, "idempotencyId": "<a new unique id>" }
+```
+
+It becomes these operations:
+
+<!-- recipe id=theme -->
 ```json
 [
   { "op": "call_method", "method": "set_color",
@@ -849,6 +1360,61 @@ its current bytes as `expectedSha256`.
 ]
 ```
 
+## A 3D material
+
+A `StandardMaterial3D` resource with the colours, textures and surface settings the call gives;
+everything else keeps Godot's values, and a call gives at least one parameter. A texture is
+named by its res:// path and must be imported first. This call makes the crate's material from
+the 3D body above as a file that any number of meshes can share: a `MeshInstance3D` takes it in
+`material_override`, or in `surface_material_override/0` for its first surface, as the value
+`{ "type": "resource", "value": { "resource": "res://materials/crate.tres", "resource_type": "StandardMaterial3D" } }`.
+The same operations go to `resource.batch.apply` to change an existing material, with the
+SHA-256 of its current bytes as `expectedSha256`.
+
+<!-- recipe-call id=material-3d path=materials/crate.tres class=StandardMaterial3D -->
+```json
+{
+  "path": "materials/crate.tres",
+  "recipe": {
+    "material-3d": {
+      "albedo_color": { "red": 0.8, "green": 0.5, "blue": 0.2, "alpha": 1 }, "roughness": 0.7
+    }
+  },
+  "idempotencyId": "<a new unique id>"
+}
+```
+
+It becomes these operations:
+
+<!-- recipe id=material-3d -->
+```json
+[
+  { "op": "set_property", "property": "albedo_color",
+    "value": { "type": "color", "value": { "red": 0.8, "green": 0.5, "blue": 0.2, "alpha": 1.0 } } },
+  { "op": "set_property", "property": "roughness", "value": { "type": "float", "value": 0.7 } }
+]
+```
+
+<!-- recipe-parameters id=material-3d -->
+| Parameter | Takes | Default | Applies when | Sets |
+| --- | --- | --- | --- | --- |
+| `albedo_color` | {red, green, blue, alpha}, 0 to 16 | Godot's | always | The base colour. |
+| `albedo_texture` | res:// path of a Texture2D | Godot's | always | A Texture2D the base colour multiplies. |
+| `metallic` | number, 0 to 1 | Godot's | always | How metallic the surface is. |
+| `roughness` | number, 0 to 1 | Godot's | always | How rough the surface is: 0 is a mirror. |
+| `normal_texture` | res:// path of a Texture2D | Godot's | always | A normal map; giving one turns normal mapping on. |
+| `emission` | {red, green, blue, alpha}, 0 to 16 | Godot's | always | The colour the surface gives off; giving one turns emission on. |
+| `emission_energy` | number, 0 to 1000 | Godot's | always | How bright the emission is, as a multiplier; giving one turns emission on. |
+| `transparency` | disabled, alpha, alpha_scissor, alpha_hash, depth_pre_pass | Godot's | always | How the alpha is drawn: not at all, blended, cut at a threshold, hashed, or blended after a depth pre-pass. |
+| `cull_mode` | back, front, disabled | Godot's | always | Which faces are not drawn: the back ones, the front ones, or none. |
+| `unshaded` | boolean | Godot's | always | true draws the colours without lighting; false writes nothing. |
+<!-- recipe-tune id=material-3d -->
+```json
+[
+  { "op": "set_property", "property": "metallic", "value": { "type": "float", "value": 0.3 } }
+]
+```
+
 ## Verified on
 
 Godot 4.4.1, 4.5.1, 4.6.1, 4.7.1 and 4.7.2, official Linux x86_64 builds, by
@@ -858,25 +1424,31 @@ every call, operations block and tuning batch from this page:
 * Each scene recipe's call is applied with `scene.recipe.apply`, as written here, to an empty
   scene `scene.create` made with the root type the section names. The answer must carry
   exactly the operations shown below the call, and the saved file and the scene tree are
-  checked. The theme is made with `resource.create` from its operations, before the HUD that
-  uses it.
+  checked. The theme and the material are made with `resource.create` from their calls, before
+  the HUD that uses the theme, and the answer must carry the operations shown.
 * Six more variants of the body recipes (`body-2d` rigid with a circle, static with a
   rectangle, area with a capsule; `body-3d` static with a sphere, character with a capsule,
-  area with a cylinder) and all six particle presets are applied with the registry's defaults,
-  each into its own scene, and read back the same way.
-* `scene.read` reads the grid map's cells and the navigation region's baked polygons back from
-  the engine.
-* In a headless editor running the add-on, `particles-2d` with the `smoke` preset is applied
-  with `scene.recipe.apply` to a scene open there: the editor saves it, its undo history names
+  area with a cylinder), all six particle presets in 2D and in 3D, and the 3D floor without its
+  mesh and walker are applied with the registry's defaults, each into its own scene, and read
+  back the same way.
+* `scene.read` reads back from the engine the grid map's cells, the polygons the 2D and 3D
+  navigation bakes left in their regions, the state machine's three states, `Start` and five
+  transitions, and the blend space's three points. A state machine with 32 states and 128
+  transitions reads back 129 transitions, the one from `Start` included, and a blend space with
+  16 points reads back 16. A blend space whose axis runs from -10 to -5 reads back its points at
+  -10, -7.5 and -5, and its file holds `min_space` before `max_space`.
+* In a headless editor running the add-on, `particles-2d` with the `smoke` preset and the state
+  machine's call are each applied with `scene.recipe.apply` to an empty scene open there, the
+  second with no `AnimationPlayer` in it: the editor saves the scene, its undo history names
   the action `godot-mcp: scene.recipe.apply`, one `editor.undo` restores the empty scene's
   digest and one `editor.redo` the recipe's, and the scene saved with `editor.scene.save` and
   reloaded with `editor.scene.open` has the same digest.
 * Each scene's tuning batch is applied with `editor.scene.edit`, undone, redone, saved and
-  reloaded the same way, with no error in the editor's log; the theme's tuning batch goes to
-  `resource.batch.apply`.
+  reloaded the same way, with no error in the editor's log; the theme's and the material's
+  tuning batches go to `resource.batch.apply`.
 
 The joystick call is applied on 4.7.1 and 4.7.2 and refused on 4.4.1, 4.5.1 and 4.6.1,
 naming `VirtualJoystick`, with the scene left as it was. With a debug build of the server on a
 32-core Intel Xeon 6975P-C running Linux 7.0, one build after another, the five builds took
-139.9 s, 96.5 s, 95.8 s, 101.0 s and 100.1 s, 533.3 s together. Windows and macOS editors: not
-measured.
+282.0 s, 209.8 s, 183.6 s, 182.9 s and 184.3 s, 1,042.6 s together. Windows and macOS
+editors: not measured.

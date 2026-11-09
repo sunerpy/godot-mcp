@@ -323,7 +323,7 @@ home:
           text: How it is organised
           link: /guide/introduction#how-it-is-organised
       - q: Which parts of a Godot project can it work on?
-        a: Animation, AnimationTree, physics, 3D, particles, navigation, audio, shaders, themes, TileMap and the running game, each through tools the agent calls. `scene.recipe.apply` adds a common setup, such as a physics body or smoke particles, to a scene by name, and every recipe is also an MCP prompt the agent can find.
+        a: Animation, AnimationTree, physics, 3D, particles, navigation, audio, shaders, themes, TileMap and the running game, each through tools the agent calls. `scene.recipe.apply` adds a common setup, such as a physics body, smoke particles or an AnimationTree state machine, to a scene by name, and every recipe is also an MCP prompt the agent can find.
         guide:
           text: What it covers
           link: /guide/capabilities

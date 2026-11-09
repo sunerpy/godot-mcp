@@ -14,21 +14,21 @@ description: godot-mcp 用哪些工具处理动画、AnimationTree、物理、3D
 | 领域 | 创建与修改 | 读回、运行与观察 |
 | --- | --- | --- |
 | 动画 | 编辑 `AnimationPlayer`、`AnimationLibrary` 与 `Animation`：`add_animation`、`add_track`、`track_insert_key`、`set_loop_mode`；逐帧动画用 `SpriteFrames` | 读取 `get_animation_list`、`track_get_key_count`、`track_get_key_value`；游戏运行时用 `runtime.signals.get` 与 `runtime.wait` |
-| AnimationTree | 编辑 `AnimationNodeStateMachine`（`add_node`、`add_transition`）、`AnimationNodeBlendTree`（`connect_node`）和两种混合空间（`add_blend_point`） | 读取 `get_node_list`、`get_transition_count`、`get_blend_point_count` |
+| AnimationTree | `scene.recipe.apply` 配合 `animation-state-machine`（状态、转移、起始状态）或 `blend-space-1d`；编辑 `AnimationNodeStateMachine`（`add_node`、`add_transition`）、`AnimationNodeBlendTree`（`connect_node`）和两种混合空间（`add_blend_point`） | 读取 `get_node_list`、`get_transition_count`、`get_blend_point_count` |
 | 物理 | `scene.recipe.apply` 配合 `body-2d` 或 `body-3d`：带碰撞形状的角色体、刚体、静态体或区域；任意形状用 `set_subresource`；`TileSet` 的物理层 | `scene.tree.get`；游戏运行时用 `runtime.nodes.find` 查找某点附近的节点，以及 `runtime.properties.get`、`runtime.sample`、`runtime.time_scale.set` 和逐帧推进游戏的 `runtime.frames.step` |
-| 3D | `scene.recipe.apply` 配合 `body-3d`、`light-3d`（太阳光、点光源、天空、相机）或 `gridmap-3d`；编辑 `GridMap`（`set_cell_item`）与 `MeshLibrary`（`create_item`） | 读取 `get_used_cells`、网格的 `get_aabb`、`Skeleton3D` 的骨骼；`editor.camera.get`、`editor.camera.set`，以及对 3D 视口的 `editor.screenshot.capture` |
-| 粒子 | `scene.recipe.apply` 配合 `particles-2d` 和一种预设：fire、smoke、sparks、rain、snow 或 explosion；`ParticleProcessMaterial` 用 `set_subresource` | 游戏运行时用 `runtime.screenshot.capture`、`runtime.recording.capture`、`runtime.image.compare` |
-| 导航 | `scene.recipe.apply` 配合 `navigation-2d`；编辑 `NavigationPolygon`（`add_outline`），并用导航区域的 `bake_navigation_polygon` 与 `bake_navigation_mesh` 烘焙 | 读取 `get_polygon_count`、`get_vertices`；游戏运行时用 `runtime.navigation.path.get`，并用 `runtime.node.move` 沿路径移动 |
-| 音频 | 音频文件用 `asset.put` 与 `project.import.run`，`scene.recipe.apply` 配合 `audio-2d`，总线用 `resource.batch.apply` 修改总线布局（`default_bus_layout.tres`）；换用另一个布局文件用 `project.settings.patch` | `asset.status`，对总线布局用 `resource.tree.get`；游戏运行时对播放器用 `runtime.properties.get` |
+| 3D | `scene.recipe.apply` 配合 `body-3d`、`light-3d`（太阳光、点光源、天空、相机）或 `gridmap-3d`；`resource.create` 配合 `material-3d` 配方生成 `StandardMaterial3D`；编辑 `GridMap`（`set_cell_item`）与 `MeshLibrary`（`create_item`） | 读取 `get_used_cells`、网格的 `get_aabb`、`Skeleton3D` 的骨骼；`editor.camera.get`、`editor.camera.set`，以及对 3D 视口的 `editor.screenshot.capture` |
+| 粒子 | `scene.recipe.apply` 配合 `particles-2d` 或 `particles-3d` 和一种预设：fire、smoke、sparks、rain、snow 或 explosion；`ParticleProcessMaterial` 用 `set_subresource` | 游戏运行时用 `runtime.screenshot.capture`、`runtime.recording.capture`、`runtime.image.compare` |
+| 导航 | `scene.recipe.apply` 配合 `navigation-2d` 或 `navigation-3d`，地面随之烘焙；编辑 `NavigationPolygon`（`add_outline`），并用导航区域的 `bake_navigation_polygon` 与 `bake_navigation_mesh` 烘焙 | 读取 `get_polygon_count`、`get_vertices`；游戏运行时用 `runtime.navigation.path.get`，并用 `runtime.node.move` 沿路径移动 |
+| 音频 | 音频文件用 `asset.put` 与 `project.import.run`，`scene.recipe.apply` 配合 `audio-2d` 或 `audio-3d`，总线用 `resource.batch.apply` 修改总线布局（`default_bus_layout.tres`）；换用另一个布局文件用 `project.settings.patch` | `asset.status`，对总线布局用 `resource.tree.get`；游戏运行时对播放器用 `runtime.properties.get` |
 | 着色器 | `.gdshader` 用 `file.create`；`scene.recipe.apply` 配合 `shader-2d` 生成 `ShaderMaterial` 及其 uniform；编辑 `VisualShader`（`add_node`、`connect_nodes`） | `shader.check` 给出编译错误与 uniform；读取 `get_shader_uniform_list` |
-| 主题 | 用 `resource.create` 或 `resource.batch.apply` 编辑 `Theme`（`set_color`、`set_font_size`、`set_constant`、`set_stylebox`），`theme` 配方就是这样做的；`scene.recipe.apply` 配合 `hud`；编辑 `Control` 的锚点 | 读取 `get_color`、`get_type_list`；游戏运行时用 `runtime.ui.get` 与 `runtime.ui.press` |
+| 主题 | `resource.create` 配合 `theme` 配方，或者用 `resource.create`、`resource.batch.apply` 编辑 `Theme`（`set_color`、`set_font_size`、`set_constant`、`set_stylebox`）；`scene.recipe.apply` 配合 `hud`；编辑 `Control` 的锚点 | 读取 `get_color`、`get_type_list`；游戏运行时用 `runtime.ui.get` 与 `runtime.ui.press` |
 | TileMap | 编辑 `TileSet` 与 `TileSetAtlasSource`（`add_source`、`create_tile`、地形）以及 `TileMapLayer`（`set_cell`、`erase_cell`、`set_cells_terrain_connect`） | 读取 `get_used_cells`、`get_cell_source_id`、`get_cell_atlas_coords` |
 | 运行时控制 | `project.run.start` 与 `project.run.stop`；`input.action.send`、`input.key.send`、`input.mouse.send`、`input.sequence.send`、`input.replay` | `runtime.tree.get`、`runtime.properties.get`、`runtime.properties.set`、`runtime.wait`、`runtime.ui.get`、`runtime.screenshot.capture`；完整的测试场景用 `test.scenario.run` |
 | 项目工具 | `editor.commands.call` 在连接的编辑器里运行项目在 `godot_mcp_commands.json` 中声明的命令，参数先按该命令声明的 schema 检查 | `editor.commands.list` 列出这些命令及其说明和参数 schema，不运行任何代码；调用的答复给出命令返回的值和它改动的每个文件 |
 
 ## 配方
 
-`scene.recipe.apply` 按名字把一种常见设置加进场景，带上参数，并在答复里给出用到的每个值。它把配方展开成一批上面那样的操作，写入日志，并对照场景的 SHA-256 执行；场景正在你的编辑器里打开时，则成为一次可撤销操作。可以加进场景的配方有十个：`body-2d`、`body-3d`、`light-3d`、`particles-2d`、`navigation-2d`、`audio-2d`、`shader-2d`、`hud`、`gridmap-3d` 和 `joystick`，最后一个需要 Godot 4.7.1 或 4.7.2，这两个版本才有 `VirtualJoystick` 类。`theme` 配方生成的是资源，交给 `resource.create`。
+`scene.recipe.apply` 按名字把一种常见设置加进场景，带上参数，并在答复里给出用到的每个值。它把配方展开成一批上面那样的操作，写入日志，并对照场景的 SHA-256 执行；场景正在你的编辑器里打开时，则成为一次可撤销操作。可以加进场景的配方有十五个：`body-2d`、`body-3d`、`light-3d`、`particles-2d`、`particles-3d`、`navigation-2d`、`navigation-3d`、`audio-2d`、`audio-3d`、`shader-2d`、`hud`、`gridmap-3d`、`joystick`、`animation-state-machine` 和 `blend-space-1d`。`joystick` 需要 Godot 4.7.1 或 4.7.2，这两个版本才有 `VirtualJoystick` 类。另有两个配方生成的是资源：`resource.create` 在 `recipe` 字段里接受 `theme` 或 `material-3d`，代替 `class` 和 `operations`。godot-mcp 0.7.0 及更早的版本只有前十个场景配方和主题配方，主题的操作交给带 `class` `Theme` 的 `resource.create`。
 
 ```json
 {

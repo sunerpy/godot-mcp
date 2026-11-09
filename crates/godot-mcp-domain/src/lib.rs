@@ -53,8 +53,10 @@ pub mod workspace_root;
 /// commands a project declares, `editor.commands.list` and
 /// `editor.commands.call`; version 0.7.0 adds `runtime.frames.step` and
 /// physics-frame cadences to `runtime.sample`, `input.replay` and recorded
-/// input.
-pub const CONTRACT_VERSION: &str = "0.7.0";
+/// input; version 0.8.0 adds the AnimationTree, 3D particle, navigation,
+/// sound and material recipes, and resource recipes in `resource.create`'s
+/// `recipe` field.
+pub const CONTRACT_VERSION: &str = "0.8.0";
 
 /// Capability profiles exposed by the public contract. Selection is explicit
 /// and independent of how an outcome is requested.

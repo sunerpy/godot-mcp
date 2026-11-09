@@ -553,7 +553,7 @@ Apply one atomic batch of typed `operations` — set or clear properties, create
 
 ### `resource.create`
 
-Create one new text resource of engine `class` at an absent `path`, with typed `operations` setting its initial properties and sub-resources, saved by a supervised headless Godot process and published with compare-and-swap. Requires `idempotencyId`; returns the diff and the parsed result.
+Create one new text resource of engine `class` at an absent `path`, with typed `operations` setting its initial properties and sub-resources, or the resource a `recipe` makes, such as `{"material-3d": {"roughness": 0.7}}` or `{"theme": {}}`, without `class` or `operations`; saved by a supervised headless Godot process and published with compare-and-swap. Requires `idempotencyId`; returns the diff and the parsed result, and for a recipe every value it used and its `operations`.
 
 ### `resource.dependencies.get`
 
@@ -673,7 +673,7 @@ Make up to 64 `calls` of read-only engine methods from the reading table on node
 
 ### `scene.recipe.apply`
 
-Add a named setup — a 2D or 3D physics body with its shape, lights with a sky and a camera, 2D particles from a preset (fire, smoke, sparks, rain, snow, explosion), a baked navigation floor with an agent, a positional sound, a shader rectangle, a HUD, a grid map, an on-screen joystick — below `parent` in the text scene at `path` whose SHA-256 is `expectedSha256`. `recipe` is an object with one key, the recipe's name, holding its parameters, such as `{"body-2d": {"shape": "circle"}}`; each recipe's parameters and defaults are in this schema, and the answer names every value it used. It expands into the typed operations of one `scene.batch.apply` batch, answered as `operations`, and applies them the same way: journaled, and in the connected editor as one undoable action when the scene is open there. The `godot-mcp.recipe.<name>` prompts show each recipe's parameters and operations.
+Add a named setup — a 2D or 3D physics body with its shape, lights with a sky and a camera, 2D or 3D particles from a preset (fire, smoke, sparks, rain, snow, explosion), a baked 2D or 3D navigation floor with an agent, a 2D or 3D positional sound, a shader rectangle, a HUD, a grid map, an on-screen joystick, an AnimationTree state machine or 1D blend space — below `parent` in the text scene at `path` whose SHA-256 is `expectedSha256`. `recipe` is an object with one key, the recipe's name, holding its parameters, such as `{"body-2d": {"shape": "circle"}}`; each recipe's parameters and defaults are in this schema, and the answer names every value it used. It expands into the typed operations of one `scene.batch.apply` batch, answered as `operations`, and applies them the same way: journaled, and in the connected editor as one undoable action when the scene is open there. A theme or a 3D material is a resource recipe, for `resource.create`'s `recipe`. The `godot-mcp.recipe.<name>` prompts show each recipe's parameters and operations.
 
 ### `scene.save`
 

@@ -4,7 +4,7 @@ description: "Run, play and test a Godot 4 game through a connected godot-mcp MC
 license: MIT
 compatibility: "Needs a godot-mcp MCP server (godot-mcp serve) connected for one Godot 4.4.0 or later project with the runtime or full profile, and a Godot editor build the server can find. Screenshots, recordings and image comparisons need a windowed session, so the server needs a display."
 metadata:
-  contract: "0.7.0"
+  contract: "0.8.0"
   profiles: "runtime,full"
 ---
 
@@ -15,7 +15,7 @@ script passed to Godot on the command line, talks to the running game, so the pr
 changed for it: no autoload is added and no setting is touched. Every runtime tool names the
 session by the id `project.run.start` returned, `run_` followed by 32 hexadecimal digits.
 
-This skill describes contract 0.7.0, the `contract` of its metadata. `health.get` reports the
+This skill describes contract 0.8.0, the `contract` of its metadata. `health.get` reports the
 contract the server speaks as `schema_version`; when the two differ, follow the tool schemas.
 
 ## The loop

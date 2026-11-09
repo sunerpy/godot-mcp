@@ -23,9 +23,10 @@ does not matter which editor or IDE you use.
   live scene tree, captures screenshots and recordings, and debugs through the editor's language
   server and debug adapter.
 - **Recipes for common setups.** `scene.recipe.apply` adds a physics body, lights, particles,
-  navigation, a sound, a shader material, a HUD, a grid map or a joystick to a scene by name, as
-  one journaled change. [What it covers](capabilities.md) lists the tools for each part of a Godot
-  project.
+  navigation, a sound, a shader material, a HUD, a grid map, a joystick or an AnimationTree state
+  machine to a scene by name, as one journaled change, and `resource.create` makes a theme or a
+  3D material the same way. [What it covers](capabilities.md) lists the tools for each part of a
+  Godot project.
 
 ## A Rust server, not only an editor plugin
 

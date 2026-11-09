@@ -1,14 +1,15 @@
 //! The recipes page documents the recipe registry: every `scene.recipe.apply`
-//! call block on `docs/operator/recipes.md` expands, through the registry, to
-//! exactly the operations block printed below it, and every parameter table is
-//! the registry's own. The page cannot show a call the tool answers
-//! differently, or a parameter it does not take.
+//! or `resource.create` call block on `docs/operator/recipes.md` expands,
+//! through the registry, to exactly the operations block printed below it, and
+//! every parameter table is the registry's own. A recipe whose defaults alone
+//! make no request shows the registry's example in its call. The page cannot
+//! show a call the tool answers differently, or a parameter it does not take.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use godot_mcp_domain::recipes::{self, RECIPE_TOOL, RecipeTarget};
-use serde_json::{Map, Value};
+use godot_mcp_domain::recipes::{self, RecipeTarget};
+use serde_json::Value;
 
 fn page() -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/operator/recipes.md");
@@ -144,12 +145,52 @@ fn every_call_block_becomes_the_operations_block_below_it() {
             .operations
             .unwrap_or_else(|| panic!("{id} shows the operations it becomes"));
         assert!(recipe.tune, "{id} has a tuning batch");
+        let (attributes, call) = recipe
+            .call
+            .unwrap_or_else(|| panic!("{id} shows the call that applies it"));
+        assert_eq!(attributes["id"], id);
+        assert_eq!(
+            call["path"],
+            attributes["path"].as_str(),
+            "{id}: the call's path"
+        );
+        assert!(
+            call["idempotencyId"].as_str().is_some(),
+            "{id}: the call is complete"
+        );
+        let Some(Value::Object(keyed)) = call.get("recipe") else {
+            panic!("{id}: the call names its recipe");
+        };
+        assert_eq!(keyed.len(), 1, "{id}: one recipe per call");
+        let parameters = keyed
+            .get(&id)
+            .and_then(Value::as_object)
+            .unwrap_or_else(|| panic!("{id}: the call's recipe is {id}"));
+        let example = registered.example();
+        if !example.is_empty() {
+            assert_eq!(
+                normalized(&Value::Object(parameters.clone())),
+                normalized(&Value::Object(example)),
+                "{id}: the call's parameters are the registry's example"
+            );
+        }
+        let parent = call.get("parent").and_then(Value::as_str);
+        let expansion = registered
+            .expand(parameters, parent)
+            .unwrap_or_else(|error| panic!("{id}: {}", error.message()));
+        let expected = Value::Array(expansion.operations);
+        assert_eq!(
+            normalized(&operations),
+            normalized(&expected),
+            "{id}: the page's operations are what the call becomes; expected:\n{}",
+            serde_json::to_string(&expected).expect("JSON")
+        );
+        assert!(
+            operations_attributes.keys().all(|key| key == "id"),
+            "{id}: the call carries the path and the class or root"
+        );
         match registered.target {
             RecipeTarget::Scene => {
-                let (attributes, call) = recipe
-                    .call
-                    .unwrap_or_else(|| panic!("{id} shows a {RECIPE_TOOL} call"));
-                assert_eq!(attributes["id"], id);
                 for key in ["path", "root"] {
                     assert!(
                         attributes.contains_key(key),
@@ -165,67 +206,34 @@ fn every_call_block_becomes_the_operations_block_below_it() {
                     attributes["root"], registered.parent_class,
                     "{id}: the root class"
                 );
-                assert_eq!(
-                    call["path"],
-                    attributes["path"].as_str(),
-                    "{id}: the call's path"
-                );
                 assert!(
-                    call["expectedSha256"].as_str().is_some()
-                        && call["idempotencyId"].as_str().is_some(),
+                    call["expectedSha256"].as_str().is_some(),
                     "{id}: the call is complete"
-                );
-                let Some(Value::Object(keyed)) = call.get("recipe") else {
-                    panic!("{id}: the call names its recipe");
-                };
-                assert_eq!(keyed.len(), 1, "{id}: one recipe per call");
-                let parameters = keyed
-                    .get(&id)
-                    .and_then(Value::as_object)
-                    .unwrap_or_else(|| panic!("{id}: the call's recipe is {id}"));
-                let parent = call.get("parent").and_then(Value::as_str);
-                let expansion = registered
-                    .expand(parameters, parent)
-                    .unwrap_or_else(|error| panic!("{id}: {}", error.message()));
-                let expected = Value::Array(expansion.operations);
-                assert_eq!(
-                    normalized(&operations),
-                    normalized(&expected),
-                    "{id}: the page's operations are what the call becomes; expected:\n{}",
-                    serde_json::to_string(&expected).expect("JSON")
-                );
-                assert!(
-                    operations_attributes.keys().all(|key| key == "id"),
-                    "{id}: the call carries the path and root"
-                );
-                let table = recipe
-                    .table
-                    .unwrap_or_else(|| panic!("{id} shows its parameter table"));
-                assert_eq!(
-                    table,
-                    registered.parameter_table(),
-                    "{id}: the page's table is the registry's"
                 );
             }
             RecipeTarget::Resource { class } => {
-                assert!(recipe.call.is_none(), "{id} is not a {RECIPE_TOOL} recipe");
                 assert_eq!(
-                    operations_attributes.get("class").map(String::as_str),
-                    Some(class)
+                    attributes.get("class").map(String::as_str),
+                    Some(class),
+                    "{id}: the call names the class the recipe makes"
                 );
-                let expected = Value::Array(
-                    registered
-                        .expand(&Map::new(), None)
-                        .expect("a resource recipe takes no parameters")
-                        .operations,
-                );
-                assert_eq!(
-                    normalized(&operations),
-                    normalized(&expected),
-                    "{id}: the page's operations are the registry's; expected:\n{}",
-                    serde_json::to_string(&expected).expect("JSON")
+                assert!(
+                    call.get("class").is_none() && call.get("operations").is_none(),
+                    "{id}: a recipe call takes neither `class` nor `operations`"
                 );
             }
+        }
+        if registered.parameters.is_empty() {
+            assert!(recipe.table.is_none(), "{id} takes no parameters");
+        } else {
+            let table = recipe
+                .table
+                .unwrap_or_else(|| panic!("{id} shows its parameter table"));
+            assert_eq!(
+                table,
+                registered.parameter_table(),
+                "{id}: the page's table is the registry's"
+            );
         }
     }
 }

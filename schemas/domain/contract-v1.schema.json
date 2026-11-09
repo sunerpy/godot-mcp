@@ -410,6 +410,11 @@
           "description": "Frame-level runtime control: stepping a game by physics frames, and\nsampling and replaying input per physics frame.",
           "type": "string",
           "const": "0.7.0"
+        },
+        {
+          "description": "Recipes for AnimationTree state machines and blend spaces, 3D\nparticles, navigation and sound, and resource recipes in\n`resource.create`.",
+          "type": "string",
+          "const": "0.8.0"
         }
       ]
     },
