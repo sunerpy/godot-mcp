@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/sunerpy/godot-mcp/compare/v0.7.0...v0.8.0) (2026-11-09)
+
+
+### Features
+
+* **recipes:** add AnimationTree, 3D particle, navigation, sound and material recipes ([#68](https://github.com/sunerpy/godot-mcp/issues/68)) ([ed14fb3](https://github.com/sunerpy/godot-mcp/commit/ed14fb3fc3727d2332a0d31b834b69d0e701ce3d))
+
 ## [0.7.0](https://github.com/sunerpy/godot-mcp/compare/v0.6.0...v0.7.0) (2026-11-08)
 
 
