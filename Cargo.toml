@@ -87,15 +87,15 @@ windows-sys = { version = "=0.61.2", features = [
 getrandom = "=0.4.3"
 
 # --- Static analysis -----------------------------------------------------
-tree-sitter = "=0.27.1"
+tree-sitter = "=0.27.2"
 tree-sitter-gdscript = "=6.1.0"
 streaming-iterator = "=0.1.9"
 rusqlite = { version = "=0.41.1", features = ["bundled"] }
-notify = "=8.2.1"
+notify = "=8.2.2"
 # Bounded, linear-time pattern matching for `project.search` and glob filters.
 # Already in the locked graph with these features through tree-sitter, so
 # pinning it here adds no crate and no feature.
-regex = "=1.13.1"
+regex = "=1.13.2"
 
 # --- Serialization / schema ---------------------------------------------
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -111,7 +111,7 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["env-filter", "fmt", "json", "std"] }
 
 # --- CLI -----------------------------------------------------------------
-clap = { version = "=4.6.7", features = ["derive", "env"] }
+clap = { version = "=4.6.9", features = ["derive", "env"] }
 
 # --- Test / dev ----------------------------------------------------------
 rstest = "=0.27.0"
